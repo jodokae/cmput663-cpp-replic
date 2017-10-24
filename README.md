@@ -10,4 +10,8 @@ sudo apt-get install astyle
 sudo apt-get install xsltproc
 sudo apt-get install boolstuff
 
-State: Error for Preparation with src2srcml
+
+Download compatible version of src2srcml (http://www.sdml.cs.kent.edu/lmcrs/)
+
+Change pxml Version to python2.7
+Change cpp_general_checkall.sh Paths to absolute paths

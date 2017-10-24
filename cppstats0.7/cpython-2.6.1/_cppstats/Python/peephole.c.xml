@@ -1,0 +1,473 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="Python/peephole.c"><cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"Python.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"Python-ast.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"node.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"pyarena.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"ast.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"code.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"compile.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"symtable.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"opcode.h"</cpp:file></cpp:include>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>GETARG</name><parameter_list>(<param><type><name>arr</name></type></param>, <param><type><name>i</name></type></param>)</parameter_list></cpp:macro> <cpp:value>((int)((arr[i+2]&lt;&lt;8) + arr[i+1]))</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>UNCONDITIONAL_JUMP</name><parameter_list>(<param><type><name>op</name></type></param>)</parameter_list></cpp:macro> <cpp:value>(op==JUMP_ABSOLUTE || op==JUMP_FORWARD)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>ABSOLUTE_JUMP</name><parameter_list>(<param><type><name>op</name></type></param>)</parameter_list></cpp:macro> <cpp:value>(op==JUMP_ABSOLUTE || op==CONTINUE_LOOP)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>GETJUMPTGT</name><parameter_list>(<param><type><name>arr</name></type></param>, <param><type><name>i</name></type></param>)</parameter_list></cpp:macro> <cpp:value>(GETARG(arr,i) + (ABSOLUTE_JUMP(arr[i]) ? 0 : i+3))</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SETARG</name><parameter_list>(<param><type><name>arr</name></type></param>, <param><type><name>i</name></type></param>, <param><type><name>val</name></type></param>)</parameter_list></cpp:macro> <cpp:value>arr[i+2] = val&gt;&gt;8; arr[i+1] = val &amp; 255</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>CODESIZE</name><parameter_list>(<param><type><name>op</name></type></param>)</parameter_list></cpp:macro> <cpp:value>(HAS_ARG(op) ? 3 : 1)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>ISBASICBLOCK</name><parameter_list>(<param><type><name>blocks</name></type></param>, <param><type><name>start</name></type></param>, <param><type><name>bytes</name></type></param>)</parameter_list></cpp:macro> <cpp:value>(blocks[start]==blocks[start+bytes-1])</cpp:value></cpp:define>
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>tuple_of_constants</name><parameter_list>(<param><decl><type><name>unsigned</name> <name>char</name> *</type><name>codestr</name></decl></param>, <param><decl><type><name>Py_ssize_t</name></type> <name>n</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>consts</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>newconst</name></decl>, *<decl><type ref="prev"/><name>constant</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>i</name></decl>, <decl><type ref="prev"/><name>arg</name></decl>, <decl><type ref="prev"/><name>len_consts</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><call><name>PyList_CheckExact</name><argument_list>(<argument><expr><name>consts</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>codestr</name><index>[<expr><name>n</name>*3</expr>]</index></name> == <name>BUILD_TUPLE</name> || <name><name>codestr</name><index>[<expr><name>n</name>*3</expr>]</index></name> == <name>BUILD_LIST</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><call><name>GETARG</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>, <argument><expr>(<name>n</name>*3)</expr></argument>)</argument_list></call> == <name>n</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<for>for (<init><expr><name>i</name>=0</expr> ;</init> <condition><expr><name>i</name>&lt;<name>n</name></expr> ;</condition> <incr><expr><name>i</name>++</expr></incr>)
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>codestr</name><index>[<expr><name>i</name>*3</expr>]</index></name> == <name>LOAD_CONST</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></for>
+<expr_stmt><expr><name>newconst</name> = <call><name>PyTuple_New</name><argument_list>(<argument><expr><name>n</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>newconst</name> == <name>NULL</name></expr>)</condition><then>
+<return>return <expr>0</expr>;</return></then></if>
+<expr_stmt><expr><name>len_consts</name> = <call><name>PyList_GET_SIZE</name><argument_list>(<argument><expr><name>consts</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<for>for (<init><expr><name>i</name>=0</expr> ;</init> <condition><expr><name>i</name>&lt;<name>n</name></expr> ;</condition> <incr><expr><name>i</name>++</expr></incr>) <block>{
+<expr_stmt><expr><name>arg</name> = <call><name>GETARG</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>, <argument><expr>(<name>i</name>*3)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>arg</name> &lt; <name>len_consts</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>constant</name> = <call><name>PyList_GET_ITEM</name><argument_list>(<argument><expr><name>consts</name></expr></argument>, <argument><expr><name>arg</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>constant</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyTuple_SET_ITEM</name><argument_list>(<argument><expr><name>newconst</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr><name>constant</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></for>
+<if>if <condition>(<expr><call><name>PyList_Append</name><argument_list>(<argument><expr><name>consts</name></expr></argument>, <argument><expr><name>newconst</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>newconst</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr>0</expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>newconst</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>memset</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>, <argument><expr><name>NOP</name></expr></argument>, <argument><expr><name>n</name>*3</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>codestr</name><index>[<expr><name>n</name>*3</expr>]</index></name> = <name>LOAD_CONST</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>SETARG</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>, <argument><expr>(<name>n</name>*3)</expr></argument>, <argument><expr><name>len_consts</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr>1</expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>fold_binops_on_constants</name><parameter_list>(<param><decl><type><name>unsigned</name> <name>char</name> *</type><name>codestr</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>consts</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>newconst</name></decl>, *<decl><type ref="prev"/><name>v</name></decl>, *<decl><type ref="prev"/><name>w</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>len_consts</name></decl>, <decl><type ref="prev"/><name>size</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>opcode</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><call><name>PyList_CheckExact</name><argument_list>(<argument><expr><name>consts</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>codestr</name><index>[<expr>0</expr>]</index></name> == <name>LOAD_CONST</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>codestr</name><index>[<expr>3</expr>]</index></name> == <name>LOAD_CONST</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>v</name> = <call><name>PyList_GET_ITEM</name><argument_list>(<argument><expr><name>consts</name></expr></argument>, <argument><expr><call><name>GETARG</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>w</name> = <call><name>PyList_GET_ITEM</name><argument_list>(<argument><expr><name>consts</name></expr></argument>, <argument><expr><call><name>GETARG</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>, <argument><expr>3</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>opcode</name> = <name><name>codestr</name><index>[<expr>6</expr>]</index></name></expr>;</expr_stmt>
+<switch>switch <condition>(<expr><name>opcode</name></expr>)</condition> <block>{
+<case>case <expr><name>BINARY_POWER</name></expr>:
+<expr_stmt><expr><name>newconst</name> = <call><name>PyNumber_Power</name><argument_list>(<argument><expr><name>v</name></expr></argument>, <argument><expr><name>w</name></expr></argument>, <argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>BINARY_MULTIPLY</name></expr>:
+<expr_stmt><expr><name>newconst</name> = <call><name>PyNumber_Multiply</name><argument_list>(<argument><expr><name>v</name></expr></argument>, <argument><expr><name>w</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>BINARY_DIVIDE</name></expr>:
+<return>return <expr>0</expr>;</return>
+</case><case>case <expr><name>BINARY_TRUE_DIVIDE</name></expr>:
+<expr_stmt><expr><name>newconst</name> = <call><name>PyNumber_TrueDivide</name><argument_list>(<argument><expr><name>v</name></expr></argument>, <argument><expr><name>w</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>BINARY_FLOOR_DIVIDE</name></expr>:
+<expr_stmt><expr><name>newconst</name> = <call><name>PyNumber_FloorDivide</name><argument_list>(<argument><expr><name>v</name></expr></argument>, <argument><expr><name>w</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>BINARY_MODULO</name></expr>:
+<expr_stmt><expr><name>newconst</name> = <call><name>PyNumber_Remainder</name><argument_list>(<argument><expr><name>v</name></expr></argument>, <argument><expr><name>w</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>BINARY_ADD</name></expr>:
+<expr_stmt><expr><name>newconst</name> = <call><name>PyNumber_Add</name><argument_list>(<argument><expr><name>v</name></expr></argument>, <argument><expr><name>w</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>BINARY_SUBTRACT</name></expr>:
+<expr_stmt><expr><name>newconst</name> = <call><name>PyNumber_Subtract</name><argument_list>(<argument><expr><name>v</name></expr></argument>, <argument><expr><name>w</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>BINARY_SUBSCR</name></expr>:
+<expr_stmt><expr><name>newconst</name> = <call><name>PyObject_GetItem</name><argument_list>(<argument><expr><name>v</name></expr></argument>, <argument><expr><name>w</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>BINARY_LSHIFT</name></expr>:
+<expr_stmt><expr><name>newconst</name> = <call><name>PyNumber_Lshift</name><argument_list>(<argument><expr><name>v</name></expr></argument>, <argument><expr><name>w</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>BINARY_RSHIFT</name></expr>:
+<expr_stmt><expr><name>newconst</name> = <call><name>PyNumber_Rshift</name><argument_list>(<argument><expr><name>v</name></expr></argument>, <argument><expr><name>w</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>BINARY_AND</name></expr>:
+<expr_stmt><expr><name>newconst</name> = <call><name>PyNumber_And</name><argument_list>(<argument><expr><name>v</name></expr></argument>, <argument><expr><name>w</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>BINARY_XOR</name></expr>:
+<expr_stmt><expr><name>newconst</name> = <call><name>PyNumber_Xor</name><argument_list>(<argument><expr><name>v</name></expr></argument>, <argument><expr><name>w</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>BINARY_OR</name></expr>:
+<expr_stmt><expr><name>newconst</name> = <call><name>PyNumber_Or</name><argument_list>(<argument><expr><name>v</name></expr></argument>, <argument><expr><name>w</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<break>break;</break>
+</case><default>default:
+<expr_stmt><expr><call><name>PyErr_Format</name><argument_list>(<argument><expr><name>PyExc_SystemError</name></expr></argument>,
+<argument><expr>"unexpected binary operation %d on a constant"</expr></argument>,
+<argument><expr><name>opcode</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr>0</expr>;</return>
+</default>}</block></switch>
+<if>if <condition>(<expr><name>newconst</name> == <name>NULL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>PyErr_Clear</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<return>return <expr>0</expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>size</name> = <call><name>PyObject_Size</name><argument_list>(<argument><expr><name>newconst</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>size</name> == -1</expr>)</condition><then>
+<expr_stmt><expr><call><name>PyErr_Clear</name><argument_list>()</argument_list></call></expr>;</expr_stmt></then>
+<else>else <if>if <condition>(<expr><name>size</name> &gt; 20</expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>newconst</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr>0</expr>;</return>
+}</block></then></if></else></if>
+<expr_stmt><expr><name>len_consts</name> = <call><name>PyList_GET_SIZE</name><argument_list>(<argument><expr><name>consts</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><call><name>PyList_Append</name><argument_list>(<argument><expr><name>consts</name></expr></argument>, <argument><expr><name>newconst</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>newconst</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr>0</expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>newconst</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>memset</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>, <argument><expr><name>NOP</name></expr></argument>, <argument><expr>4</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>codestr</name><index>[<expr>4</expr>]</index></name> = <name>LOAD_CONST</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>SETARG</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>, <argument><expr>4</expr></argument>, <argument><expr><name>len_consts</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr>1</expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>fold_unaryops_on_constants</name><parameter_list>(<param><decl><type><name>unsigned</name> <name>char</name> *</type><name>codestr</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>consts</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>newconst</name><init>=<expr><name>NULL</name></expr></init>, *<name>v</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>len_consts</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>opcode</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><call><name>PyList_CheckExact</name><argument_list>(<argument><expr><name>consts</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>codestr</name><index>[<expr>0</expr>]</index></name> == <name>LOAD_CONST</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>v</name> = <call><name>PyList_GET_ITEM</name><argument_list>(<argument><expr><name>consts</name></expr></argument>, <argument><expr><call><name>GETARG</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>opcode</name> = <name><name>codestr</name><index>[<expr>3</expr>]</index></name></expr>;</expr_stmt>
+<switch>switch <condition>(<expr><name>opcode</name></expr>)</condition> <block>{
+<case>case <expr><name>UNARY_NEGATIVE</name></expr>:
+<if>if <condition>(<expr><call><name>PyObject_IsTrue</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call> == 1</expr>)</condition><then>
+<expr_stmt><expr><name>newconst</name> = <call><name>PyNumber_Negative</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<break>break;</break>
+</case><case>case <expr><name>UNARY_CONVERT</name></expr>:
+<expr_stmt><expr><name>newconst</name> = <call><name>PyObject_Repr</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>UNARY_INVERT</name></expr>:
+<expr_stmt><expr><name>newconst</name> = <call><name>PyNumber_Invert</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<break>break;</break>
+</case><default>default:
+<expr_stmt><expr><call><name>PyErr_Format</name><argument_list>(<argument><expr><name>PyExc_SystemError</name></expr></argument>,
+<argument><expr>"unexpected unary operation %d on a constant"</expr></argument>,
+<argument><expr><name>opcode</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr>0</expr>;</return>
+</default>}</block></switch>
+<if>if <condition>(<expr><name>newconst</name> == <name>NULL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>PyErr_Clear</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<return>return <expr>0</expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>len_consts</name> = <call><name>PyList_GET_SIZE</name><argument_list>(<argument><expr><name>consts</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><call><name>PyList_Append</name><argument_list>(<argument><expr><name>consts</name></expr></argument>, <argument><expr><name>newconst</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>newconst</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr>0</expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>newconst</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>codestr</name><index>[<expr>0</expr>]</index></name> = <name>NOP</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>codestr</name><index>[<expr>1</expr>]</index></name> = <name>LOAD_CONST</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>SETARG</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>, <argument><expr>1</expr></argument>, <argument><expr><name>len_consts</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr>1</expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>unsigned</name> <name>int</name> *</type>
+<name>markblocks</name><parameter_list>(<param><decl><type><name>unsigned</name> <name>char</name> *</type><name>code</name></decl></param>, <param><decl><type><name>Py_ssize_t</name></type> <name>len</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>unsigned</name> <name>int</name> *</type><name>blocks</name> <init>= <expr>(<name>unsigned</name> <name>int</name> *)<call><name>PyMem_Malloc</name><argument_list>(<argument><expr><name>len</name>*<sizeof>sizeof<argument_list>(<argument><expr><name>int</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>,<decl><type ref="prev"/><name>j</name></decl>, <decl><type ref="prev"/><name>opcode</name></decl>, <decl><type ref="prev"/><name>blockcnt</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>blocks</name> == <name>NULL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>PyErr_NoMemory</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><call><name>memset</name><argument_list>(<argument><expr><name>blocks</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>len</name>*<sizeof>sizeof<argument_list>(<argument><expr><name>int</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<for>for (<init><expr><name>i</name>=0</expr> ;</init> <condition><expr><name>i</name>&lt;<name>len</name></expr> ;</condition> <incr><expr><name>i</name>+=<call><name>CODESIZE</name><argument_list>(<argument><expr><name>opcode</name></expr></argument>)</argument_list></call></expr></incr>) <block>{
+<expr_stmt><expr><name>opcode</name> = <name><name>code</name><index>[<expr><name>i</name></expr>]</index></name></expr>;</expr_stmt>
+<switch>switch <condition>(<expr><name>opcode</name></expr>)</condition> <block>{
+<case>case <expr><name>FOR_ITER</name></expr>:
+</case><case>case <expr><name>JUMP_FORWARD</name></expr>:
+</case><case>case <expr><name>JUMP_IF_FALSE</name></expr>:
+</case><case>case <expr><name>JUMP_IF_TRUE</name></expr>:
+</case><case>case <expr><name>JUMP_ABSOLUTE</name></expr>:
+</case><case>case <expr><name>CONTINUE_LOOP</name></expr>:
+</case><case>case <expr><name>SETUP_LOOP</name></expr>:
+</case><case>case <expr><name>SETUP_EXCEPT</name></expr>:
+</case><case>case <expr><name>SETUP_FINALLY</name></expr>:
+<expr_stmt><expr><name>j</name> = <call><name>GETJUMPTGT</name><argument_list>(<argument><expr><name>code</name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>blocks</name><index>[<expr><name>j</name></expr>]</index></name> = 1</expr>;</expr_stmt>
+<break>break;</break>
+</case>}</block></switch>
+}</block></for>
+<for>for (<init><expr><name>i</name>=0</expr> ;</init> <condition><expr><name>i</name>&lt;<name>len</name></expr> ;</condition> <incr><expr><name>i</name>++</expr></incr>) <block>{
+<expr_stmt><expr><name>blockcnt</name> += <name><name>blocks</name><index>[<expr><name>i</name></expr>]</index></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>blocks</name><index>[<expr><name>i</name></expr>]</index></name> = <name>blockcnt</name></expr>;</expr_stmt>
+}</block></for>
+<return>return <expr><name>blocks</name></expr>;</return>
+}</block></function>
+<function><type><name>PyObject</name> *</type>
+<name>PyCode_Optimize</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>code</name></decl></param>, <param><decl><type><name>PyObject</name>*</type> <name>consts</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>names</name></decl></param>,
+<param><decl><type><name>PyObject</name> *</type><name>lineno_obj</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>i</name></decl>, <decl><type ref="prev"/><name>j</name></decl>, <decl><type ref="prev"/><name>codelen</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>nops</name></decl>, <decl><type ref="prev"/><name>h</name></decl>, <decl><type ref="prev"/><name>adj</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>tgt</name></decl>, <decl><type ref="prev"/><name>tgttgt</name></decl>, <decl><type ref="prev"/><name>opcode</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>unsigned</name> <name>char</name> *</type><name>codestr</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>unsigned</name> <name>char</name> *</type><name>lineno</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name> *</type><name>addrmap</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>new_line</name></decl>, <decl><type ref="prev"/><name>cum_orig_line</name></decl>, <decl><type ref="prev"/><name>last_line</name></decl>, <decl><type ref="prev"/><name>tabsiz</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>cumlc</name><init>=<expr>0</expr></init>, <name>lastlc</name><init>=<expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>unsigned</name> <name>int</name> *</type><name>blocks</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>char</name> *</type><name>name</name></decl>;</decl_stmt>
+<if>if <condition>(<expr><call><name>PyErr_Occurred</name><argument_list>()</argument_list></call></expr>)</condition><then>
+<goto>goto <name>exitUnchanged</name>;</goto></then></if>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><call><name>PyString_Check</name><argument_list>(<argument><expr><name>lineno_obj</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>lineno</name> = (<name>unsigned</name> <name>char</name>*)<call><name>PyString_AS_STRING</name><argument_list>(<argument><expr><name>lineno_obj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>tabsiz</name> = <call><name>PyString_GET_SIZE</name><argument_list>(<argument><expr><name>lineno_obj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><call><name>memchr</name><argument_list>(<argument><expr><name>lineno</name></expr></argument>, <argument><expr>255</expr></argument>, <argument><expr><name>tabsiz</name></expr></argument>)</argument_list></call> != <name>NULL</name></expr>)</condition><then>
+<goto>goto <name>exitUnchanged</name>;</goto></then></if>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><call><name>PyString_Check</name><argument_list>(<argument><expr><name>code</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>codelen</name> = <call><name>PyString_GET_SIZE</name><argument_list>(<argument><expr><name>code</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>codelen</name> &gt; 32700</expr>)</condition><then>
+<goto>goto <name>exitUnchanged</name>;</goto></then></if>
+<expr_stmt><expr><name>codestr</name> = (<name>unsigned</name> <name>char</name> *)<call><name>PyMem_Malloc</name><argument_list>(<argument><expr><name>codelen</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>codestr</name> == <name>NULL</name></expr>)</condition><then>
+<goto>goto <name>exitUnchanged</name>;</goto></then></if>
+<expr_stmt><expr><name>codestr</name> = (<name>unsigned</name> <name>char</name> *)<call><name>memcpy</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>,
+<argument><expr><call><name>PyString_AS_STRING</name><argument_list>(<argument><expr><name>code</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>codelen</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>codestr</name><index>[<expr><name>codelen</name>-1</expr>]</index></name> != <name>RETURN_VALUE</name></expr>)</condition><then>
+<goto>goto <name>exitUnchanged</name>;</goto></then></if>
+<expr_stmt><expr><name>addrmap</name> = (<name>int</name> *)<call><name>PyMem_Malloc</name><argument_list>(<argument><expr><name>codelen</name> * <sizeof>sizeof<argument_list>(<argument><expr><name>int</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>addrmap</name> == <name>NULL</name></expr>)</condition><then>
+<goto>goto <name>exitUnchanged</name>;</goto></then></if>
+<expr_stmt><expr><name>blocks</name> = <call><name>markblocks</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>, <argument><expr><name>codelen</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>blocks</name> == <name>NULL</name></expr>)</condition><then>
+<goto>goto <name>exitUnchanged</name>;</goto></then></if>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><call><name>PyList_Check</name><argument_list>(<argument><expr><name>consts</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<for>for (<init><expr><name>i</name>=0</expr> ;</init> <condition><expr><name>i</name>&lt;<name>codelen</name></expr> ;</condition> <incr><expr><name>i</name> += <call><name>CODESIZE</name><argument_list>(<argument><expr><name><name>codestr</name><index>[<expr><name>i</name></expr>]</index></name></expr></argument>)</argument_list></call></expr></incr>) <block>{
+<expr_stmt><expr><name>opcode</name> = <name><name>codestr</name><index>[<expr><name>i</name></expr>]</index></name></expr>;</expr_stmt>
+<expr_stmt><expr><name>lastlc</name> = <name>cumlc</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>cumlc</name> = 0</expr>;</expr_stmt>
+<switch>switch <condition>(<expr><name>opcode</name></expr>)</condition> <block>{
+<case>case <expr><name>UNARY_NOT</name></expr>:
+<if>if <condition>(<expr><name><name>codestr</name><index>[<expr><name>i</name>+1</expr>]</index></name> != <name>JUMP_IF_FALSE</name> ||
+<name><name>codestr</name><index>[<expr><name>i</name>+4</expr>]</index></name> != <name>POP_TOP</name> ||
+!<call><name>ISBASICBLOCK</name><argument_list>(<argument><expr><name>blocks</name></expr></argument>,<argument><expr><name>i</name></expr></argument>,<argument><expr>5</expr></argument>)</argument_list></call></expr>)</condition><then>
+<continue>continue;</continue></then></if>
+<expr_stmt><expr><name>tgt</name> = <call><name>GETJUMPTGT</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>, <argument><expr>(<name>i</name>+1)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>codestr</name><index>[<expr><name>tgt</name></expr>]</index></name> != <name>POP_TOP</name></expr>)</condition><then>
+<continue>continue;</continue></then></if>
+<expr_stmt><expr><name>j</name> = <call><name>GETARG</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>, <argument><expr><name>i</name>+1</expr></argument>)</argument_list></call> + 1</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>codestr</name><index>[<expr><name>i</name></expr>]</index></name> = <name>JUMP_IF_TRUE</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>SETARG</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr><name>j</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>codestr</name><index>[<expr><name>i</name>+3</expr>]</index></name> = <name>POP_TOP</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>codestr</name><index>[<expr><name>i</name>+4</expr>]</index></name> = <name>NOP</name></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>COMPARE_OP</name></expr>:
+<expr_stmt><expr><name>j</name> = <call><name>GETARG</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>j</name> &lt; 6 || <name>j</name> &gt; 9 ||
+<name><name>codestr</name><index>[<expr><name>i</name>+3</expr>]</index></name> != <name>UNARY_NOT</name> ||
+!<call><name>ISBASICBLOCK</name><argument_list>(<argument><expr><name>blocks</name></expr></argument>,<argument><expr><name>i</name></expr></argument>,<argument><expr>4</expr></argument>)</argument_list></call></expr>)</condition><then>
+<continue>continue;</continue></then></if>
+<expr_stmt><expr><call><name>SETARG</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr>(<name>j</name>^1)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>codestr</name><index>[<expr><name>i</name>+3</expr>]</index></name> = <name>NOP</name></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>LOAD_NAME</name></expr>:
+</case><case>case <expr><name>LOAD_GLOBAL</name></expr>:
+<expr_stmt><expr><name>j</name> = <call><name>GETARG</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>name</name> = <call><name>PyString_AsString</name><argument_list>(<argument><expr><call><name>PyTuple_GET_ITEM</name><argument_list>(<argument><expr><name>names</name></expr></argument>, <argument><expr><name>j</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>name</name> == <name>NULL</name> || <call><name>strcmp</name><argument_list>(<argument><expr><name>name</name></expr></argument>, <argument><expr>"None"</expr></argument>)</argument_list></call> != 0</expr>)</condition><then>
+<continue>continue;</continue></then></if>
+<for>for (<init><expr><name>j</name>=0</expr> ;</init> <condition><expr><name>j</name> &lt; <call><name>PyList_GET_SIZE</name><argument_list>(<argument><expr><name>consts</name></expr></argument>)</argument_list></call></expr> ;</condition> <incr><expr><name>j</name>++</expr></incr>) <block>{
+<if>if <condition>(<expr><call><name>PyList_GET_ITEM</name><argument_list>(<argument><expr><name>consts</name></expr></argument>, <argument><expr><name>j</name></expr></argument>)</argument_list></call> == <name>Py_None</name></expr>)</condition><then>
+<break>break;</break></then></if>
+}</block></for>
+<if>if <condition>(<expr><name>j</name> == <call><name>PyList_GET_SIZE</name><argument_list>(<argument><expr><name>consts</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<if>if <condition>(<expr><call><name>PyList_Append</name><argument_list>(<argument><expr><name>consts</name></expr></argument>, <argument><expr><name>Py_None</name></expr></argument>)</argument_list></call> == -1</expr>)</condition><then>
+<goto>goto <name>exitUnchanged</name>;</goto></then></if>
+}</block></then></if>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><call><name>PyList_GET_ITEM</name><argument_list>(<argument><expr><name>consts</name></expr></argument>, <argument><expr><name>j</name></expr></argument>)</argument_list></call> == <name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>codestr</name><index>[<expr><name>i</name></expr>]</index></name> = <name>LOAD_CONST</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>SETARG</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr><name>j</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>cumlc</name> = <name>lastlc</name> + 1</expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>LOAD_CONST</name></expr>:
+<expr_stmt><expr><name>cumlc</name> = <name>lastlc</name> + 1</expr>;</expr_stmt>
+<expr_stmt><expr><name>j</name> = <call><name>GETARG</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>codestr</name><index>[<expr><name>i</name>+3</expr>]</index></name> != <name>JUMP_IF_FALSE</name> ||
+<name><name>codestr</name><index>[<expr><name>i</name>+6</expr>]</index></name> != <name>POP_TOP</name> ||
+!<call><name>ISBASICBLOCK</name><argument_list>(<argument><expr><name>blocks</name></expr></argument>,<argument><expr><name>i</name></expr></argument>,<argument><expr>7</expr></argument>)</argument_list></call> ||
+!<call><name>PyObject_IsTrue</name><argument_list>(<argument><expr><call><name>PyList_GET_ITEM</name><argument_list>(<argument><expr><name>consts</name></expr></argument>, <argument><expr><name>j</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>)</condition><then>
+<continue>continue;</continue></then></if>
+<expr_stmt><expr><call><name>memset</name><argument_list>(<argument><expr><name>codestr</name>+<name>i</name></expr></argument>, <argument><expr><name>NOP</name></expr></argument>, <argument><expr>7</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>cumlc</name> = 0</expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>BUILD_TUPLE</name></expr>:
+</case><case>case <expr><name>BUILD_LIST</name></expr>:
+<expr_stmt><expr><name>j</name> = <call><name>GETARG</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>h</name> = <name>i</name> - 3 * <name>j</name></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>h</name> &gt;= 0 &amp;&amp;
+<name>j</name> &lt;= <name>lastlc</name> &amp;&amp;
+((<name>opcode</name> == <name>BUILD_TUPLE</name> &amp;&amp;
+<call><name>ISBASICBLOCK</name><argument_list>(<argument><expr><name>blocks</name></expr></argument>, <argument><expr><name>h</name></expr></argument>, <argument><expr>3*(<name>j</name>+1)</expr></argument>)</argument_list></call>) ||
+(<name>opcode</name> == <name>BUILD_LIST</name> &amp;&amp;
+<name><name>codestr</name><index>[<expr><name>i</name>+3</expr>]</index></name>==<name>COMPARE_OP</name> &amp;&amp;
+<call><name>ISBASICBLOCK</name><argument_list>(<argument><expr><name>blocks</name></expr></argument>, <argument><expr><name>h</name></expr></argument>, <argument><expr>3*(<name>j</name>+2)</expr></argument>)</argument_list></call> &amp;&amp;
+(<call><name>GETARG</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>,<argument><expr><name>i</name>+3</expr></argument>)</argument_list></call>==6 ||
+<call><name>GETARG</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>,<argument><expr><name>i</name>+3</expr></argument>)</argument_list></call>==7))) &amp;&amp;
+<call><name>tuple_of_constants</name><argument_list>(<argument><expr>&amp;<name><name>codestr</name><index>[<expr><name>h</name></expr>]</index></name></expr></argument>, <argument><expr><name>j</name></expr></argument>, <argument><expr><name>consts</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>codestr</name><index>[<expr><name>i</name></expr>]</index></name> == <name>LOAD_CONST</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>cumlc</name> = 1</expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<if>if <condition>(<expr><name><name>codestr</name><index>[<expr><name>i</name>+3</expr>]</index></name> != <name>UNPACK_SEQUENCE</name> ||
+!<call><name>ISBASICBLOCK</name><argument_list>(<argument><expr><name>blocks</name></expr></argument>,<argument><expr><name>i</name></expr></argument>,<argument><expr>6</expr></argument>)</argument_list></call> ||
+<name>j</name> != <call><name>GETARG</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>, <argument><expr><name>i</name>+3</expr></argument>)</argument_list></call></expr>)</condition><then>
+<continue>continue;</continue></then></if>
+<if>if <condition>(<expr><name>j</name> == 1</expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>memset</name><argument_list>(<argument><expr><name>codestr</name>+<name>i</name></expr></argument>, <argument><expr><name>NOP</name></expr></argument>, <argument><expr>6</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <if>if <condition>(<expr><name>j</name> == 2</expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>codestr</name><index>[<expr><name>i</name></expr>]</index></name> = <name>ROT_TWO</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>memset</name><argument_list>(<argument><expr><name>codestr</name>+<name>i</name>+1</expr></argument>, <argument><expr><name>NOP</name></expr></argument>, <argument><expr>5</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <if>if <condition>(<expr><name>j</name> == 3</expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>codestr</name><index>[<expr><name>i</name></expr>]</index></name> = <name>ROT_THREE</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>codestr</name><index>[<expr><name>i</name>+1</expr>]</index></name> = <name>ROT_TWO</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>memset</name><argument_list>(<argument><expr><name>codestr</name>+<name>i</name>+2</expr></argument>, <argument><expr><name>NOP</name></expr></argument>, <argument><expr>4</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if></else></if></else></if>
+<break>break;</break>
+</case><case>case <expr><name>BINARY_POWER</name></expr>:
+</case><case>case <expr><name>BINARY_MULTIPLY</name></expr>:
+</case><case>case <expr><name>BINARY_TRUE_DIVIDE</name></expr>:
+</case><case>case <expr><name>BINARY_FLOOR_DIVIDE</name></expr>:
+</case><case>case <expr><name>BINARY_MODULO</name></expr>:
+</case><case>case <expr><name>BINARY_ADD</name></expr>:
+</case><case>case <expr><name>BINARY_SUBTRACT</name></expr>:
+</case><case>case <expr><name>BINARY_SUBSCR</name></expr>:
+</case><case>case <expr><name>BINARY_LSHIFT</name></expr>:
+</case><case>case <expr><name>BINARY_RSHIFT</name></expr>:
+</case><case>case <expr><name>BINARY_AND</name></expr>:
+</case><case>case <expr><name>BINARY_XOR</name></expr>:
+</case><case>case <expr><name>BINARY_OR</name></expr>:
+<if>if <condition>(<expr><name>lastlc</name> &gt;= 2 &amp;&amp;
+<call><name>ISBASICBLOCK</name><argument_list>(<argument><expr><name>blocks</name></expr></argument>, <argument><expr><name>i</name>-6</expr></argument>, <argument><expr>7</expr></argument>)</argument_list></call> &amp;&amp;
+<call><name>fold_binops_on_constants</name><argument_list>(<argument><expr>&amp;<name><name>codestr</name><index>[<expr><name>i</name>-6</expr>]</index></name></expr></argument>, <argument><expr><name>consts</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>i</name> -= 2</expr>;</expr_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>codestr</name><index>[<expr><name>i</name></expr>]</index></name> == <name>LOAD_CONST</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>cumlc</name> = 1</expr>;</expr_stmt>
+}</block></then></if>
+<break>break;</break>
+</case><case>case <expr><name>UNARY_NEGATIVE</name></expr>:
+</case><case>case <expr><name>UNARY_CONVERT</name></expr>:
+</case><case>case <expr><name>UNARY_INVERT</name></expr>:
+<if>if <condition>(<expr><name>lastlc</name> &gt;= 1 &amp;&amp;
+<call><name>ISBASICBLOCK</name><argument_list>(<argument><expr><name>blocks</name></expr></argument>, <argument><expr><name>i</name>-3</expr></argument>, <argument><expr>4</expr></argument>)</argument_list></call> &amp;&amp;
+<call><name>fold_unaryops_on_constants</name><argument_list>(<argument><expr>&amp;<name><name>codestr</name><index>[<expr><name>i</name>-3</expr>]</index></name></expr></argument>, <argument><expr><name>consts</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>i</name> -= 2</expr>;</expr_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>codestr</name><index>[<expr><name>i</name></expr>]</index></name> == <name>LOAD_CONST</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>cumlc</name> = 1</expr>;</expr_stmt>
+}</block></then></if>
+<break>break;</break>
+</case><case>case <expr><name>JUMP_IF_FALSE</name></expr>:
+</case><case>case <expr><name>JUMP_IF_TRUE</name></expr>:
+<expr_stmt><expr><name>tgt</name> = <call><name>GETJUMPTGT</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>j</name> = <name><name>codestr</name><index>[<expr><name>tgt</name></expr>]</index></name></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>j</name> == <name>JUMP_IF_FALSE</name> || <name>j</name> == <name>JUMP_IF_TRUE</name></expr>)</condition><then> <block>{
+<if>if <condition>(<expr><name>j</name> == <name>opcode</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>tgttgt</name> = <call><name>GETJUMPTGT</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>, <argument><expr><name>tgt</name></expr></argument>)</argument_list></call> - <name>i</name> - 3</expr>;</expr_stmt>
+<expr_stmt><expr><call><name>SETARG</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr><name>tgttgt</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name>tgt</name> -= <name>i</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>SETARG</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr><name>tgt</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+<break>break;</break>
+}</block></then></if>
+</case><case>case <expr><name>FOR_ITER</name></expr>:
+</case><case>case <expr><name>JUMP_FORWARD</name></expr>:
+</case><case>case <expr><name>JUMP_ABSOLUTE</name></expr>:
+</case><case>case <expr><name>CONTINUE_LOOP</name></expr>:
+</case><case>case <expr><name>SETUP_LOOP</name></expr>:
+</case><case>case <expr><name>SETUP_EXCEPT</name></expr>:
+</case><case>case <expr><name>SETUP_FINALLY</name></expr>:
+<expr_stmt><expr><name>tgt</name> = <call><name>GETJUMPTGT</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><call><name>UNCONDITIONAL_JUMP</name><argument_list>(<argument><expr><name>opcode</name></expr></argument>)</argument_list></call> &amp;&amp;
+<name><name>codestr</name><index>[<expr><name>tgt</name></expr>]</index></name> == <name>RETURN_VALUE</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>codestr</name><index>[<expr><name>i</name></expr>]</index></name> = <name>RETURN_VALUE</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>memset</name><argument_list>(<argument><expr><name>codestr</name>+<name>i</name>+1</expr></argument>, <argument><expr><name>NOP</name></expr></argument>, <argument><expr>2</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<continue>continue;</continue>
+}</block></then></if>
+<if>if <condition>(<expr>!<call><name>UNCONDITIONAL_JUMP</name><argument_list>(<argument><expr><name><name>codestr</name><index>[<expr><name>tgt</name></expr>]</index></name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<continue>continue;</continue></then></if>
+<expr_stmt><expr><name>tgttgt</name> = <call><name>GETJUMPTGT</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>, <argument><expr><name>tgt</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>opcode</name> == <name>JUMP_FORWARD</name></expr>)</condition><then>
+<expr_stmt><expr><name>opcode</name> = <name>JUMP_ABSOLUTE</name></expr>;</expr_stmt></then></if>
+<if>if <condition>(<expr>!<call><name>ABSOLUTE_JUMP</name><argument_list>(<argument><expr><name>opcode</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<expr_stmt><expr><name>tgttgt</name> -= <name>i</name> + 3</expr>;</expr_stmt></then></if>
+<if>if <condition>(<expr><name>tgttgt</name> &lt; 0</expr>)</condition><then>
+<continue>continue;</continue></then></if>
+<expr_stmt><expr><name><name>codestr</name><index>[<expr><name>i</name></expr>]</index></name> = <name>opcode</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>SETARG</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr><name>tgttgt</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>EXTENDED_ARG</name></expr>:
+<goto>goto <name>exitUnchanged</name>;</goto>
+</case><case>case <expr><name>RETURN_VALUE</name></expr>:
+<if>if <condition>(<expr><name>i</name>+4 &gt;= <name>codelen</name></expr>)</condition><then>
+<continue>continue;</continue></then></if>
+<if>if <condition>(<expr><name><name>codestr</name><index>[<expr><name>i</name>+4</expr>]</index></name> == <name>RETURN_VALUE</name> &amp;&amp;
+<call><name>ISBASICBLOCK</name><argument_list>(<argument><expr><name>blocks</name></expr></argument>,<argument><expr><name>i</name></expr></argument>,<argument><expr>5</expr></argument>)</argument_list></call></expr>)</condition><then>
+<expr_stmt><expr><call><name>memset</name><argument_list>(<argument><expr><name>codestr</name>+<name>i</name>+1</expr></argument>, <argument><expr><name>NOP</name></expr></argument>, <argument><expr>4</expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+<else>else <if>if <condition>(<expr><call><name>UNCONDITIONAL_JUMP</name><argument_list>(<argument><expr><name><name>codestr</name><index>[<expr><name>i</name>+1</expr>]</index></name></expr></argument>)</argument_list></call> &amp;&amp;
+<call><name>ISBASICBLOCK</name><argument_list>(<argument><expr><name>blocks</name></expr></argument>,<argument><expr><name>i</name></expr></argument>,<argument><expr>4</expr></argument>)</argument_list></call></expr>)</condition><then>
+<expr_stmt><expr><call><name>memset</name><argument_list>(<argument><expr><name>codestr</name>+<name>i</name>+1</expr></argument>, <argument><expr><name>NOP</name></expr></argument>, <argument><expr>3</expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if></else></if>
+<break>break;</break>
+</case>}</block></switch>
+}</block></for>
+<for>for (<init><expr><name>i</name>=0</expr>, <expr><name>nops</name>=0</expr> ;</init> <condition><expr><name>i</name>&lt;<name>codelen</name></expr> ;</condition> <incr><expr><name>i</name> += <call><name>CODESIZE</name><argument_list>(<argument><expr><name><name>codestr</name><index>[<expr><name>i</name></expr>]</index></name></expr></argument>)</argument_list></call></expr></incr>) <block>{
+<expr_stmt><expr><name><name>addrmap</name><index>[<expr><name>i</name></expr>]</index></name> = <name>i</name> - <name>nops</name></expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>codestr</name><index>[<expr><name>i</name></expr>]</index></name> == <name>NOP</name></expr>)</condition><then>
+<expr_stmt><expr><name>nops</name>++</expr>;</expr_stmt></then></if>
+}</block></for>
+<expr_stmt><expr><name>cum_orig_line</name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><name>last_line</name> = 0</expr>;</expr_stmt>
+<for>for (<init><expr><name>i</name>=0</expr> ;</init> <condition><expr><name>i</name> &lt; <name>tabsiz</name></expr> ;</condition> <incr><expr><name>i</name>+=2</expr></incr>) <block>{
+<expr_stmt><expr><name>cum_orig_line</name> += <name><name>lineno</name><index>[<expr><name>i</name></expr>]</index></name></expr>;</expr_stmt>
+<expr_stmt><expr><name>new_line</name> = <name><name>addrmap</name><index>[<expr><name>cum_orig_line</name></expr>]</index></name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>assert</name> <argument_list>(<argument><expr><name>new_line</name> - <name>last_line</name> &lt; 255</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>lineno</name><index>[<expr><name>i</name></expr>]</index></name> =(<call>(<name>unsigned</name> <name>char</name>)<argument_list>(<argument><expr><name>new_line</name> - <name>last_line</name></expr></argument>)</argument_list></call>)</expr>;</expr_stmt>
+<expr_stmt><expr><name>last_line</name> = <name>new_line</name></expr>;</expr_stmt>
+}</block></for>
+<for>for (<init><expr><name>i</name>=0</expr>, <expr><name>h</name>=0</expr> ;</init> <condition><expr><name>i</name>&lt;<name>codelen</name></expr> ;</condition> <incr/>) <block>{
+<expr_stmt><expr><name>opcode</name> = <name><name>codestr</name><index>[<expr><name>i</name></expr>]</index></name></expr>;</expr_stmt>
+<switch>switch <condition>(<expr><name>opcode</name></expr>)</condition> <block>{
+<case>case <expr><name>NOP</name></expr>:
+<expr_stmt><expr><name>i</name>++</expr>;</expr_stmt>
+<continue>continue;</continue>
+</case><case>case <expr><name>JUMP_ABSOLUTE</name></expr>:
+</case><case>case <expr><name>CONTINUE_LOOP</name></expr>:
+<expr_stmt><expr><name>j</name> = <name><name>addrmap</name><index>[<expr><call><name>GETARG</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call></expr>]</index></name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>SETARG</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr><name>j</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>FOR_ITER</name></expr>:
+</case><case>case <expr><name>JUMP_FORWARD</name></expr>:
+</case><case>case <expr><name>JUMP_IF_FALSE</name></expr>:
+</case><case>case <expr><name>JUMP_IF_TRUE</name></expr>:
+</case><case>case <expr><name>SETUP_LOOP</name></expr>:
+</case><case>case <expr><name>SETUP_EXCEPT</name></expr>:
+</case><case>case <expr><name>SETUP_FINALLY</name></expr>:
+<expr_stmt><expr><name>j</name> = <name><name>addrmap</name><index>[<expr><call><name>GETARG</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call> + <name>i</name> + 3</expr>]</index></name> - <name><name>addrmap</name><index>[<expr><name>i</name></expr>]</index></name> - 3</expr>;</expr_stmt>
+<expr_stmt><expr><call><name>SETARG</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr><name>j</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<break>break;</break>
+</case>}</block></switch>
+<expr_stmt><expr><name>adj</name> = <call><name>CODESIZE</name><argument_list>(<argument><expr><name>opcode</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<while>while <condition>(<expr><name>adj</name>--</expr>)</condition>
+<expr_stmt><expr><name><name>codestr</name><index>[<expr><name>h</name>++</expr>]</index></name> = <name><name>codestr</name><index>[<expr><name>i</name>++</expr>]</index></name></expr>;</expr_stmt></while>
+}</block></for>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>h</name> + <name>nops</name> == <name>codelen</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>code</name> = <call><name>PyString_FromStringAndSize</name><argument_list>(<argument><expr>(<name>char</name> *)<name>codestr</name></expr></argument>, <argument><expr><name>h</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyMem_Free</name><argument_list>(<argument><expr><name>addrmap</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyMem_Free</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyMem_Free</name><argument_list>(<argument><expr><name>blocks</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>code</name></expr>;</return>
+<label><name>exitUnchanged</name>:</label>
+<if>if <condition>(<expr><name>blocks</name> != <name>NULL</name></expr>)</condition><then>
+<expr_stmt><expr><call><name>PyMem_Free</name><argument_list>(<argument><expr><name>blocks</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<if>if <condition>(<expr><name>addrmap</name> != <name>NULL</name></expr>)</condition><then>
+<expr_stmt><expr><call><name>PyMem_Free</name><argument_list>(<argument><expr><name>addrmap</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<if>if <condition>(<expr><name>codestr</name> != <name>NULL</name></expr>)</condition><then>
+<expr_stmt><expr><call><name>PyMem_Free</name><argument_list>(<argument><expr><name>codestr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>code</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>code</name></expr>;</return>
+}</block></function>
+</unit>

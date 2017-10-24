@@ -1,0 +1,832 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="Objects/obmalloc.c"><cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"Python.h"</cpp:file></cpp:include>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>WITH_PYMALLOC</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>ALIGNMENT</name></cpp:macro> <cpp:value>8</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>ALIGNMENT_SHIFT</name></cpp:macro> <cpp:value>3</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>ALIGNMENT_MASK</name></cpp:macro> <cpp:value>(ALIGNMENT - 1)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>INDEX2SIZE</name><parameter_list>(<param><type><name>I</name></type></param>)</parameter_list></cpp:macro> <cpp:value>(((uint)(I) + 1) &lt;&lt; ALIGNMENT_SHIFT)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SMALL_REQUEST_THRESHOLD</name></cpp:macro> <cpp:value>256</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>NB_SMALL_SIZE_CLASSES</name></cpp:macro> <cpp:value>(SMALL_REQUEST_THRESHOLD / ALIGNMENT)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SYSTEM_PAGE_SIZE</name></cpp:macro> <cpp:value>(4 * 1024)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SYSTEM_PAGE_SIZE_MASK</name></cpp:macro> <cpp:value>(SYSTEM_PAGE_SIZE - 1)</cpp:value></cpp:define>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>WITH_MEMORY_LIMITS</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr>!<call><name>defined</name><argument_list>(<argument><expr><name>SMALL_MEMORY_LIMIT</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SMALL_MEMORY_LIMIT</name></cpp:macro> <cpp:value>(64 * 1024 * 1024)</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>ARENA_SIZE</name></cpp:macro> <cpp:value>(256 &lt;&lt; 10)</cpp:value></cpp:define>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>WITH_MEMORY_LIMITS</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>MAX_ARENAS</name></cpp:macro> <cpp:value>(SMALL_MEMORY_LIMIT / ARENA_SIZE)</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>POOL_SIZE</name></cpp:macro> <cpp:value>SYSTEM_PAGE_SIZE</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>POOL_SIZE_MASK</name></cpp:macro> <cpp:value>SYSTEM_PAGE_SIZE_MASK</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SIMPLELOCK_DECL</name><parameter_list>(<param><type><name>lock</name></type></param>)</parameter_list></cpp:macro></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SIMPLELOCK_INIT</name><parameter_list>(<param><type><name>lock</name></type></param>)</parameter_list></cpp:macro></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SIMPLELOCK_FINI</name><parameter_list>(<param><type><name>lock</name></type></param>)</parameter_list></cpp:macro></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SIMPLELOCK_LOCK</name><parameter_list>(<param><type><name>lock</name></type></param>)</parameter_list></cpp:macro></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SIMPLELOCK_UNLOCK</name><parameter_list>(<param><type><name>lock</name></type></param>)</parameter_list></cpp:macro></cpp:define>
+<cpp:undef>#<cpp:directive>undef</cpp:directive> <name>uchar</name></cpp:undef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>uchar</name></cpp:macro> <cpp:value>unsigned char</cpp:value></cpp:define>
+<cpp:undef>#<cpp:directive>undef</cpp:directive> <name>uint</name></cpp:undef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>uint</name></cpp:macro> <cpp:value>unsigned int</cpp:value></cpp:define>
+<cpp:undef>#<cpp:directive>undef</cpp:directive> <name>ulong</name></cpp:undef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>ulong</name></cpp:macro> <cpp:value>unsigned long</cpp:value></cpp:define>
+<cpp:undef>#<cpp:directive>undef</cpp:directive> <name>uptr</name></cpp:undef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>uptr</name></cpp:macro> <cpp:value>Py_uintptr_t</cpp:value></cpp:define>
+<typedef>typedef <type><name>uchar</name></type> <name>block</name>;</typedef>
+<struct>struct <name>pool_header</name> <block>{
+<union>union <block>{
+<decl_stmt><decl><type><name>block</name> *</type><name>_padding</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>uint</name></type> <name>count</name></decl>;</decl_stmt>
+}</block> <decl><name>ref</name></decl>;</union>
+<decl_stmt><decl><type><name>block</name> *</type><name>freeblock</name></decl>;</decl_stmt>
+<decl_stmt><decl><type>struct <name>pool_header</name> *</type><name>nextpool</name></decl>;</decl_stmt>
+<decl_stmt><decl><type>struct <name>pool_header</name> *</type><name>prevpool</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>uint</name></type> <name>arenaindex</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>uint</name></type> <name>szidx</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>uint</name></type> <name>nextoffset</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>uint</name></type> <name>maxnextoffset</name></decl>;</decl_stmt>
+}</block>;</struct>
+<typedef>typedef <type>struct <name>pool_header</name> *</type><name>poolp</name>;</typedef>
+<struct>struct <name>arena_object</name> <block>{
+<decl_stmt><decl><type><name>uptr</name></type> <name>address</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>block</name>*</type> <name>pool_address</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>uint</name></type> <name>nfreepools</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>uint</name></type> <name>ntotalpools</name></decl>;</decl_stmt>
+<decl_stmt><decl><type>struct <name>pool_header</name>*</type> <name>freepools</name></decl>;</decl_stmt>
+<decl_stmt><decl><type>struct <name>arena_object</name>*</type> <name>nextarena</name></decl>;</decl_stmt>
+<decl_stmt><decl><type>struct <name>arena_object</name>*</type> <name>prevarena</name></decl>;</decl_stmt>
+}</block>;</struct>
+<cpp:undef>#<cpp:directive>undef</cpp:directive> <name>ROUNDUP</name></cpp:undef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>ROUNDUP</name><parameter_list>(<param><type><name>x</name></type></param>)</parameter_list></cpp:macro> <cpp:value>(((x) + ALIGNMENT_MASK) &amp; ~ALIGNMENT_MASK)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>POOL_OVERHEAD</name></cpp:macro> <cpp:value>ROUNDUP(sizeof(struct pool_header))</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>DUMMY_SIZE_IDX</name></cpp:macro> <cpp:value>0xffff</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>POOL_ADDR</name><parameter_list>(<param><type><name>P</name></type></param>)</parameter_list></cpp:macro> <cpp:value>((poolp)((uptr)(P) &amp; ~(uptr)POOL_SIZE_MASK))</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>NUMBLOCKS</name><parameter_list>(<param><type><name>I</name></type></param>)</parameter_list></cpp:macro> <cpp:value>((uint)(POOL_SIZE - POOL_OVERHEAD) / INDEX2SIZE(I))</cpp:value></cpp:define>
+<macro><name>SIMPLELOCK_DECL</name><argument_list>(<argument>_malloc_lock</argument>)</argument_list></macro>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>LOCK</name><parameter_list>()</parameter_list></cpp:macro> <cpp:value>SIMPLELOCK_LOCK(_malloc_lock)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>UNLOCK</name><parameter_list>()</parameter_list></cpp:macro> <cpp:value>SIMPLELOCK_UNLOCK(_malloc_lock)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>LOCK_INIT</name><parameter_list>()</parameter_list></cpp:macro> <cpp:value>SIMPLELOCK_INIT(_malloc_lock)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>LOCK_FINI</name><parameter_list>()</parameter_list></cpp:macro> <cpp:value>SIMPLELOCK_FINI(_malloc_lock)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PTA</name><parameter_list>(<param><type><name>x</name></type></param>)</parameter_list></cpp:macro> <cpp:value>((poolp )((uchar *)&amp;(usedpools[2*(x)]) - 2*sizeof(block *)))</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PT</name><parameter_list>(<param><type><name>x</name></type></param>)</parameter_list></cpp:macro> <cpp:value>PTA(x), PTA(x)</cpp:value></cpp:define>
+<decl_stmt><decl><type><specifier>static</specifier> <name>poolp</name></type> <name><name>usedpools</name><index>[<expr>2 * ((<name>NB_SMALL_SIZE_CLASSES</name> + 7) / 8) * 8</expr>]</index></name> <init>= <expr><block>{
+<expr><call><name>PT</name><argument_list>(<argument><expr>0</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>1</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>2</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>3</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>4</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>5</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>6</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>7</expr></argument>)</argument_list></call></expr>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>NB_SMALL_SIZE_CLASSES</name> &gt; 8</expr></cpp:if>
+, <expr><call><name>PT</name><argument_list>(<argument><expr>8</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>9</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>10</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>11</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>12</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>13</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>14</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>15</expr></argument>)</argument_list></call></expr>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>NB_SMALL_SIZE_CLASSES</name> &gt; 16</expr></cpp:if>
+, <expr><call><name>PT</name><argument_list>(<argument><expr>16</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>17</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>18</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>19</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>20</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>21</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>22</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>23</expr></argument>)</argument_list></call></expr>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>NB_SMALL_SIZE_CLASSES</name> &gt; 24</expr></cpp:if>
+, <expr><call><name>PT</name><argument_list>(<argument><expr>24</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>25</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>26</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>27</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>28</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>29</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>30</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>31</expr></argument>)</argument_list></call></expr>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>NB_SMALL_SIZE_CLASSES</name> &gt; 32</expr></cpp:if>
+, <expr><call><name>PT</name><argument_list>(<argument><expr>32</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>33</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>34</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>35</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>36</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>37</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>38</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>39</expr></argument>)</argument_list></call></expr>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>NB_SMALL_SIZE_CLASSES</name> &gt; 40</expr></cpp:if>
+, <expr><call><name>PT</name><argument_list>(<argument><expr>40</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>41</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>42</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>43</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>44</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>45</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>46</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>47</expr></argument>)</argument_list></call></expr>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>NB_SMALL_SIZE_CLASSES</name> &gt; 48</expr></cpp:if>
+, <expr><call><name>PT</name><argument_list>(<argument><expr>48</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>49</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>50</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>51</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>52</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>53</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>54</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>55</expr></argument>)</argument_list></call></expr>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>NB_SMALL_SIZE_CLASSES</name> &gt; 56</expr></cpp:if>
+, <expr><call><name>PT</name><argument_list>(<argument><expr>56</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>57</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>58</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>59</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>60</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>61</expr></argument>)</argument_list></call></expr>, <expr><call><name>PT</name><argument_list>(<argument><expr>62</expr></argument>)</argument_list></call></expr>, <macro><name>PT</name><argument_list>(<argument>63</argument>)</argument_list></macro>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+}</block></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> struct <name>arena_object</name>*</type> <name>arenas</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>uint</name></type> <name>maxarenas</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> struct <name>arena_object</name>*</type> <name>unused_arena_objects</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> struct <name>arena_object</name>*</type> <name>usable_arenas</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>INITIAL_ARENA_OBJECTS</name></cpp:macro> <cpp:value>16</cpp:value></cpp:define>
+<decl_stmt><decl><type><specifier>static</specifier> <name>size_t</name></type> <name>narenas_currently_allocated</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>PYMALLOC_DEBUG</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<decl_stmt><decl><type><specifier>static</specifier> <name>size_t</name></type> <name>ntimes_arena_allocated</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>size_t</name></type> <name>narenas_highwater</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<function><type><specifier>static</specifier> struct <name>arena_object</name>*</type>
+<name>new_arena</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type>struct <name>arena_object</name>*</type> <name>arenaobj</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>uint</name></type> <name>excess</name></decl>;</decl_stmt>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>PYMALLOC_DEBUG</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<if>if <condition>(<expr><call><name>Py_GETENV</name><argument_list>(<argument><expr>"PYTHONMALLOCSTATS"</expr></argument>)</argument_list></call></expr>)</condition><then>
+<expr_stmt><expr><call><name>_PyObject_DebugMallocStats</name><argument_list>()</argument_list></call></expr>;</expr_stmt></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<if>if <condition>(<expr><name>unused_arena_objects</name> == <name>NULL</name></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>uint</name></type> <name>i</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>uint</name></type> <name>numarenas</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>size_t</name></type> <name>nbytes</name></decl>;</decl_stmt>
+<expr_stmt><expr><name>numarenas</name> = <name>maxarenas</name> ? <name>maxarenas</name> &lt;&lt; 1 : <name>INITIAL_ARENA_OBJECTS</name></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>numarenas</name> &lt;= <name>maxarenas</name></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>SIZEOF_SIZE_T</name> &lt;= <name>SIZEOF_INT</name></expr></cpp:if>
+<if>if <condition>(<expr><name>numarenas</name> &gt; <name>PY_SIZE_MAX</name> / <sizeof>sizeof<argument_list>(<argument><expr>*<name>arenas</name></expr></argument>)</argument_list></sizeof></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<expr_stmt><expr><name>nbytes</name> = <name>numarenas</name> * <sizeof>sizeof<argument_list>(<argument><expr>*<name>arenas</name></expr></argument>)</argument_list></sizeof></expr>;</expr_stmt>
+<expr_stmt><expr><name>arenaobj</name> = (struct <name>arena_object</name> *)<call><name>realloc</name><argument_list>(<argument><expr><name>arenas</name></expr></argument>, <argument><expr><name>nbytes</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>arenaobj</name> == <name>NULL</name></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<expr_stmt><expr><name>arenas</name> = <name>arenaobj</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>usable_arenas</name> == <name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>unused_arena_objects</name> == <name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<for>for (<init><expr><name>i</name> = <name>maxarenas</name></expr>;</init> <condition><expr><name>i</name> &lt; <name>numarenas</name></expr>;</condition> <incr><expr>++<name>i</name></expr></incr>) <block>{
+<expr_stmt><expr><name><name>arenas</name><index>[<expr><name>i</name></expr>]</index></name>.<name>address</name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>arenas</name><index>[<expr><name>i</name></expr>]</index></name>.<name>nextarena</name> = <name>i</name> &lt; <name>numarenas</name> - 1 ?
+&amp;<name><name>arenas</name><index>[<expr><name>i</name>+1</expr>]</index></name> : <name>NULL</name></expr>;</expr_stmt>
+}</block></for>
+<expr_stmt><expr><name>unused_arena_objects</name> = &amp;<name><name>arenas</name><index>[<expr><name>maxarenas</name></expr>]</index></name></expr>;</expr_stmt>
+<expr_stmt><expr><name>maxarenas</name> = <name>numarenas</name></expr>;</expr_stmt>
+}</block></then></if>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>unused_arena_objects</name> != <name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>arenaobj</name> = <name>unused_arena_objects</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>unused_arena_objects</name> = <name><name>arenaobj</name>-&gt;<name>nextarena</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>arenaobj</name>-&gt;<name>address</name></name> == 0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>arenaobj</name>-&gt;<name>address</name></name> = (<name>uptr</name>)<call><name>malloc</name><argument_list>(<argument><expr><name>ARENA_SIZE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>arenaobj</name>-&gt;<name>address</name></name> == 0</expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>arenaobj</name>-&gt;<name>nextarena</name></name> = <name>unused_arena_objects</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>unused_arena_objects</name> = <name>arenaobj</name></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr>++<name>narenas_currently_allocated</name></expr>;</expr_stmt>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>PYMALLOC_DEBUG</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<expr_stmt><expr>++<name>ntimes_arena_allocated</name></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>narenas_currently_allocated</name> &gt; <name>narenas_highwater</name></expr>)</condition><then>
+<expr_stmt><expr><name>narenas_highwater</name> = <name>narenas_currently_allocated</name></expr>;</expr_stmt></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<expr_stmt><expr><name><name>arenaobj</name>-&gt;<name>freepools</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>arenaobj</name>-&gt;<name>pool_address</name></name> = (<name>block</name>*)<name><name>arenaobj</name>-&gt;<name>address</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>arenaobj</name>-&gt;<name>nfreepools</name></name> = <name>ARENA_SIZE</name> / <name>POOL_SIZE</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>POOL_SIZE</name> * <name><name>arenaobj</name>-&gt;<name>nfreepools</name></name> == <name>ARENA_SIZE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>excess</name> = <call>(<name>uint</name>)<argument_list>(<argument><expr><name><name>arenaobj</name>-&gt;<name>address</name></name> &amp; <name>POOL_SIZE_MASK</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>excess</name> != 0</expr>)</condition><then> <block>{
+<expr_stmt><expr>--<name><name>arenaobj</name>-&gt;<name>nfreepools</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>arenaobj</name>-&gt;<name>pool_address</name></name> += <name>POOL_SIZE</name> - <name>excess</name></expr>;</expr_stmt>
+}</block></then></if>
+<expr_stmt><expr><name><name>arenaobj</name>-&gt;<name>ntotalpools</name></name> = <name><name>arenaobj</name>-&gt;<name>nfreepools</name></name></expr>;</expr_stmt>
+<return>return <expr><name>arenaobj</name></expr>;</return>
+}</block></function>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_ADDRESS_IN_RANGE</name><parameter_list>(<param><type><name>P</name></type></param>, <param><type><name>POOL</name></type></param>)</parameter_list></cpp:macro> <cpp:value>((POOL)-&gt;arenaindex &lt; maxarenas &amp;&amp; (uptr)(P) - arenas[(POOL)-&gt;arenaindex].address &lt; (uptr)ARENA_SIZE &amp;&amp; arenas[(POOL)-&gt;arenaindex].address != 0)</cpp:value></cpp:define>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>Py_USING_MEMORY_DEBUGGER</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<cpp:undef>#<cpp:directive>undef</cpp:directive> <name>Py_ADDRESS_IN_RANGE</name></cpp:undef>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>__GNUC__</name></expr></argument>)</argument_list></call> &amp;&amp; ((<name>__GNUC__</name> == 3) &amp;&amp; (<name>__GNUC_MINOR__</name> &gt;= 1) || (<name>__GNUC__</name> &gt;= 4))</expr></cpp:if>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_NO_INLINE</name></cpp:macro> <cpp:value>__attribute__((__noinline__))</cpp:value></cpp:define>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_NO_INLINE</name></cpp:macro></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<decl_stmt><decl><type><name>int</name></type> <name>Py_ADDRESS_IN_RANGE</name><argument_list>(<argument><expr><name>void</name> *<name>P</name></expr></argument>, <argument><expr><name>poolp</name> <name>pool</name></expr></argument>)</argument_list> <name>Py_NO_INLINE</name></decl>;</decl_stmt>
+<cpp:undef>#<cpp:directive>undef</cpp:directive> <name>Py_NO_INLINE</name></cpp:undef>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:undef>#<cpp:directive>undef</cpp:directive> <name>PyObject_Malloc</name></cpp:undef>
+<function><type><name>void</name> *</type>
+<name>PyObject_Malloc</name><parameter_list>(<param><decl><type><name>size_t</name></type> <name>nbytes</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>block</name> *</type><name>bp</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>poolp</name></type> <name>pool</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>poolp</name></type> <name>next</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>uint</name></type> <name>size</name></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>nbytes</name> &gt; <name>PY_SSIZE_T_MAX</name></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<if>if <condition>(<expr>(<name>nbytes</name> - 1) &lt; <name>SMALL_REQUEST_THRESHOLD</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>LOCK</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>size</name> = <call>(<name>uint</name>)<argument_list>(<argument><expr><name>nbytes</name> - 1</expr></argument>)</argument_list></call> &gt;&gt; <name>ALIGNMENT_SHIFT</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>pool</name> = <name><name>usedpools</name><index>[<expr><name>size</name> + <name>size</name></expr>]</index></name></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>pool</name> != <name><name>pool</name>-&gt;<name>nextpool</name></name></expr>)</condition><then> <block>{
+<expr_stmt><expr>++<name><name>pool</name>-&gt;<name>ref</name>.<name>count</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name>bp</name> = <name><name>pool</name>-&gt;<name>freeblock</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>bp</name> != <name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr>(<name><name>pool</name>-&gt;<name>freeblock</name></name> = *(<name>block</name> **)<name>bp</name>) != <name>NULL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>UNLOCK</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<return>return <expr>(<name>void</name> *)<name>bp</name></expr>;</return>
+}</block></then></if>
+<if>if <condition>(<expr><name><name>pool</name>-&gt;<name>nextoffset</name></name> &lt;= <name><name>pool</name>-&gt;<name>maxnextoffset</name></name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>pool</name>-&gt;<name>freeblock</name></name> = (<name>block</name>*)<name>pool</name> +
+<name><name>pool</name>-&gt;<name>nextoffset</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>pool</name>-&gt;<name>nextoffset</name></name> += <call><name>INDEX2SIZE</name><argument_list>(<argument><expr><name>size</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr>*<call>(<name>block</name> **)<argument_list>(<argument><expr><name><name>pool</name>-&gt;<name>freeblock</name></name></expr></argument>)</argument_list></call> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>UNLOCK</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<return>return <expr>(<name>void</name> *)<name>bp</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>next</name> = <name><name>pool</name>-&gt;<name>nextpool</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name>pool</name> = <name><name>pool</name>-&gt;<name>prevpool</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>next</name>-&gt;<name>prevpool</name></name> = <name>pool</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>pool</name>-&gt;<name>nextpool</name></name> = <name>next</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>UNLOCK</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<return>return <expr>(<name>void</name> *)<name>bp</name></expr>;</return>
+}</block></then></if>
+<if>if <condition>(<expr><name>usable_arenas</name> == <name>NULL</name></expr>)</condition><then> <block>{
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>WITH_MEMORY_LIMITS</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<if>if <condition>(<expr><name>narenas_currently_allocated</name> &gt;= <name>MAX_ARENAS</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>UNLOCK</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<goto>goto <name>redirect</name>;</goto>
+}</block></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<expr_stmt><expr><name>usable_arenas</name> = <call><name>new_arena</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>usable_arenas</name> == <name>NULL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>UNLOCK</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<goto>goto <name>redirect</name>;</goto>
+}</block></then></if>
+<expr_stmt><expr><name><name>usable_arenas</name>-&gt;<name>nextarena</name></name> =
+<name><name>usable_arenas</name>-&gt;<name>prevarena</name></name> = <name>NULL</name></expr>;</expr_stmt>
+}</block></then></if>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>usable_arenas</name>-&gt;<name>address</name></name> != 0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>pool</name> = <name><name>usable_arenas</name>-&gt;<name>freepools</name></name></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>pool</name> != <name>NULL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>usable_arenas</name>-&gt;<name>freepools</name></name> = <name><name>pool</name>-&gt;<name>nextpool</name></name></expr>;</expr_stmt>
+<expr_stmt><expr>--<name><name>usable_arenas</name>-&gt;<name>nfreepools</name></name></expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>usable_arenas</name>-&gt;<name>nfreepools</name></name> == 0</expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>usable_arenas</name>-&gt;<name>freepools</name></name> == <name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>usable_arenas</name>-&gt;<name>nextarena</name></name> == <name>NULL</name> ||
+<name><name>usable_arenas</name>-&gt;<name>nextarena</name>-&gt;<name>prevarena</name></name> ==
+<name>usable_arenas</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>usable_arenas</name> = <name><name>usable_arenas</name>-&gt;<name>nextarena</name></name></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>usable_arenas</name> != <name>NULL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>usable_arenas</name>-&gt;<name>prevarena</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>usable_arenas</name>-&gt;<name>address</name></name> != 0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>usable_arenas</name>-&gt;<name>freepools</name></name> != <name>NULL</name> ||
+<name><name>usable_arenas</name>-&gt;<name>pool_address</name></name> &lt;=
+(<name>block</name>*)<name><name>usable_arenas</name>-&gt;<name>address</name></name> +
+<name>ARENA_SIZE</name> - <name>POOL_SIZE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+<label><name>init_pool</name>:</label>
+<expr_stmt><expr><name>next</name> = <name><name>usedpools</name><index>[<expr><name>size</name> + <name>size</name></expr>]</index></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>pool</name>-&gt;<name>nextpool</name></name> = <name>next</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>pool</name>-&gt;<name>prevpool</name></name> = <name>next</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>next</name>-&gt;<name>nextpool</name></name> = <name>pool</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>next</name>-&gt;<name>prevpool</name></name> = <name>pool</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>pool</name>-&gt;<name>ref</name>.<name>count</name></name> = 1</expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>pool</name>-&gt;<name>szidx</name></name> == <name>size</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>bp</name> = <name><name>pool</name>-&gt;<name>freeblock</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>pool</name>-&gt;<name>freeblock</name></name> = *(<name>block</name> **)<name>bp</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>UNLOCK</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<return>return <expr>(<name>void</name> *)<name>bp</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name><name>pool</name>-&gt;<name>szidx</name></name> = <name>size</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>size</name> = <call><name>INDEX2SIZE</name><argument_list>(<argument><expr><name>size</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>bp</name> = (<name>block</name> *)<name>pool</name> + <name>POOL_OVERHEAD</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>pool</name>-&gt;<name>nextoffset</name></name> = <name>POOL_OVERHEAD</name> + (<name>size</name> &lt;&lt; 1)</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>pool</name>-&gt;<name>maxnextoffset</name></name> = <name>POOL_SIZE</name> - <name>size</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>pool</name>-&gt;<name>freeblock</name></name> = <name>bp</name> + <name>size</name></expr>;</expr_stmt>
+<expr_stmt><expr>*<call>(<name>block</name> **)<argument_list>(<argument><expr><name><name>pool</name>-&gt;<name>freeblock</name></name></expr></argument>)</argument_list></call> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>UNLOCK</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<return>return <expr>(<name>void</name> *)<name>bp</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>usable_arenas</name>-&gt;<name>nfreepools</name></name> &gt; 0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>usable_arenas</name>-&gt;<name>freepools</name></name> == <name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>pool</name> = (<name>poolp</name>)<name><name>usable_arenas</name>-&gt;<name>pool_address</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr>(<name>block</name>*)<name>pool</name> &lt;= (<name>block</name>*)<name><name>usable_arenas</name>-&gt;<name>address</name></name> +
+<name>ARENA_SIZE</name> - <name>POOL_SIZE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>pool</name>-&gt;<name>arenaindex</name></name> = <name>usable_arenas</name> - <name>arenas</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr>&amp;<name><name>arenas</name><index>[<expr><name><name>pool</name>-&gt;<name>arenaindex</name></name></expr>]</index></name> == <name>usable_arenas</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>pool</name>-&gt;<name>szidx</name></name> = <name>DUMMY_SIZE_IDX</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>usable_arenas</name>-&gt;<name>pool_address</name></name> += <name>POOL_SIZE</name></expr>;</expr_stmt>
+<expr_stmt><expr>--<name><name>usable_arenas</name>-&gt;<name>nfreepools</name></name></expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>usable_arenas</name>-&gt;<name>nfreepools</name></name> == 0</expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>usable_arenas</name>-&gt;<name>nextarena</name></name> == <name>NULL</name> ||
+<name><name>usable_arenas</name>-&gt;<name>nextarena</name>-&gt;<name>prevarena</name></name> ==
+<name>usable_arenas</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>usable_arenas</name> = <name><name>usable_arenas</name>-&gt;<name>nextarena</name></name></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>usable_arenas</name> != <name>NULL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>usable_arenas</name>-&gt;<name>prevarena</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>usable_arenas</name>-&gt;<name>address</name></name> != 0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+}</block></then></if>
+<goto>goto <name>init_pool</name>;</goto>
+}</block></then></if>
+<label><name>redirect</name>:</label>
+<if>if <condition>(<expr><name>nbytes</name> == 0</expr>)</condition><then>
+<expr_stmt><expr><name>nbytes</name> = 1</expr>;</expr_stmt></then></if>
+<return>return <expr>(<name>void</name> *)<call><name>malloc</name><argument_list>(<argument><expr><name>nbytes</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+<cpp:undef>#<cpp:directive>undef</cpp:directive> <name>PyObject_Free</name></cpp:undef>
+<function><type><name>void</name></type>
+<name>PyObject_Free</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>p</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>poolp</name></type> <name>pool</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>block</name> *</type><name>lastfree</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>poolp</name></type> <name>next</name></decl>, <decl><type ref="prev"/><name>prev</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>uint</name></type> <name>size</name></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>p</name> == <name>NULL</name></expr>)</condition><then>
+<return>return;</return></then></if>
+<expr_stmt><expr><name>pool</name> = <call><name>POOL_ADDR</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><call><name>Py_ADDRESS_IN_RANGE</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>LOCK</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>pool</name>-&gt;<name>ref</name>.<name>count</name></name> &gt; 0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr>*(<name>block</name> **)<name>p</name> = <name>lastfree</name> = <name><name>pool</name>-&gt;<name>freeblock</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>pool</name>-&gt;<name>freeblock</name></name> = (<name>block</name> *)<name>p</name></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>lastfree</name></expr>)</condition><then> <block>{
+<decl_stmt><decl><type>struct <name>arena_object</name>*</type> <name>ao</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>uint</name></type> <name>nf</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>--<name><name>pool</name>-&gt;<name>ref</name>.<name>count</name></name> != 0</expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>UNLOCK</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<return>return;</return>
+}</block></then></if>
+<expr_stmt><expr><name>next</name> = <name><name>pool</name>-&gt;<name>nextpool</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name>prev</name> = <name><name>pool</name>-&gt;<name>prevpool</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>next</name>-&gt;<name>prevpool</name></name> = <name>prev</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>prev</name>-&gt;<name>nextpool</name></name> = <name>next</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>ao</name> = &amp;<name><name>arenas</name><index>[<expr><name><name>pool</name>-&gt;<name>arenaindex</name></name></expr>]</index></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>pool</name>-&gt;<name>nextpool</name></name> = <name><name>ao</name>-&gt;<name>freepools</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>ao</name>-&gt;<name>freepools</name></name> = <name>pool</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>nf</name> = ++<name><name>ao</name>-&gt;<name>nfreepools</name></name></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>nf</name> == <name><name>ao</name>-&gt;<name>ntotalpools</name></name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>ao</name>-&gt;<name>prevarena</name></name> == <name>NULL</name> ||
+<name><name>ao</name>-&gt;<name>prevarena</name>-&gt;<name>address</name></name> != 0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>ao</name> -&gt;<name>nextarena</name></name> == <name>NULL</name> ||
+<name><name>ao</name>-&gt;<name>nextarena</name>-&gt;<name>address</name></name> != 0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>ao</name>-&gt;<name>prevarena</name></name> == <name>NULL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>usable_arenas</name> = <name><name>ao</name>-&gt;<name>nextarena</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>usable_arenas</name> == <name>NULL</name> ||
+<name><name>usable_arenas</name>-&gt;<name>address</name></name> != 0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>ao</name>-&gt;<name>prevarena</name>-&gt;<name>nextarena</name></name> == <name>ao</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>ao</name>-&gt;<name>prevarena</name>-&gt;<name>nextarena</name></name> =
+<name><name>ao</name>-&gt;<name>nextarena</name></name></expr>;</expr_stmt>
+}</block></else></if>
+<if>if <condition>(<expr><name><name>ao</name>-&gt;<name>nextarena</name></name> != <name>NULL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>ao</name>-&gt;<name>nextarena</name>-&gt;<name>prevarena</name></name> == <name>ao</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>ao</name>-&gt;<name>nextarena</name>-&gt;<name>prevarena</name></name> =
+<name><name>ao</name>-&gt;<name>prevarena</name></name></expr>;</expr_stmt>
+}</block></then></if>
+<expr_stmt><expr><name><name>ao</name>-&gt;<name>nextarena</name></name> = <name>unused_arena_objects</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>unused_arena_objects</name> = <name>ao</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>free</name><argument_list>(<argument><expr>(<name>void</name> *)<name><name>ao</name>-&gt;<name>address</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>ao</name>-&gt;<name>address</name></name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr>--<name>narenas_currently_allocated</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>UNLOCK</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<return>return;</return>
+}</block></then></if>
+<if>if <condition>(<expr><name>nf</name> == 1</expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>ao</name>-&gt;<name>nextarena</name></name> = <name>usable_arenas</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>ao</name>-&gt;<name>prevarena</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>usable_arenas</name></expr>)</condition><then>
+<expr_stmt><expr><name><name>usable_arenas</name>-&gt;<name>prevarena</name></name> = <name>ao</name></expr>;</expr_stmt></then></if>
+<expr_stmt><expr><name>usable_arenas</name> = <name>ao</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>usable_arenas</name>-&gt;<name>address</name></name> != 0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>UNLOCK</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<return>return;</return>
+}</block></then></if>
+<if>if <condition>(<expr><name><name>ao</name>-&gt;<name>nextarena</name></name> == <name>NULL</name> ||
+<name>nf</name> &lt;= <name><name>ao</name>-&gt;<name>nextarena</name>-&gt;<name>nfreepools</name></name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>UNLOCK</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<return>return;</return>
+}</block></then></if>
+<if>if <condition>(<expr><name><name>ao</name>-&gt;<name>prevarena</name></name> != <name>NULL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>ao</name>-&gt;<name>prevarena</name>-&gt;<name>nextarena</name></name> == <name>ao</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>ao</name>-&gt;<name>prevarena</name>-&gt;<name>nextarena</name></name> = <name><name>ao</name>-&gt;<name>nextarena</name></name></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>usable_arenas</name> == <name>ao</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>usable_arenas</name> = <name><name>ao</name>-&gt;<name>nextarena</name></name></expr>;</expr_stmt>
+}</block></else></if>
+<expr_stmt><expr><name><name>ao</name>-&gt;<name>nextarena</name>-&gt;<name>prevarena</name></name> = <name><name>ao</name>-&gt;<name>prevarena</name></name></expr>;</expr_stmt>
+<while>while <condition>(<expr><name><name>ao</name>-&gt;<name>nextarena</name></name> != <name>NULL</name> &amp;&amp;
+<name>nf</name> &gt; <name><name>ao</name>-&gt;<name>nextarena</name>-&gt;<name>nfreepools</name></name></expr>)</condition> <block>{
+<expr_stmt><expr><name><name>ao</name>-&gt;<name>prevarena</name></name> = <name><name>ao</name>-&gt;<name>nextarena</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>ao</name>-&gt;<name>nextarena</name></name> = <name><name>ao</name>-&gt;<name>nextarena</name>-&gt;<name>nextarena</name></name></expr>;</expr_stmt>
+}</block></while>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>ao</name>-&gt;<name>nextarena</name></name> == <name>NULL</name> ||
+<name><name>ao</name>-&gt;<name>prevarena</name></name> == <name><name>ao</name>-&gt;<name>nextarena</name>-&gt;<name>prevarena</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>ao</name>-&gt;<name>prevarena</name>-&gt;<name>nextarena</name></name> == <name><name>ao</name>-&gt;<name>nextarena</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>ao</name>-&gt;<name>prevarena</name>-&gt;<name>nextarena</name></name> = <name>ao</name></expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>ao</name>-&gt;<name>nextarena</name></name> != <name>NULL</name></expr>)</condition><then>
+<expr_stmt><expr><name><name>ao</name>-&gt;<name>nextarena</name>-&gt;<name>prevarena</name></name> = <name>ao</name></expr>;</expr_stmt></then></if>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>ao</name>-&gt;<name>nextarena</name></name> == <name>NULL</name> ||
+<name>nf</name> &lt;= <name><name>ao</name>-&gt;<name>nextarena</name>-&gt;<name>nfreepools</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>ao</name>-&gt;<name>prevarena</name></name> == <name>NULL</name> ||
+<name>nf</name> &gt; <name><name>ao</name>-&gt;<name>prevarena</name>-&gt;<name>nfreepools</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>ao</name>-&gt;<name>nextarena</name></name> == <name>NULL</name> ||
+<name><name>ao</name>-&gt;<name>nextarena</name>-&gt;<name>prevarena</name></name> == <name>ao</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr>(<name>usable_arenas</name> == <name>ao</name> &amp;&amp;
+<name><name>ao</name>-&gt;<name>prevarena</name></name> == <name>NULL</name>) ||
+<name><name>ao</name>-&gt;<name>prevarena</name>-&gt;<name>nextarena</name></name> == <name>ao</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>UNLOCK</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<return>return;</return>
+}</block></then></if>
+<expr_stmt><expr>--<name><name>pool</name>-&gt;<name>ref</name>.<name>count</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>pool</name>-&gt;<name>ref</name>.<name>count</name></name> &gt; 0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>size</name> = <name><name>pool</name>-&gt;<name>szidx</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name>next</name> = <name><name>usedpools</name><index>[<expr><name>size</name> + <name>size</name></expr>]</index></name></expr>;</expr_stmt>
+<expr_stmt><expr><name>prev</name> = <name><name>next</name>-&gt;<name>prevpool</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>pool</name>-&gt;<name>nextpool</name></name> = <name>next</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>pool</name>-&gt;<name>prevpool</name></name> = <name>prev</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>next</name>-&gt;<name>prevpool</name></name> = <name>pool</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>prev</name>-&gt;<name>nextpool</name></name> = <name>pool</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>UNLOCK</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<return>return;</return>
+}</block></then></if>
+<expr_stmt><expr><call><name>free</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+<cpp:undef>#<cpp:directive>undef</cpp:directive> <name>PyObject_Realloc</name></cpp:undef>
+<function><type><name>void</name> *</type>
+<name>PyObject_Realloc</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>p</name></decl></param>, <param><decl><type><name>size_t</name></type> <name>nbytes</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>void</name> *</type><name>bp</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>poolp</name></type> <name>pool</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>size_t</name></type> <name>size</name></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>p</name> == <name>NULL</name></expr>)</condition><then>
+<return>return <expr><call><name>PyObject_Malloc</name><argument_list>(<argument><expr><name>nbytes</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<if>if <condition>(<expr><name>nbytes</name> &gt; <name>PY_SSIZE_T_MAX</name></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<expr_stmt><expr><name>pool</name> = <call><name>POOL_ADDR</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><call><name>Py_ADDRESS_IN_RANGE</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>size</name> = <call><name>INDEX2SIZE</name><argument_list>(<argument><expr><name><name>pool</name>-&gt;<name>szidx</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>nbytes</name> &lt;= <name>size</name></expr>)</condition><then> <block>{
+<if>if <condition>(<expr>4 * <name>nbytes</name> &gt; 3 * <name>size</name></expr>)</condition><then> <block>{
+<return>return <expr><name>p</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>size</name> = <name>nbytes</name></expr>;</expr_stmt>
+}</block></then></if>
+<expr_stmt><expr><name>bp</name> = <call><name>PyObject_Malloc</name><argument_list>(<argument><expr><name>nbytes</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>bp</name> != <name>NULL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>bp</name></expr></argument>, <argument><expr><name>p</name></expr></argument>, <argument><expr><name>size</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyObject_Free</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+<return>return <expr><name>bp</name></expr>;</return>
+}</block></then></if>
+<if>if <condition>(<expr><name>nbytes</name></expr>)</condition><then>
+<return>return <expr><call><name>realloc</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>nbytes</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<expr_stmt><expr><name>bp</name> = <call><name>realloc</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>bp</name> ? <name>bp</name> : <name>p</name></expr>;</return>
+}</block></function>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+<function><type><name>void</name> *</type>
+<name>PyObject_Malloc</name><parameter_list>(<param><decl><type><name>size_t</name></type> <name>n</name></decl></param>)</parameter_list> <block>{
+<return>return <expr><call><name>PyMem_MALLOC</name><argument_list>(<argument><expr><name>n</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+<function><type><name>void</name> *</type>
+<name>PyObject_Realloc</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>p</name></decl></param>, <param><decl><type><name>size_t</name></type> <name>n</name></decl></param>)</parameter_list> <block>{
+<return>return <expr><call><name>PyMem_REALLOC</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>n</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+<function><type><name>void</name></type>
+<name>PyObject_Free</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>p</name></decl></param>)</parameter_list> <block>{
+<expr_stmt><expr><call><name>PyMem_FREE</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>PYMALLOC_DEBUG</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<cpp:undef>#<cpp:directive>undef</cpp:directive> <name>CLEANBYTE</name></cpp:undef>
+<cpp:undef>#<cpp:directive>undef</cpp:directive> <name>DEADBYTE</name></cpp:undef>
+<cpp:undef>#<cpp:directive>undef</cpp:directive> <name>FORBIDDENBYTE</name></cpp:undef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>CLEANBYTE</name></cpp:macro> <cpp:value>0xCB</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>DEADBYTE</name></cpp:macro> <cpp:value>0xDB</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>FORBIDDENBYTE</name></cpp:macro> <cpp:value>0xFB</cpp:value></cpp:define>
+<decl_stmt><decl><type><specifier>static</specifier> <name>size_t</name></type> <name>serialno</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>bumpserialno</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list> <block>{
+<expr_stmt><expr>++<name>serialno</name></expr>;</expr_stmt>
+}</block></function>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SST</name></cpp:macro> <cpp:value>SIZEOF_SIZE_T</cpp:value></cpp:define>
+<function><type><specifier>static</specifier> <name>size_t</name></type>
+<name>read_size_t</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>void</name> *</type><name>p</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>uchar</name> *</type><name>q</name> <init>= <expr>(const <name>uchar</name> *)<name>p</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>size_t</name></type> <name>result</name> <init>= <expr>*<name>q</name>++</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+<for>for (<init><expr><name>i</name> = <name>SST</name></expr>;</init> <condition><expr>--<name>i</name> &gt; 0</expr>;</condition> <incr><expr>++<name>q</name></expr></incr>)
+<expr_stmt><expr><name>result</name> = (<name>result</name> &lt;&lt; 8) | *<name>q</name></expr>;</expr_stmt></for>
+<return>return <expr><name>result</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>write_size_t</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>p</name></decl></param>, <param><decl><type><name>size_t</name></type> <name>n</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>uchar</name> *</type><name>q</name> <init>= <expr>(<name>uchar</name> *)<name>p</name> + <name>SST</name> - 1</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+<for>for (<init><expr><name>i</name> = <name>SST</name></expr>;</init> <condition><expr>--<name>i</name> &gt;= 0</expr>;</condition> <incr><expr>--<name>q</name></expr></incr>) <block>{
+<expr_stmt><expr>*<name>q</name> = <call>(<name>uchar</name>)<argument_list>(<argument><expr><name>n</name> &amp; 0xff</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>n</name> &gt;&gt;= 8</expr>;</expr_stmt>
+}</block></for>
+}</block></function>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>Py_DEBUG</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>pool_is_in_list</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>poolp</name></type> <name>target</name></decl></param>, <param><decl><type><name>poolp</name></type> <name>list</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>poolp</name></type> <name>origlist</name> <init>= <expr><name>list</name></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>target</name> != <name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>list</name> == <name>NULL</name></expr>)</condition><then>
+<return>return <expr>0</expr>;</return></then></if>
+<do>do <block>{
+<if>if <condition>(<expr><name>target</name> == <name>list</name></expr>)</condition><then>
+<return>return <expr>1</expr>;</return></then></if>
+<expr_stmt><expr><name>list</name> = <name><name>list</name>-&gt;<name>nextpool</name></name></expr>;</expr_stmt>
+}</block> while <condition>(<expr><name>list</name> != <name>NULL</name> &amp;&amp; <name>list</name> != <name>origlist</name></expr>)</condition>;</do>
+<return>return <expr>0</expr>;</return>
+}</block></function>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>pool_is_in_list</name><parameter_list>(<param><type><name>X</name></type></param>, <param><type><name>Y</name></type></param>)</parameter_list></cpp:macro> <cpp:value>1</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<function><type><name>void</name> *</type>
+<name>_PyObject_DebugMalloc</name><parameter_list>(<param><decl><type><name>size_t</name></type> <name>nbytes</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>uchar</name> *</type><name>p</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>uchar</name> *</type><name>tail</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>size_t</name></type> <name>total</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>bumpserialno</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>total</name> = <name>nbytes</name> + 4*<name>SST</name></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>total</name> &lt; <name>nbytes</name></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<expr_stmt><expr><name>p</name> = (<name>uchar</name> *)<call><name>PyObject_Malloc</name><argument_list>(<argument><expr><name>total</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>p</name> == <name>NULL</name></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<expr_stmt><expr><call><name>write_size_t</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>nbytes</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>memset</name><argument_list>(<argument><expr><name>p</name> + <name>SST</name></expr></argument>, <argument><expr><name>FORBIDDENBYTE</name></expr></argument>, <argument><expr><name>SST</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>nbytes</name> &gt; 0</expr>)</condition><then>
+<expr_stmt><expr><call><name>memset</name><argument_list>(<argument><expr><name>p</name> + 2*<name>SST</name></expr></argument>, <argument><expr><name>CLEANBYTE</name></expr></argument>, <argument><expr><name>nbytes</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<expr_stmt><expr><name>tail</name> = <name>p</name> + 2*<name>SST</name> + <name>nbytes</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>memset</name><argument_list>(<argument><expr><name>tail</name></expr></argument>, <argument><expr><name>FORBIDDENBYTE</name></expr></argument>, <argument><expr><name>SST</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>write_size_t</name><argument_list>(<argument><expr><name>tail</name> + <name>SST</name></expr></argument>, <argument><expr><name>serialno</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>p</name> + 2*<name>SST</name></expr>;</return>
+}</block></function>
+<function><type><name>void</name></type>
+<name>_PyObject_DebugFree</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>p</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>uchar</name> *</type><name>q</name> <init>= <expr>(<name>uchar</name> *)<name>p</name> - 2*<name>SST</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>size_t</name></type> <name>nbytes</name></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>p</name> == <name>NULL</name></expr>)</condition><then>
+<return>return;</return></then></if>
+<expr_stmt><expr><call><name>_PyObject_DebugCheckAddress</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>nbytes</name> = <call><name>read_size_t</name><argument_list>(<argument><expr><name>q</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>nbytes</name> &gt; 0</expr>)</condition><then>
+<expr_stmt><expr><call><name>memset</name><argument_list>(<argument><expr><name>q</name></expr></argument>, <argument><expr><name>DEADBYTE</name></expr></argument>, <argument><expr><name>nbytes</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<expr_stmt><expr><call><name>PyObject_Free</name><argument_list>(<argument><expr><name>q</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+<function><type><name>void</name> *</type>
+<name>_PyObject_DebugRealloc</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>p</name></decl></param>, <param><decl><type><name>size_t</name></type> <name>nbytes</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>uchar</name> *</type><name>q</name> <init>= <expr>(<name>uchar</name> *)<name>p</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>uchar</name> *</type><name>tail</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>size_t</name></type> <name>total</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>size_t</name></type> <name>original_nbytes</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>p</name> == <name>NULL</name></expr>)</condition><then>
+<return>return <expr><call><name>_PyObject_DebugMalloc</name><argument_list>(<argument><expr><name>nbytes</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<expr_stmt><expr><call><name>_PyObject_DebugCheckAddress</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>bumpserialno</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>original_nbytes</name> = <call><name>read_size_t</name><argument_list>(<argument><expr><name>q</name> - 2*<name>SST</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>total</name> = <name>nbytes</name> + 4*<name>SST</name></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>total</name> &lt; <name>nbytes</name></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<if>if <condition>(<expr><name>nbytes</name> &lt; <name>original_nbytes</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>memset</name><argument_list>(<argument><expr><name>q</name> + <name>nbytes</name></expr></argument>, <argument><expr><name>DEADBYTE</name></expr></argument>, <argument><expr><name>original_nbytes</name> - <name>nbytes</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+<expr_stmt><expr><name>q</name> = (<name>uchar</name> *)<call><name>PyObject_Realloc</name><argument_list>(<argument><expr><name>q</name> - 2*<name>SST</name></expr></argument>, <argument><expr><name>total</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>q</name> == <name>NULL</name></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<expr_stmt><expr><call><name>write_size_t</name><argument_list>(<argument><expr><name>q</name></expr></argument>, <argument><expr><name>nbytes</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name>SST</name></expr>;</condition> <incr><expr>++<name>i</name></expr></incr>)
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>q</name><index>[<expr><name>SST</name> + <name>i</name></expr>]</index></name> == <name>FORBIDDENBYTE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></for>
+<expr_stmt><expr><name>q</name> += 2*<name>SST</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>tail</name> = <name>q</name> + <name>nbytes</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>memset</name><argument_list>(<argument><expr><name>tail</name></expr></argument>, <argument><expr><name>FORBIDDENBYTE</name></expr></argument>, <argument><expr><name>SST</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>write_size_t</name><argument_list>(<argument><expr><name>tail</name> + <name>SST</name></expr></argument>, <argument><expr><name>serialno</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>nbytes</name> &gt; <name>original_nbytes</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>memset</name><argument_list>(<argument><expr><name>q</name> + <name>original_nbytes</name></expr></argument>, <argument><expr><name>CLEANBYTE</name></expr></argument>,
+<argument><expr><name>nbytes</name> - <name>original_nbytes</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+<return>return <expr><name>q</name></expr>;</return>
+}</block></function>
+<function><type><name>void</name></type>
+<name>_PyObject_DebugCheckAddress</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>void</name> *</type><name>p</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>uchar</name> *</type><name>q</name> <init>= <expr>(const <name>uchar</name> *)<name>p</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>char</name> *</type><name>msg</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>size_t</name></type> <name>nbytes</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>uchar</name> *</type><name>tail</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>p</name> == <name>NULL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>msg</name> = "didn't expect a NULL pointer"</expr>;</expr_stmt>
+<goto>goto <name>error</name>;</goto>
+}</block></then></if>
+<for>for (<init><expr><name>i</name> = <name>SST</name></expr>;</init> <condition><expr><name>i</name> &gt;= 1</expr>;</condition> <incr><expr>--<name>i</name></expr></incr>) <block>{
+<if>if <condition>(<expr>*(<name>q</name>-<name>i</name>) != <name>FORBIDDENBYTE</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>msg</name> = "bad leading pad byte"</expr>;</expr_stmt>
+<goto>goto <name>error</name>;</goto>
+}</block></then></if>
+}</block></for>
+<expr_stmt><expr><name>nbytes</name> = <call><name>read_size_t</name><argument_list>(<argument><expr><name>q</name> - 2*<name>SST</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>tail</name> = <name>q</name> + <name>nbytes</name></expr>;</expr_stmt>
+<for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name>SST</name></expr>;</condition> <incr><expr>++<name>i</name></expr></incr>) <block>{
+<if>if <condition>(<expr><name><name>tail</name><index>[<expr><name>i</name></expr>]</index></name> != <name>FORBIDDENBYTE</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>msg</name> = "bad trailing pad byte"</expr>;</expr_stmt>
+<goto>goto <name>error</name>;</goto>
+}</block></then></if>
+}</block></for>
+<return>return;</return>
+<label><name>error</name>:</label>
+<expr_stmt><expr><call><name>_PyObject_DebugDumpAddress</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>Py_FatalError</name><argument_list>(<argument><expr><name>msg</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+<function><type><name>void</name></type>
+<name>_PyObject_DebugDumpAddress</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>void</name> *</type><name>p</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>uchar</name> *</type><name>q</name> <init>= <expr>(const <name>uchar</name> *)<name>p</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>uchar</name> *</type><name>tail</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>size_t</name></type> <name>nbytes</name></decl>, <decl><type ref="prev"/><name>serial</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>ok</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>fprintf</name><argument_list>(<argument><expr><name>stderr</name></expr></argument>, <argument><expr>"Debug memory block at address p=%p:\n"</expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>p</name> == <name>NULL</name></expr>)</condition><then>
+<return>return;</return></then></if>
+<expr_stmt><expr><name>nbytes</name> = <call><name>read_size_t</name><argument_list>(<argument><expr><name>q</name> - 2*<name>SST</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>fprintf</name><argument_list>(<argument><expr><name>stderr</name></expr></argument>, <argument><expr>" %" <name>PY_FORMAT_SIZE_T</name> "u bytes originally "
+"requested\n"</expr></argument>, <argument><expr><name>nbytes</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>fprintf</name><argument_list>(<argument><expr><name>stderr</name></expr></argument>, <argument><expr>" The %d pad bytes at p-%d are "</expr></argument>, <argument><expr><name>SST</name></expr></argument>, <argument><expr><name>SST</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>ok</name> = 1</expr>;</expr_stmt>
+<for>for (<init><expr><name>i</name> = 1</expr>;</init> <condition><expr><name>i</name> &lt;= <name>SST</name></expr>;</condition> <incr><expr>++<name>i</name></expr></incr>) <block>{
+<if>if <condition>(<expr>*(<name>q</name>-<name>i</name>) != <name>FORBIDDENBYTE</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>ok</name> = 0</expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+}</block></for>
+<if>if <condition>(<expr><name>ok</name></expr>)</condition><then>
+<expr_stmt><expr><call><name>fputs</name><argument_list>(<argument><expr>"FORBIDDENBYTE, as expected.\n"</expr></argument>, <argument><expr><name>stderr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+<else>else <block>{
+<expr_stmt><expr><call><name>fprintf</name><argument_list>(<argument><expr><name>stderr</name></expr></argument>, <argument><expr>"not all FORBIDDENBYTE (0x%02x):\n"</expr></argument>,
+<argument><expr><name>FORBIDDENBYTE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<for>for (<init><expr><name>i</name> = <name>SST</name></expr>;</init> <condition><expr><name>i</name> &gt;= 1</expr>;</condition> <incr><expr>--<name>i</name></expr></incr>) <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>uchar</name></type> <name>byte</name> <init>= <expr>*(<name>q</name>-<name>i</name>)</expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>fprintf</name><argument_list>(<argument><expr><name>stderr</name></expr></argument>, <argument><expr>" at p-%d: 0x%02x"</expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr><name>byte</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>byte</name> != <name>FORBIDDENBYTE</name></expr>)</condition><then>
+<expr_stmt><expr><call><name>fputs</name><argument_list>(<argument><expr>" *** OUCH"</expr></argument>, <argument><expr><name>stderr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<expr_stmt><expr><call><name>fputc</name><argument_list>(<argument><expr>'\n'</expr></argument>, <argument><expr><name>stderr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></for>
+<expr_stmt><expr><call><name>fputs</name><argument_list>(<argument><expr>" Because memory is corrupted at the start, the "
+"count of bytes requested\n"
+" may be bogus, and checking the trailing pad "
+"bytes may segfault.\n"</expr></argument>, <argument><expr><name>stderr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+<expr_stmt><expr><name>tail</name> = <name>q</name> + <name>nbytes</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>fprintf</name><argument_list>(<argument><expr><name>stderr</name></expr></argument>, <argument><expr>" The %d pad bytes at tail=%p are "</expr></argument>, <argument><expr><name>SST</name></expr></argument>, <argument><expr><name>tail</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>ok</name> = 1</expr>;</expr_stmt>
+<for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name>SST</name></expr>;</condition> <incr><expr>++<name>i</name></expr></incr>) <block>{
+<if>if <condition>(<expr><name><name>tail</name><index>[<expr><name>i</name></expr>]</index></name> != <name>FORBIDDENBYTE</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>ok</name> = 0</expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+}</block></for>
+<if>if <condition>(<expr><name>ok</name></expr>)</condition><then>
+<expr_stmt><expr><call><name>fputs</name><argument_list>(<argument><expr>"FORBIDDENBYTE, as expected.\n"</expr></argument>, <argument><expr><name>stderr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+<else>else <block>{
+<expr_stmt><expr><call><name>fprintf</name><argument_list>(<argument><expr><name>stderr</name></expr></argument>, <argument><expr>"not all FORBIDDENBYTE (0x%02x):\n"</expr></argument>,
+<argument><expr><name>FORBIDDENBYTE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name>SST</name></expr>;</condition> <incr><expr>++<name>i</name></expr></incr>) <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>uchar</name></type> <name>byte</name> <init>= <expr><name><name>tail</name><index>[<expr><name>i</name></expr>]</index></name></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>fprintf</name><argument_list>(<argument><expr><name>stderr</name></expr></argument>, <argument><expr>" at tail+%d: 0x%02x"</expr></argument>,
+<argument><expr><name>i</name></expr></argument>, <argument><expr><name>byte</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>byte</name> != <name>FORBIDDENBYTE</name></expr>)</condition><then>
+<expr_stmt><expr><call><name>fputs</name><argument_list>(<argument><expr>" *** OUCH"</expr></argument>, <argument><expr><name>stderr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<expr_stmt><expr><call><name>fputc</name><argument_list>(<argument><expr>'\n'</expr></argument>, <argument><expr><name>stderr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></for>
+}</block></else></if>
+<expr_stmt><expr><name>serial</name> = <call><name>read_size_t</name><argument_list>(<argument><expr><name>tail</name> + <name>SST</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>fprintf</name><argument_list>(<argument><expr><name>stderr</name></expr></argument>, <argument><expr>" The block was made by call #%" <name>PY_FORMAT_SIZE_T</name>
+"u to debug malloc/realloc.\n"</expr></argument>, <argument><expr><name>serial</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>nbytes</name> &gt; 0</expr>)</condition><then> <block>{
+<expr_stmt><expr><name>i</name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><call><name>fputs</name><argument_list>(<argument><expr>" Data at p:"</expr></argument>, <argument><expr><name>stderr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<while>while <condition>(<expr><name>q</name> &lt; <name>tail</name> &amp;&amp; <name>i</name> &lt; 8</expr>)</condition> <block>{
+<expr_stmt><expr><call><name>fprintf</name><argument_list>(<argument><expr><name>stderr</name></expr></argument>, <argument><expr>" %02x"</expr></argument>, <argument><expr>*<name>q</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr>++<name>i</name></expr>;</expr_stmt>
+<expr_stmt><expr>++<name>q</name></expr>;</expr_stmt>
+}</block></while>
+<if>if <condition>(<expr><name>q</name> &lt; <name>tail</name></expr>)</condition><then> <block>{
+<if>if <condition>(<expr><name>tail</name> - <name>q</name> &gt; 8</expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>fputs</name><argument_list>(<argument><expr>" ..."</expr></argument>, <argument><expr><name>stderr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>q</name> = <name>tail</name> - 8</expr>;</expr_stmt>
+}</block></then></if>
+<while>while <condition>(<expr><name>q</name> &lt; <name>tail</name></expr>)</condition> <block>{
+<expr_stmt><expr><call><name>fprintf</name><argument_list>(<argument><expr><name>stderr</name></expr></argument>, <argument><expr>" %02x"</expr></argument>, <argument><expr>*<name>q</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr>++<name>q</name></expr>;</expr_stmt>
+}</block></while>
+}</block></then></if>
+<expr_stmt><expr><call><name>fputc</name><argument_list>(<argument><expr>'\n'</expr></argument>, <argument><expr><name>stderr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+}</block></function>
+<function><type><specifier>static</specifier> <name>size_t</name></type>
+<name>printone</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name>*</type> <name>msg</name></decl></param>, <param><decl><type><name>size_t</name></type> <name>value</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>, <decl><type ref="prev"/><name>k</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>char</name></type> <name><name>buf</name><index>[<expr>100</expr>]</index></name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>size_t</name></type> <name>origvalue</name> <init>= <expr><name>value</name></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>fputs</name><argument_list>(<argument><expr><name>msg</name></expr></argument>, <argument><expr><name>stderr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<for>for (<init><expr><name>i</name> = (<name>int</name>)<call><name>strlen</name><argument_list>(<argument><expr><name>msg</name></expr></argument>)</argument_list></call></expr>;</init> <condition><expr><name>i</name> &lt; 35</expr>;</condition> <incr><expr>++<name>i</name></expr></incr>)
+<expr_stmt><expr><call><name>fputc</name><argument_list>(<argument><expr>' '</expr></argument>, <argument><expr><name>stderr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></for>
+<expr_stmt><expr><call><name>fputc</name><argument_list>(<argument><expr>'='</expr></argument>, <argument><expr><name>stderr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>i</name> = 22</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>buf</name><index>[<expr><name>i</name>--</expr>]</index></name> = '\0'</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>buf</name><index>[<expr><name>i</name>--</expr>]</index></name> = '\n'</expr>;</expr_stmt>
+<expr_stmt><expr><name>k</name> = 3</expr>;</expr_stmt>
+<do>do <block>{
+<decl_stmt><decl><type><name>size_t</name></type> <name>nextvalue</name> <init>= <expr><name>value</name> / 10</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>uint</name></type> <name>digit</name> <init>= <expr><call>(<name>uint</name>)<argument_list>(<argument><expr><name>value</name> - <name>nextvalue</name> * 10</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><name>value</name> = <name>nextvalue</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>buf</name><index>[<expr><name>i</name>--</expr>]</index></name> = <call>(<name>char</name>)<argument_list>(<argument><expr><name>digit</name> + '0'</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr>--<name>k</name></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>k</name> == 0 &amp;&amp; <name>value</name> &amp;&amp; <name>i</name> &gt;= 0</expr>)</condition><then> <block>{
+<expr_stmt><expr><name>k</name> = 3</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>buf</name><index>[<expr><name>i</name>--</expr>]</index></name> = ','</expr>;</expr_stmt>
+}</block></then></if>
+}</block> while <condition>(<expr><name>value</name> &amp;&amp; <name>i</name> &gt;= 0</expr>)</condition>;</do>
+<while>while <condition>(<expr><name>i</name> &gt;= 0</expr>)</condition>
+<expr_stmt><expr><name><name>buf</name><index>[<expr><name>i</name>--</expr>]</index></name> = ' '</expr>;</expr_stmt></while>
+<expr_stmt><expr><call><name>fputs</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr><name>stderr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>origvalue</name></expr>;</return>
+}</block></function>
+<function><type><name>void</name></type>
+<name>_PyObject_DebugMallocStats</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>uint</name></type> <name>i</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>uint</name></type> <name>numclasses</name> <init>= <expr><name>SMALL_REQUEST_THRESHOLD</name> &gt;&gt; <name>ALIGNMENT_SHIFT</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>size_t</name></type> <name><name>numpools</name><index>[<expr><name>SMALL_REQUEST_THRESHOLD</name> &gt;&gt; <name>ALIGNMENT_SHIFT</name></expr>]</index></name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>size_t</name></type> <name><name>numblocks</name><index>[<expr><name>SMALL_REQUEST_THRESHOLD</name> &gt;&gt; <name>ALIGNMENT_SHIFT</name></expr>]</index></name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>size_t</name></type> <name><name>numfreeblocks</name><index>[<expr><name>SMALL_REQUEST_THRESHOLD</name> &gt;&gt; <name>ALIGNMENT_SHIFT</name></expr>]</index></name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>size_t</name></type> <name>allocated_bytes</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>size_t</name></type> <name>available_bytes</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>uint</name></type> <name>numfreepools</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>size_t</name></type> <name>arena_alignment</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>size_t</name></type> <name>pool_header_bytes</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>size_t</name></type> <name>quantization</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>size_t</name></type> <name>narenas</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>size_t</name></type> <name>total</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>char</name></type> <name><name>buf</name><index>[<expr>128</expr>]</index></name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>fprintf</name><argument_list>(<argument><expr><name>stderr</name></expr></argument>, <argument><expr>"Small block threshold = %d, in %u size classes.\n"</expr></argument>,
+<argument><expr><name>SMALL_REQUEST_THRESHOLD</name></expr></argument>, <argument><expr><name>numclasses</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name>numclasses</name></expr>;</condition> <incr><expr>++<name>i</name></expr></incr>)
+<expr_stmt><expr><name><name>numpools</name><index>[<expr><name>i</name></expr>]</index></name> = <name><name>numblocks</name><index>[<expr><name>i</name></expr>]</index></name> = <name><name>numfreeblocks</name><index>[<expr><name>i</name></expr>]</index></name> = 0</expr>;</expr_stmt></for>
+<for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name>maxarenas</name></expr>;</condition> <incr><expr>++<name>i</name></expr></incr>) <block>{
+<decl_stmt><decl><type><name>uint</name></type> <name>poolsinarena</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>uint</name></type> <name>j</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>uptr</name></type> <name>base</name> <init>= <expr><name><name>arenas</name><index>[<expr><name>i</name></expr>]</index></name>.<name>address</name></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name><name>arenas</name><index>[<expr><name>i</name></expr>]</index></name>.<name>address</name> == (<name>uptr</name>)<name>NULL</name></expr>)</condition><then>
+<continue>continue;</continue></then></if>
+<expr_stmt><expr><name>narenas</name> += 1</expr>;</expr_stmt>
+<expr_stmt><expr><name>poolsinarena</name> = <name><name>arenas</name><index>[<expr><name>i</name></expr>]</index></name>.<name>ntotalpools</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>numfreepools</name> += <name><name>arenas</name><index>[<expr><name>i</name></expr>]</index></name>.<name>nfreepools</name></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>base</name> &amp; (<name>uptr</name>)<name>POOL_SIZE_MASK</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>arena_alignment</name> += <name>POOL_SIZE</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>base</name> &amp;= ~(<name>uptr</name>)<name>POOL_SIZE_MASK</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>base</name> += <name>POOL_SIZE</name></expr>;</expr_stmt>
+}</block></then></if>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>base</name> &lt;= (<name>uptr</name>) <name><name>arenas</name><index>[<expr><name>i</name></expr>]</index></name>.<name>pool_address</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<for>for (<init><expr><name>j</name> = 0</expr>;</init>
+<condition><expr><name>base</name> &lt; (<name>uptr</name>) <name><name>arenas</name><index>[<expr><name>i</name></expr>]</index></name>.<name>pool_address</name></expr>;</condition>
+<incr><expr>++<name>j</name></expr>, <expr><name>base</name> += <name>POOL_SIZE</name></expr></incr>) <block>{
+<decl_stmt><decl><type><name>poolp</name></type> <name>p</name> <init>= <expr>(<name>poolp</name>)<name>base</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>uint</name></type> <name>sz</name> <init>= <expr><name><name>p</name>-&gt;<name>szidx</name></name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>uint</name></type> <name>freeblocks</name></decl>;</decl_stmt>
+<if>if <condition>(<expr><name><name>p</name>-&gt;<name>ref</name>.<name>count</name></name> == 0</expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><call><name>pool_is_in_list</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name><name>arenas</name><index>[<expr><name>i</name></expr>]</index></name>.<name>freepools</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<continue>continue;</continue>
+}</block></then></if>
+<expr_stmt><expr>++<name><name>numpools</name><index>[<expr><name>sz</name></expr>]</index></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>numblocks</name><index>[<expr><name>sz</name></expr>]</index></name> += <name><name>p</name>-&gt;<name>ref</name>.<name>count</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name>freeblocks</name> = <call><name>NUMBLOCKS</name><argument_list>(<argument><expr><name>sz</name></expr></argument>)</argument_list></call> - <name><name>p</name>-&gt;<name>ref</name>.<name>count</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>numfreeblocks</name><index>[<expr><name>sz</name></expr>]</index></name> += <name>freeblocks</name></expr>;</expr_stmt>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>Py_DEBUG</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<if>if <condition>(<expr><name>freeblocks</name> &gt; 0</expr>)</condition><then>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><call><name>pool_is_in_list</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name><name>usedpools</name><index>[<expr><name>sz</name> + <name>sz</name></expr>]</index></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+}</block></for>
+}</block></for>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>narenas</name> == <name>narenas_currently_allocated</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>fputc</name><argument_list>(<argument><expr>'\n'</expr></argument>, <argument><expr><name>stderr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>fputs</name><argument_list>(<argument><expr>"class size num pools blocks in use avail blocks\n"
+"----- ---- --------- ------------- ------------\n"</expr></argument>,
+<argument><expr><name>stderr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name>numclasses</name></expr>;</condition> <incr><expr>++<name>i</name></expr></incr>) <block>{
+<decl_stmt><decl><type><name>size_t</name></type> <name>p</name> <init>= <expr><name><name>numpools</name><index>[<expr><name>i</name></expr>]</index></name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>size_t</name></type> <name>b</name> <init>= <expr><name><name>numblocks</name><index>[<expr><name>i</name></expr>]</index></name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>size_t</name></type> <name>f</name> <init>= <expr><name><name>numfreeblocks</name><index>[<expr><name>i</name></expr>]</index></name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>uint</name></type> <name>size</name> <init>= <expr><call><name>INDEX2SIZE</name><argument_list>(<argument><expr><name>i</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>p</name> == 0</expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>b</name> == 0 &amp;&amp; <name>f</name> == 0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<continue>continue;</continue>
+}</block></then></if>
+<expr_stmt><expr><call><name>fprintf</name><argument_list>(<argument><expr><name>stderr</name></expr></argument>, <argument><expr>"%5u %6u "
+"%11" <name>PY_FORMAT_SIZE_T</name> "u "
+"%15" <name>PY_FORMAT_SIZE_T</name> "u "
+"%13" <name>PY_FORMAT_SIZE_T</name> "u\n"</expr></argument>,
+<argument><expr><name>i</name></expr></argument>, <argument><expr><name>size</name></expr></argument>, <argument><expr><name>p</name></expr></argument>, <argument><expr><name>b</name></expr></argument>, <argument><expr><name>f</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>allocated_bytes</name> += <name>b</name> * <name>size</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>available_bytes</name> += <name>f</name> * <name>size</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>pool_header_bytes</name> += <name>p</name> * <name>POOL_OVERHEAD</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>quantization</name> += <call><name>p</name> * <argument_list>(<argument><expr>(<name>POOL_SIZE</name> - <name>POOL_OVERHEAD</name>) % <name>size</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></for>
+<expr_stmt><expr><call><name>fputc</name><argument_list>(<argument><expr>'\n'</expr></argument>, <argument><expr><name>stderr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr>(<name>void</name>)<call><name>printone</name><argument_list>(<argument><expr>"#times object malloc called"</expr></argument>, <argument><expr><name>serialno</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr>(<name>void</name>)<call><name>printone</name><argument_list>(<argument><expr>"#arenas allocated total"</expr></argument>, <argument><expr><name>ntimes_arena_allocated</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr>(<name>void</name>)<call><name>printone</name><argument_list>(<argument><expr>"#arenas reclaimed"</expr></argument>, <argument><expr><name>ntimes_arena_allocated</name> - <name>narenas</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr>(<name>void</name>)<call><name>printone</name><argument_list>(<argument><expr>"#arenas highwater mark"</expr></argument>, <argument><expr><name>narenas_highwater</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr>(<name>void</name>)<call><name>printone</name><argument_list>(<argument><expr>"#arenas allocated current"</expr></argument>, <argument><expr><name>narenas</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyOS_snprintf</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>buf</name></expr></argument>)</argument_list></sizeof></expr></argument>,
+<argument><expr>"%" <name>PY_FORMAT_SIZE_T</name> "u arenas * %d bytes/arena"</expr></argument>,
+<argument><expr><name>narenas</name></expr></argument>, <argument><expr><name>ARENA_SIZE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr>(<name>void</name>)<call><name>printone</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr><name>narenas</name> * <name>ARENA_SIZE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>fputc</name><argument_list>(<argument><expr>'\n'</expr></argument>, <argument><expr><name>stderr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>total</name> = <call><name>printone</name><argument_list>(<argument><expr>"#bytes in allocated blocks"</expr></argument>, <argument><expr><name>allocated_bytes</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>total</name> += <call><name>printone</name><argument_list>(<argument><expr>"#bytes in available blocks"</expr></argument>, <argument><expr><name>available_bytes</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyOS_snprintf</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>buf</name></expr></argument>)</argument_list></sizeof></expr></argument>,
+<argument><expr>"%u unused pools * %d bytes"</expr></argument>, <argument><expr><name>numfreepools</name></expr></argument>, <argument><expr><name>POOL_SIZE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>total</name> += <call><name>printone</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr>(<name>size_t</name>)<name>numfreepools</name> * <name>POOL_SIZE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>total</name> += <call><name>printone</name><argument_list>(<argument><expr>"#bytes lost to pool headers"</expr></argument>, <argument><expr><name>pool_header_bytes</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>total</name> += <call><name>printone</name><argument_list>(<argument><expr>"#bytes lost to quantization"</expr></argument>, <argument><expr><name>quantization</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>total</name> += <call><name>printone</name><argument_list>(<argument><expr>"#bytes lost to arena alignment"</expr></argument>, <argument><expr><name>arena_alignment</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr>(<name>void</name>)<call><name>printone</name><argument_list>(<argument><expr>"Total"</expr></argument>, <argument><expr><name>total</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>Py_USING_MEMORY_DEBUGGER</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<function><type><name>int</name></type>
+<name>Py_ADDRESS_IN_RANGE</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>P</name></decl></param>, <param><decl><type><name>poolp</name></type> <name>pool</name></decl></param>)</parameter_list> <block>{
+<return>return <expr><name><name>pool</name>-&gt;<name>arenaindex</name></name> &lt; <name>maxarenas</name> &amp;&amp;
+(<name>uptr</name>)<name>P</name> - <name><name>arenas</name><index>[<expr><name><name>pool</name>-&gt;<name>arenaindex</name></name></expr>]</index></name>.<name>address</name> &lt; (<name>uptr</name>)<name>ARENA_SIZE</name> &amp;&amp;
+<name><name>arenas</name><index>[<expr><name><name>pool</name>-&gt;<name>arenaindex</name></name></expr>]</index></name>.<name>address</name> != 0</expr>;</return>
+}</block></function>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+</unit>

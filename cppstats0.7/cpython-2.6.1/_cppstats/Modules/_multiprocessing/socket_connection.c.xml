@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="Modules/_multiprocessing/socket_connection.c"><cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"multiprocessing.h"</cpp:file></cpp:include>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>MS_WINDOWS</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>WRITE</name><parameter_list>(<param><type><name>h</name></type></param>, <param><type><name>buffer</name></type></param>, <param><type><name>length</name></type></param>)</parameter_list></cpp:macro> <cpp:value>send((SOCKET)h, buffer, length, 0)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>READ</name><parameter_list>(<param><type><name>h</name></type></param>, <param><type><name>buffer</name></type></param>, <param><type><name>length</name></type></param>)</parameter_list></cpp:macro> <cpp:value>recv((SOCKET)h, buffer, length, 0)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>CLOSE</name><parameter_list>(<param><type><name>h</name></type></param>)</parameter_list></cpp:macro> <cpp:value>closesocket((SOCKET)h)</cpp:value></cpp:define>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>WRITE</name><parameter_list>(<param><type><name>h</name></type></param>, <param><type><name>buffer</name></type></param>, <param><type><name>length</name></type></param>)</parameter_list></cpp:macro> <cpp:value>write(h, buffer, length)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>READ</name><parameter_list>(<param><type><name>h</name></type></param>, <param><type><name>buffer</name></type></param>, <param><type><name>length</name></type></param>)</parameter_list></cpp:macro> <cpp:value>read(h, buffer, length)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>CLOSE</name><parameter_list>(<param><type><name>h</name></type></param>)</parameter_list></cpp:macro> <cpp:value>close(h)</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<function><type><specifier>static</specifier> <name>Py_ssize_t</name></type>
+<name>_conn_sendall</name><parameter_list>(<param><decl><type><name>HANDLE</name></type> <name>h</name></decl></param>, <param><decl><type><name>char</name> *</type><name>string</name></decl></param>, <param><decl><type><name>size_t</name></type> <name>length</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>char</name> *</type><name>p</name> <init>= <expr><name>string</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>res</name></decl>;</decl_stmt>
+<while>while <condition>(<expr><name>length</name> &gt; 0</expr>)</condition> <block>{
+<expr_stmt><expr><name>res</name> = <call><name>WRITE</name><argument_list>(<argument><expr><name>h</name></expr></argument>, <argument><expr><name>p</name></expr></argument>, <argument><expr><name>length</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>res</name> &lt; 0</expr>)</condition><then>
+<return>return <expr><name>MP_SOCKET_ERROR</name></expr>;</return></then></if>
+<expr_stmt><expr><name>length</name> -= <name>res</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>p</name> += <name>res</name></expr>;</expr_stmt>
+}</block></while>
+<return>return <expr><name>MP_SUCCESS</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>Py_ssize_t</name></type>
+<name>_conn_recvall</name><parameter_list>(<param><decl><type><name>HANDLE</name></type> <name>h</name></decl></param>, <param><decl><type><name>char</name> *</type><name>buffer</name></decl></param>, <param><decl><type><name>size_t</name></type> <name>length</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>size_t</name></type> <name>remaining</name> <init>= <expr><name>length</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>temp</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>char</name> *</type><name>p</name> <init>= <expr><name>buffer</name></expr></init></decl>;</decl_stmt>
+<while>while <condition>(<expr><name>remaining</name> &gt; 0</expr>)</condition> <block>{
+<expr_stmt><expr><name>temp</name> = <call><name>READ</name><argument_list>(<argument><expr><name>h</name></expr></argument>, <argument><expr><name>p</name></expr></argument>, <argument><expr><name>remaining</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>temp</name> &lt;= 0</expr>)</condition><then> <block>{
+<if>if <condition>(<expr><name>temp</name> == 0</expr>)</condition><then>
+<return>return <expr><name>remaining</name> == <name>length</name> ?
+<name>MP_END_OF_FILE</name> : <name>MP_EARLY_END_OF_FILE</name></expr>;</return></then>
+<else>else
+<return>return <expr><name>temp</name></expr>;</return></else></if>
+}</block></then></if>
+<expr_stmt><expr><name>remaining</name> -= <name>temp</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>p</name> += <name>temp</name></expr>;</expr_stmt>
+}</block></while>
+<return>return <expr><name>MP_SUCCESS</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>Py_ssize_t</name></type>
+<name>conn_send_string</name><parameter_list>(<param><decl><type><name>ConnectionObject</name> *</type><name>conn</name></decl></param>, <param><decl><type><name>char</name> *</type><name>string</name></decl></param>, <param><decl><type><name>size_t</name></type> <name>length</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>res</name></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>length</name> &lt; (16*1024)</expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>char</name> *</type><name>message</name></decl>;</decl_stmt>
+<expr_stmt><expr><name>message</name> = <call><name>PyMem_Malloc</name><argument_list>(<argument><expr><name>length</name>+4</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>message</name> == <name>NULL</name></expr>)</condition><then>
+<return>return <expr><name>MP_MEMORY_ERROR</name></expr>;</return></then></if>
+<expr_stmt><expr>*(<name>UINT32</name>*)<name>message</name> = <call><name>htonl</name><argument_list>(<argument><expr>(<name>UINT32</name>)<name>length</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>message</name>+4</expr></argument>, <argument><expr><name>string</name></expr></argument>, <argument><expr><name>length</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<decl_stmt><decl><type><name>Py_BEGIN_ALLOW_THREADS</name></type>
+<name>res</name> <init>= <expr><call><name>_conn_sendall</name><argument_list>(<argument><expr><name><name>conn</name>-&gt;<name>handle</name></name></expr></argument>, <argument><expr><name>message</name></expr></argument>, <argument><expr><name>length</name>+4</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<function_decl><type><name>Py_END_ALLOW_THREADS</name></type>
+<name>PyMem_Free</name><parameter_list>(<param><decl><type><name>message</name></type></decl></param>)</parameter_list>;</function_decl>
+}</block></then> <else>else <block>{
+<decl_stmt><decl><type><name>UINT32</name></type> <name>lenbuff</name></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>length</name> &gt; <name>MAX_MESSAGE_LENGTH</name></expr>)</condition><then>
+<return>return <expr><name>MP_BAD_MESSAGE_LENGTH</name></expr>;</return></then></if>
+<expr_stmt><expr><name>lenbuff</name> = <call><name>htonl</name><argument_list>(<argument><expr>(<name>UINT32</name>)<name>length</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<decl_stmt><decl><type><name>Py_BEGIN_ALLOW_THREADS</name></type>
+<name>res</name> <init>= <expr><call><name>_conn_sendall</name><argument_list>(<argument><expr><name><name>conn</name>-&gt;<name>handle</name></name></expr></argument>, <argument><expr>(<name>char</name>*)&amp;<name>lenbuff</name></expr></argument>, <argument><expr>4</expr></argument>)</argument_list></call> ||
+<call><name>_conn_sendall</name><argument_list>(<argument><expr><name><name>conn</name>-&gt;<name>handle</name></name></expr></argument>, <argument><expr><name>string</name></expr></argument>, <argument><expr><name>length</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><name>Py_END_ALLOW_THREADS</name></expr></expr_stmt>
+}</block></else></if>
+<return>return <expr><name>res</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>Py_ssize_t</name></type>
+<name>conn_recv_string</name><parameter_list>(<param><decl><type><name>ConnectionObject</name> *</type><name>conn</name></decl></param>, <param><decl><type><name>char</name> *</type><name>buffer</name></decl></param>,
+<param><decl><type><name>size_t</name></type> <name>buflength</name></decl></param>, <param><decl><type><name>char</name> **</type><name>newbuffer</name></decl></param>, <param><decl><type><name>size_t</name></type> <name>maxlength</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>res</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>UINT32</name></type> <name>ulength</name></decl>;</decl_stmt>
+<expr_stmt><expr>*<name>newbuffer</name> = <name>NULL</name></expr>;</expr_stmt>
+<decl_stmt><decl><type><name>Py_BEGIN_ALLOW_THREADS</name></type>
+<name>res</name> <init>= <expr><call><name>_conn_recvall</name><argument_list>(<argument><expr><name><name>conn</name>-&gt;<name>handle</name></name></expr></argument>, <argument><expr>(<name>char</name>*)&amp;<name>ulength</name></expr></argument>, <argument><expr>4</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<macro><name>Py_END_ALLOW_THREADS</name></macro>
+<if>if <condition>(<expr><name>res</name> &lt; 0</expr>)</condition><then>
+<return>return <expr><name>res</name></expr>;</return></then></if>
+<expr_stmt><expr><name>ulength</name> = <call><name>ntohl</name><argument_list>(<argument><expr><name>ulength</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>ulength</name> &gt; <name>maxlength</name></expr>)</condition><then>
+<return>return <expr><name>MP_BAD_MESSAGE_LENGTH</name></expr>;</return></then></if>
+<if>if <condition>(<expr><name>ulength</name> &lt;= <name>buflength</name></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>Py_BEGIN_ALLOW_THREADS</name></type>
+<name>res</name> <init>= <expr><call><name>_conn_recvall</name><argument_list>(<argument><expr><name><name>conn</name>-&gt;<name>handle</name></name></expr></argument>, <argument><expr><name>buffer</name></expr></argument>, <argument><expr>(<name>size_t</name>)<name>ulength</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<macro><name>Py_END_ALLOW_THREADS</name></macro>
+<return>return <expr><name>res</name> &lt; 0 ? <name>res</name> : <name>ulength</name></expr>;</return>
+}</block></then> <else>else <block>{
+<expr_stmt><expr>*<name>newbuffer</name> = <call><name>PyMem_Malloc</name><argument_list>(<argument><expr>(<name>size_t</name>)<name>ulength</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr>*<name>newbuffer</name> == <name>NULL</name></expr>)</condition><then>
+<return>return <expr><name>MP_MEMORY_ERROR</name></expr>;</return></then></if>
+<decl_stmt><decl><type><name>Py_BEGIN_ALLOW_THREADS</name></type>
+<name>res</name> <init>= <expr><call><name>_conn_recvall</name><argument_list>(<argument><expr><name><name>conn</name>-&gt;<name>handle</name></name></expr></argument>, <argument><expr>*<name>newbuffer</name></expr></argument>, <argument><expr>(<name>size_t</name>)<name>ulength</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<macro><name>Py_END_ALLOW_THREADS</name></macro>
+<return>return <expr><name>res</name> &lt; 0 ? (<name>Py_ssize_t</name>)<name>res</name> : (<name>Py_ssize_t</name>)<name>ulength</name></expr>;</return>
+}</block></else></if>
+}</block></function>
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>conn_poll</name><parameter_list>(<param><decl><type><name>ConnectionObject</name> *</type><name>conn</name></decl></param>, <param><decl><type><name>double</name></type> <name>timeout</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>res</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>fd_set</name></type> <name>rfds</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>FD_ZERO</name><argument_list>(<argument><expr>&amp;<name>rfds</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>FD_SET</name><argument_list>(<argument><expr>(<name>SOCKET</name>)<name><name>conn</name>-&gt;<name>handle</name></name></expr></argument>, <argument><expr>&amp;<name>rfds</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>timeout</name> &lt; 0.0</expr>)</condition><then> <block>{
+<expr_stmt><expr><name>res</name> = <call><name>select</name><argument_list>(<argument><expr>(<name>int</name>)<name><name>conn</name>-&gt;<name>handle</name></name>+1</expr></argument>, <argument><expr>&amp;<name>rfds</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<decl_stmt><decl><type>struct <name>timeval</name></type> <name>tv</name></decl>;</decl_stmt>
+<expr_stmt><expr><name><name>tv</name>.<name>tv_sec</name></name> = (<name>long</name>)<name>timeout</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>tv</name>.<name>tv_usec</name></name> = <call>(<name>long</name>)<argument_list>(<argument><expr>(<name>timeout</name> - <name><name>tv</name>.<name>tv_sec</name></name>) * 1e6 + 0.5</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>res</name> = <call><name>select</name><argument_list>(<argument><expr>(<name>int</name>)<name><name>conn</name>-&gt;<name>handle</name></name>+1</expr></argument>, <argument><expr>&amp;<name>rfds</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr>&amp;<name>tv</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+<if>if <condition>(<expr><name>res</name> &lt; 0</expr>)</condition><then> <block>{
+<return>return <expr><name>MP_SOCKET_ERROR</name></expr>;</return>
+}</block></then> <else>else <if>if <condition>(<expr><call><name>FD_ISSET</name><argument_list>(<argument><expr><name><name>conn</name>-&gt;<name>handle</name></name></expr></argument>, <argument><expr>&amp;<name>rfds</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<return>return <expr><name>TRUE</name></expr>;</return>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>res</name> == 0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>FALSE</name></expr>;</return>
+}</block></else></if></else></if>
+}</block></function>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>CONNECTION_NAME</name></cpp:macro> <cpp:value>"Connection"</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>CONNECTION_TYPE</name></cpp:macro> <cpp:value>ConnectionType</cpp:value></cpp:define>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"connection.h"</cpp:file></cpp:include>
+</unit>

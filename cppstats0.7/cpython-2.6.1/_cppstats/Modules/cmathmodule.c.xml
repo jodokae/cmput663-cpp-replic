@@ -1,0 +1,848 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="Modules/cmathmodule.c"><cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"Python.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;float.h&gt;</cpp:file></cpp:include>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr>(<name>FLT_RADIX</name> != 2 &amp;&amp; <name>FLT_RADIX</name> != 16)</expr></cpp:if>
+<cpp:error>#<cpp:directive>error</cpp:directive> "Modules/cmathmodule.c expects FLT_RADIX to be 2 or 16"</cpp:error>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr>!<call><name>defined</name><argument_list>(<argument><expr><name>M_LN2</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>M_LN2</name></cpp:macro> <cpp:value>(0.6931471805599453094)</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr>!<call><name>defined</name><argument_list>(<argument><expr><name>M_LN10</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>M_LN10</name></cpp:macro> <cpp:value>(2.302585092994045684)</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>CM_LARGE_DOUBLE</name></cpp:macro> <cpp:value>(DBL_MAX/4.)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>CM_SQRT_LARGE_DOUBLE</name></cpp:macro> <cpp:value>(sqrt(CM_LARGE_DOUBLE))</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>CM_LOG_LARGE_DOUBLE</name></cpp:macro> <cpp:value>(log(CM_LARGE_DOUBLE))</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>CM_SQRT_DBL_MIN</name></cpp:macro> <cpp:value>(sqrt(DBL_MIN))</cpp:value></cpp:define>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>FLT_RADIX</name>==2</expr></cpp:if>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>CM_SCALE_UP</name></cpp:macro> <cpp:value>(2*(DBL_MANT_DIG/2) + 1)</cpp:value></cpp:define>
+<cpp:elif>#<cpp:directive>elif</cpp:directive> <expr><name>FLT_RADIX</name>==16</expr></cpp:elif>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>CM_SCALE_UP</name></cpp:macro> <cpp:value>(4*DBL_MANT_DIG+1)</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>CM_SCALE_DOWN</name></cpp:macro> <cpp:value>(-(CM_SCALE_UP+1)/2)</cpp:value></cpp:define>
+<function_decl><type><specifier>static</specifier> <name>Py_complex</name></type> <name>c_asinh</name><parameter_list>(<param><decl><type><name>Py_complex</name></type></decl></param>)</parameter_list>;</function_decl>
+<function_decl><type><specifier>static</specifier> <name>Py_complex</name></type> <name>c_atanh</name><parameter_list>(<param><decl><type><name>Py_complex</name></type></decl></param>)</parameter_list>;</function_decl>
+<function_decl><type><specifier>static</specifier> <name>Py_complex</name></type> <name>c_cosh</name><parameter_list>(<param><decl><type><name>Py_complex</name></type></decl></param>)</parameter_list>;</function_decl>
+<function_decl><type><specifier>static</specifier> <name>Py_complex</name></type> <name>c_sinh</name><parameter_list>(<param><decl><type><name>Py_complex</name></type></decl></param>)</parameter_list>;</function_decl>
+<function_decl><type><specifier>static</specifier> <name>Py_complex</name></type> <name>c_sqrt</name><parameter_list>(<param><decl><type><name>Py_complex</name></type></decl></param>)</parameter_list>;</function_decl>
+<function_decl><type><specifier>static</specifier> <name>Py_complex</name></type> <name>c_tanh</name><parameter_list>(<param><decl><type><name>Py_complex</name></type></decl></param>)</parameter_list>;</function_decl>
+<function_decl><type><specifier>static</specifier> <name>PyObject</name> *</type> <name>math_error</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>;</function_decl>
+<enum>enum <name>special_types</name> <block>{
+<decl><name>ST_NINF</name></decl>,
+<decl><name>ST_NEG</name></decl>,
+<decl><name>ST_NZERO</name></decl>,
+<decl><name>ST_PZERO</name></decl>,
+<decl><name>ST_POS</name></decl>,
+<decl><name>ST_PINF</name></decl>,
+<decl><name>ST_NAN</name></decl>,
+}</block>;</enum>
+<enum><specifier>static</specifier> enum <name>special_types</name>
+<name>special_type</name><expr_stmt><expr>(<name>double</name> <name>d</name>) <block>{
+<if>if <condition>(<expr><call><name>Py_IS_FINITE</name><argument_list>(<argument><expr><name>d</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<if>if <condition>(<expr><name>d</name> != 0</expr>)</condition><then> <block>{
+<if>if <condition>(<expr><call><name>copysign</name><argument_list>(<argument><expr>1.</expr></argument>, <argument><expr><name>d</name></expr></argument>)</argument_list></call> == 1.</expr>)</condition><then>
+<return>return <expr><name>ST_POS</name></expr>;</return></then>
+<else>else
+<return>return <expr><name>ST_NEG</name></expr>;</return></else></if>
+<expr_stmt/></block></then></if></block></then></if>}</block></expr></expr_stmt></enum> <else>else <block>{
+<if>if <condition>(<expr><call><name>copysign</name><argument_list>(<argument><expr>1.</expr></argument>, <argument><expr><name>d</name></expr></argument>)</argument_list></call> == 1.</expr>)</condition><then>
+<return>return <expr><name>ST_PZERO</name></expr>;</return></then>
+<else>else
+<return>return <expr><name>ST_NZERO</name></expr>;</return></else></if>
+}</block></else>
+}
+if <expr_stmt><expr>(<call><name>Py_IS_NAN</name><argument_list>(<argument><expr><name>d</name></expr></argument>)</argument_list></call>)</expr></expr_stmt>
+<return>return <expr><name>ST_NAN</name></expr>;</return>
+<if>if <condition>(<expr><call><name>copysign</name><argument_list>(<argument><expr>1.</expr></argument>, <argument><expr><name>d</name></expr></argument>)</argument_list></call> == 1.</expr>)</condition><then>
+<return>return <expr><name>ST_PINF</name></expr>;</return></then>
+<else>else
+<return>return <expr><name>ST_NINF</name></expr>;</return></else></if>
+}
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SPECIAL_VALUE</name><parameter_list>(<param><type><name>z</name></type></param>, <param><type><name>table</name></type></param>)</parameter_list></cpp:macro> <cpp:value>if (!Py_IS_FINITE((z).real) || !Py_IS_FINITE((z).imag)) { errno = 0; return table[special_type((z).real)] [special_type((z).imag)]; }</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>P</name></cpp:macro> <cpp:value>Py_MATH_PI</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>P14</name></cpp:macro> <cpp:value>0.25*Py_MATH_PI</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>P12</name></cpp:macro> <cpp:value>0.5*Py_MATH_PI</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>P34</name></cpp:macro> <cpp:value>0.75*Py_MATH_PI</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>INF</name></cpp:macro> <cpp:value>Py_HUGE_VAL</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>N</name></cpp:macro> <cpp:value>Py_NAN</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>U</name></cpp:macro> <cpp:value>-9.5426319407711027e33</cpp:value></cpp:define>
+static <decl_stmt><decl><type><name>Py_complex</name></type> <name><name>acos_special_values</name><index>[<expr>7</expr>]</index><index>[<expr>7</expr>]</index></name></decl>;</decl_stmt>
+<function><type><specifier>static</specifier> <name>Py_complex</name></type>
+<name>c_acos</name><parameter_list>(<param><decl><type><name>Py_complex</name></type> <name>z</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>Py_complex</name></type> <name>s1</name></decl>, <decl><type ref="prev"/><name>s2</name></decl>, <decl><type ref="prev"/><name>r</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>SPECIAL_VALUE</name><argument_list>(<argument><expr><name>z</name></expr></argument>, <argument><expr><name>acos_special_values</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><call><name>fabs</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call> &gt; <name>CM_LARGE_DOUBLE</name> || <call><name>fabs</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call> &gt; <name>CM_LARGE_DOUBLE</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = <call><name>atan2</name><argument_list>(<argument><expr><call><name>fabs</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>z</name>.<name>real</name></name> &lt; 0.</expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = -<call><name>copysign</name><argument_list>(<argument><expr><call><name>log</name><argument_list>(<argument><expr><call><name>hypot</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name>/2.</expr></argument>, <argument><expr><name><name>z</name>.<name>imag</name></name>/2.</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call> +
+<name>M_LN2</name>*2.</expr></argument>, <argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = <call><name>copysign</name><argument_list>(<argument><expr><call><name>log</name><argument_list>(<argument><expr><call><name>hypot</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name>/2.</expr></argument>, <argument><expr><name><name>z</name>.<name>imag</name></name>/2.</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call> +
+<name>M_LN2</name>*2.</expr></argument>, <argument><expr>-<name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name><name>s1</name>.<name>real</name></name> = 1.-<name><name>z</name>.<name>real</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>s1</name>.<name>imag</name></name> = -<name><name>z</name>.<name>imag</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name>s1</name> = <call><name>c_sqrt</name><argument_list>(<argument><expr><name>s1</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>s2</name>.<name>real</name></name> = 1.+<name><name>z</name>.<name>real</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>s2</name>.<name>imag</name></name> = <name><name>z</name>.<name>imag</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name>s2</name> = <call><name>c_sqrt</name><argument_list>(<argument><expr><name>s2</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = 2.*<call><name>atan2</name><argument_list>(<argument><expr><name><name>s1</name>.<name>real</name></name></expr></argument>, <argument><expr><name><name>s2</name>.<name>real</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = <call><name>asinh</name><argument_list>(<argument><expr><name><name>s2</name>.<name>real</name></name>*<name><name>s1</name>.<name>imag</name></name> - <name><name>s2</name>.<name>imag</name></name>*<name><name>s1</name>.<name>real</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+<expr_stmt><expr><name>errno</name> = 0</expr>;</expr_stmt>
+<return>return <expr><name>r</name></expr>;</return>
+}</block></function>
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>c_acos_doc</name></expr></argument>,
+<argument><expr>"acos(x)\n"
+"\n"
+"Return the arc cosine of x."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>Py_complex</name></type> <name><name>acosh_special_values</name><index>[<expr>7</expr>]</index><index>[<expr>7</expr>]</index></name></decl>;</decl_stmt>
+<function><type><specifier>static</specifier> <name>Py_complex</name></type>
+<name>c_acosh</name><parameter_list>(<param><decl><type><name>Py_complex</name></type> <name>z</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>Py_complex</name></type> <name>s1</name></decl>, <decl><type ref="prev"/><name>s2</name></decl>, <decl><type ref="prev"/><name>r</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>SPECIAL_VALUE</name><argument_list>(<argument><expr><name>z</name></expr></argument>, <argument><expr><name>acosh_special_values</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><call><name>fabs</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call> &gt; <name>CM_LARGE_DOUBLE</name> || <call><name>fabs</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call> &gt; <name>CM_LARGE_DOUBLE</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = <call><name>log</name><argument_list>(<argument><expr><call><name>hypot</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name>/2.</expr></argument>, <argument><expr><name><name>z</name>.<name>imag</name></name>/2.</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call> + <name>M_LN2</name>*2.</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = <call><name>atan2</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>, <argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name><name>s1</name>.<name>real</name></name> = <name><name>z</name>.<name>real</name></name> - 1.</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>s1</name>.<name>imag</name></name> = <name><name>z</name>.<name>imag</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name>s1</name> = <call><name>c_sqrt</name><argument_list>(<argument><expr><name>s1</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>s2</name>.<name>real</name></name> = <name><name>z</name>.<name>real</name></name> + 1.</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>s2</name>.<name>imag</name></name> = <name><name>z</name>.<name>imag</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name>s2</name> = <call><name>c_sqrt</name><argument_list>(<argument><expr><name>s2</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = <call><name>asinh</name><argument_list>(<argument><expr><name><name>s1</name>.<name>real</name></name>*<name><name>s2</name>.<name>real</name></name> + <name><name>s1</name>.<name>imag</name></name>*<name><name>s2</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = 2.*<call><name>atan2</name><argument_list>(<argument><expr><name><name>s1</name>.<name>imag</name></name></expr></argument>, <argument><expr><name><name>s2</name>.<name>real</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+<expr_stmt><expr><name>errno</name> = 0</expr>;</expr_stmt>
+<return>return <expr><name>r</name></expr>;</return>
+}</block></function>
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>c_acosh_doc</name></expr></argument>,
+<argument><expr>"acosh(x)\n"
+"\n"
+"Return the hyperbolic arccosine of x."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<function><type><specifier>static</specifier> <name>Py_complex</name></type>
+<name>c_asin</name><parameter_list>(<param><decl><type><name>Py_complex</name></type> <name>z</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>Py_complex</name></type> <name>s</name></decl>, <decl><type ref="prev"/><name>r</name></decl>;</decl_stmt>
+<expr_stmt><expr><name><name>s</name>.<name>real</name></name> = -<name><name>z</name>.<name>imag</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>s</name>.<name>imag</name></name> = <name><name>z</name>.<name>real</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name>s</name> = <call><name>c_asinh</name><argument_list>(<argument><expr><name>s</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = <name><name>s</name>.<name>imag</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = -<name><name>s</name>.<name>real</name></name></expr>;</expr_stmt>
+<return>return <expr><name>r</name></expr>;</return>
+}</block></function>
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>c_asin_doc</name></expr></argument>,
+<argument><expr>"asin(x)\n"
+"\n"
+"Return the arc sine of x."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>Py_complex</name></type> <name><name>asinh_special_values</name><index>[<expr>7</expr>]</index><index>[<expr>7</expr>]</index></name></decl>;</decl_stmt>
+<function><type><specifier>static</specifier> <name>Py_complex</name></type>
+<name>c_asinh</name><parameter_list>(<param><decl><type><name>Py_complex</name></type> <name>z</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>Py_complex</name></type> <name>s1</name></decl>, <decl><type ref="prev"/><name>s2</name></decl>, <decl><type ref="prev"/><name>r</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>SPECIAL_VALUE</name><argument_list>(<argument><expr><name>z</name></expr></argument>, <argument><expr><name>asinh_special_values</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><call><name>fabs</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call> &gt; <name>CM_LARGE_DOUBLE</name> || <call><name>fabs</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call> &gt; <name>CM_LARGE_DOUBLE</name></expr>)</condition><then> <block>{
+<if>if <condition>(<expr><name><name>z</name>.<name>imag</name></name> &gt;= 0.</expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = <call><name>copysign</name><argument_list>(<argument><expr><call><name>log</name><argument_list>(<argument><expr><call><name>hypot</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name>/2.</expr></argument>, <argument><expr><name><name>z</name>.<name>imag</name></name>/2.</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call> +
+<name>M_LN2</name>*2.</expr></argument>, <argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = -<call><name>copysign</name><argument_list>(<argument><expr><call><name>log</name><argument_list>(<argument><expr><call><name>hypot</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name>/2.</expr></argument>, <argument><expr><name><name>z</name>.<name>imag</name></name>/2.</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call> +
+<name>M_LN2</name>*2.</expr></argument>, <argument><expr>-<name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = <call><name>atan2</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>, <argument><expr><call><name>fabs</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name><name>s1</name>.<name>real</name></name> = 1.+<name><name>z</name>.<name>imag</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>s1</name>.<name>imag</name></name> = -<name><name>z</name>.<name>real</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name>s1</name> = <call><name>c_sqrt</name><argument_list>(<argument><expr><name>s1</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>s2</name>.<name>real</name></name> = 1.-<name><name>z</name>.<name>imag</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>s2</name>.<name>imag</name></name> = <name><name>z</name>.<name>real</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name>s2</name> = <call><name>c_sqrt</name><argument_list>(<argument><expr><name>s2</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = <call><name>asinh</name><argument_list>(<argument><expr><name><name>s1</name>.<name>real</name></name>*<name><name>s2</name>.<name>imag</name></name>-<name><name>s2</name>.<name>real</name></name>*<name><name>s1</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = <call><name>atan2</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>, <argument><expr><name><name>s1</name>.<name>real</name></name>*<name><name>s2</name>.<name>real</name></name>-<name><name>s1</name>.<name>imag</name></name>*<name><name>s2</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+<expr_stmt><expr><name>errno</name> = 0</expr>;</expr_stmt>
+<return>return <expr><name>r</name></expr>;</return>
+}</block></function>
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>c_asinh_doc</name></expr></argument>,
+<argument><expr>"asinh(x)\n"
+"\n"
+"Return the hyperbolic arc sine of x."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<function><type><specifier>static</specifier> <name>Py_complex</name></type>
+<name>c_atan</name><parameter_list>(<param><decl><type><name>Py_complex</name></type> <name>z</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>Py_complex</name></type> <name>s</name></decl>, <decl><type ref="prev"/><name>r</name></decl>;</decl_stmt>
+<expr_stmt><expr><name><name>s</name>.<name>real</name></name> = -<name><name>z</name>.<name>imag</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>s</name>.<name>imag</name></name> = <name><name>z</name>.<name>real</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name>s</name> = <call><name>c_atanh</name><argument_list>(<argument><expr><name>s</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = <name><name>s</name>.<name>imag</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = -<name><name>s</name>.<name>real</name></name></expr>;</expr_stmt>
+<return>return <expr><name>r</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>double</name></type>
+<name>c_atan2</name><parameter_list>(<param><decl><type><name>Py_complex</name></type> <name>z</name></decl></param>)</parameter_list> <block>{
+<if>if <condition>(<expr><call><name>Py_IS_NAN</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call> || <call><name>Py_IS_NAN</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<return>return <expr><name>Py_NAN</name></expr>;</return></then></if>
+<if>if <condition>(<expr><call><name>Py_IS_INFINITY</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<if>if <condition>(<expr><call><name>Py_IS_INFINITY</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<if>if <condition>(<expr><call><name>copysign</name><argument_list>(<argument><expr>1.</expr></argument>, <argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call> == 1.</expr>)</condition><then>
+<return>return <expr><call><name>copysign</name><argument_list>(<argument><expr>0.25*<name>Py_MATH_PI</name></expr></argument>, <argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr>;</return></then>
+<else>else
+<return>return <expr><call><name>copysign</name><argument_list>(<argument><expr>0.75*<name>Py_MATH_PI</name></expr></argument>, <argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr>;</return></else></if>
+}</block></then></if>
+<return>return <expr><call><name>copysign</name><argument_list>(<argument><expr>0.5*<name>Py_MATH_PI</name></expr></argument>, <argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></then></if>
+<if>if <condition>(<expr><call><name>Py_IS_INFINITY</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call> || <name><name>z</name>.<name>imag</name></name> == 0.</expr>)</condition><then> <block>{
+<if>if <condition>(<expr><call><name>copysign</name><argument_list>(<argument><expr>1.</expr></argument>, <argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call> == 1.</expr>)</condition><then>
+<return>return <expr><call><name>copysign</name><argument_list>(<argument><expr>0.</expr></argument>, <argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr>;</return></then>
+<else>else
+<return>return <expr><call><name>copysign</name><argument_list>(<argument><expr><name>Py_MATH_PI</name></expr></argument>, <argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr>;</return></else></if>
+}</block></then></if>
+<return>return <expr><call><name>atan2</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>, <argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>c_atan_doc</name></expr></argument>,
+<argument><expr>"atan(x)\n"
+"\n"
+"Return the arc tangent of x."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>Py_complex</name></type> <name><name>atanh_special_values</name><index>[<expr>7</expr>]</index><index>[<expr>7</expr>]</index></name></decl>;</decl_stmt>
+<function><type><specifier>static</specifier> <name>Py_complex</name></type>
+<name>c_atanh</name><parameter_list>(<param><decl><type><name>Py_complex</name></type> <name>z</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>Py_complex</name></type> <name>r</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>double</name></type> <name>ay</name></decl>, <decl><type ref="prev"/><name>h</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>SPECIAL_VALUE</name><argument_list>(<argument><expr><name>z</name></expr></argument>, <argument><expr><name>atanh_special_values</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>z</name>.<name>real</name></name> &lt; 0.</expr>)</condition><then> <block>{
+<return>return <expr><call><name>c_neg</name><argument_list>(<argument><expr><call><name>c_atanh</name><argument_list>(<argument><expr><call><name>c_neg</name><argument_list>(<argument><expr><name>z</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>ay</name> = <call><name>fabs</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>z</name>.<name>real</name></name> &gt; <name>CM_SQRT_LARGE_DOUBLE</name> || <name>ay</name> &gt; <name>CM_SQRT_LARGE_DOUBLE</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>h</name> = <call><name>hypot</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name>/2.</expr></argument>, <argument><expr><name><name>z</name>.<name>imag</name></name>/2.</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = <name><name>z</name>.<name>real</name></name>/4./<name>h</name>/<name>h</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = -<call><name>copysign</name><argument_list>(<argument><expr><name>Py_MATH_PI</name>/2.</expr></argument>, <argument><expr>-<name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>errno</name> = 0</expr>;</expr_stmt>
+}</block></then> <else>else <if>if <condition>(<expr><name><name>z</name>.<name>real</name></name> == 1. &amp;&amp; <name>ay</name> &lt; <name>CM_SQRT_DBL_MIN</name></expr>)</condition><then> <block>{
+<if>if <condition>(<expr><name>ay</name> == 0.</expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = <name>INF</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = <name><name>z</name>.<name>imag</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name>errno</name> = <name>EDOM</name></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = -<call><name>log</name><argument_list>(<argument><expr><call><name>sqrt</name><argument_list>(<argument><expr><name>ay</name></expr></argument>)</argument_list></call>/<call><name>sqrt</name><argument_list>(<argument><expr><call><name>hypot</name><argument_list>(<argument><expr><name>ay</name></expr></argument>, <argument><expr>2.</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = <call><name>copysign</name><argument_list>(<argument><expr><call><name>atan2</name><argument_list>(<argument><expr>2.</expr></argument>, <argument><expr>-<name>ay</name></expr></argument>)</argument_list></call>/2</expr></argument>, <argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>errno</name> = 0</expr>;</expr_stmt>
+}</block></else></if>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = <call><name>log1p</name><argument_list>(<argument><expr>4.*<name><name>z</name>.<name>real</name></name>/((1-<name><name>z</name>.<name>real</name></name>)*(1-<name><name>z</name>.<name>real</name></name>) + <name>ay</name>*<name>ay</name>)</expr></argument>)</argument_list></call>/4.</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = -<call><name>atan2</name><argument_list>(<argument><expr>-2.*<name><name>z</name>.<name>imag</name></name></expr></argument>, <argument><expr>(1-<name><name>z</name>.<name>real</name></name>)*(1+<name><name>z</name>.<name>real</name></name>) - <name>ay</name>*<name>ay</name></expr></argument>)</argument_list></call>/2.</expr>;</expr_stmt>
+<expr_stmt><expr><name>errno</name> = 0</expr>;</expr_stmt>
+}</block></else></if></else></if>
+<return>return <expr><name>r</name></expr>;</return>
+}</block></function>
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>c_atanh_doc</name></expr></argument>,
+<argument><expr>"atanh(x)\n"
+"\n"
+"Return the hyperbolic arc tangent of x."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<function><type><specifier>static</specifier> <name>Py_complex</name></type>
+<name>c_cos</name><parameter_list>(<param><decl><type><name>Py_complex</name></type> <name>z</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>Py_complex</name></type> <name>r</name></decl>;</decl_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = -<name><name>z</name>.<name>imag</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = <name><name>z</name>.<name>real</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name>r</name> = <call><name>c_cosh</name><argument_list>(<argument><expr><name>r</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>r</name></expr>;</return>
+}</block></function>
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>c_cos_doc</name></expr></argument>,
+<argument><expr>"cos(x)\n"
+"n"
+"Return the cosine of x."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>Py_complex</name></type> <name><name>cosh_special_values</name><index>[<expr>7</expr>]</index><index>[<expr>7</expr>]</index></name></decl>;</decl_stmt>
+<function><type><specifier>static</specifier> <name>Py_complex</name></type>
+<name>c_cosh</name><parameter_list>(<param><decl><type><name>Py_complex</name></type> <name>z</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>Py_complex</name></type> <name>r</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>double</name></type> <name>x_minus_one</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>!<call><name>Py_IS_FINITE</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call> || !<call><name>Py_IS_FINITE</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<if>if <condition>(<expr><call><name>Py_IS_INFINITY</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call> &amp;&amp; <call><name>Py_IS_FINITE</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call> &amp;&amp;
+(<name><name>z</name>.<name>imag</name></name> != 0.)</expr>)</condition><then> <block>{
+<if>if <condition>(<expr><name><name>z</name>.<name>real</name></name> &gt; 0</expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = <call><name>copysign</name><argument_list>(<argument><expr><name>INF</name></expr></argument>, <argument><expr><call><name>cos</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = <call><name>copysign</name><argument_list>(<argument><expr><name>INF</name></expr></argument>, <argument><expr><call><name>sin</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = <call><name>copysign</name><argument_list>(<argument><expr><name>INF</name></expr></argument>, <argument><expr><call><name>cos</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = -<call><name>copysign</name><argument_list>(<argument><expr><name>INF</name></expr></argument>, <argument><expr><call><name>sin</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name>r</name> = <name><name>cosh_special_values</name><index>[<expr><call><name>special_type</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call></expr>]</index>
+<index>[<expr><call><name>special_type</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr>]</index></name></expr>;</expr_stmt>
+}</block></else></if>
+<if>if <condition>(<expr><call><name>Py_IS_INFINITY</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call> &amp;&amp; !<call><name>Py_IS_NAN</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<expr_stmt><expr><name>errno</name> = <name>EDOM</name></expr>;</expr_stmt></then>
+<else>else
+<expr_stmt><expr><name>errno</name> = 0</expr>;</expr_stmt></else></if>
+<return>return <expr><name>r</name></expr>;</return>
+}</block></then></if>
+<if>if <condition>(<expr><call><name>fabs</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call> &gt; <name>CM_LOG_LARGE_DOUBLE</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>x_minus_one</name> = <name><name>z</name>.<name>real</name></name> - <call><name>copysign</name><argument_list>(<argument><expr>1.</expr></argument>, <argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = <call><name>cos</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call> * <call><name>cosh</name><argument_list>(<argument><expr><name>x_minus_one</name></expr></argument>)</argument_list></call> * <name>Py_MATH_E</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = <call><name>sin</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call> * <call><name>sinh</name><argument_list>(<argument><expr><name>x_minus_one</name></expr></argument>)</argument_list></call> * <name>Py_MATH_E</name></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = <call><name>cos</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call> * <call><name>cosh</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = <call><name>sin</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call> * <call><name>sinh</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+<if>if <condition>(<expr><call><name>Py_IS_INFINITY</name><argument_list>(<argument><expr><name><name>r</name>.<name>real</name></name></expr></argument>)</argument_list></call> || <call><name>Py_IS_INFINITY</name><argument_list>(<argument><expr><name><name>r</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<expr_stmt><expr><name>errno</name> = <name>ERANGE</name></expr>;</expr_stmt></then>
+<else>else
+<expr_stmt><expr><name>errno</name> = 0</expr>;</expr_stmt></else></if>
+<return>return <expr><name>r</name></expr>;</return>
+}</block></function>
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>c_cosh_doc</name></expr></argument>,
+<argument><expr>"cosh(x)\n"
+"n"
+"Return the hyperbolic cosine of x."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>Py_complex</name></type> <name><name>exp_special_values</name><index>[<expr>7</expr>]</index><index>[<expr>7</expr>]</index></name></decl>;</decl_stmt>
+<function><type><specifier>static</specifier> <name>Py_complex</name></type>
+<name>c_exp</name><parameter_list>(<param><decl><type><name>Py_complex</name></type> <name>z</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>Py_complex</name></type> <name>r</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>double</name></type> <name>l</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>!<call><name>Py_IS_FINITE</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call> || !<call><name>Py_IS_FINITE</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<if>if <condition>(<expr><call><name>Py_IS_INFINITY</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call> &amp;&amp; <call><name>Py_IS_FINITE</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call>
+&amp;&amp; (<name><name>z</name>.<name>imag</name></name> != 0.)</expr>)</condition><then> <block>{
+<if>if <condition>(<expr><name><name>z</name>.<name>real</name></name> &gt; 0</expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = <call><name>copysign</name><argument_list>(<argument><expr><name>INF</name></expr></argument>, <argument><expr><call><name>cos</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = <call><name>copysign</name><argument_list>(<argument><expr><name>INF</name></expr></argument>, <argument><expr><call><name>sin</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = <call><name>copysign</name><argument_list>(<argument><expr>0.</expr></argument>, <argument><expr><call><name>cos</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = <call><name>copysign</name><argument_list>(<argument><expr>0.</expr></argument>, <argument><expr><call><name>sin</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name>r</name> = <name><name>exp_special_values</name><index>[<expr><call><name>special_type</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call></expr>]</index>
+<index>[<expr><call><name>special_type</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr>]</index></name></expr>;</expr_stmt>
+}</block></else></if>
+<if>if <condition>(<expr><call><name>Py_IS_INFINITY</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call> &amp;&amp;
+(<call><name>Py_IS_FINITE</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call> ||
+(<call><name>Py_IS_INFINITY</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call> &amp;&amp; <name><name>z</name>.<name>real</name></name> &gt; 0))</expr>)</condition><then>
+<expr_stmt><expr><name>errno</name> = <name>EDOM</name></expr>;</expr_stmt></then>
+<else>else
+<expr_stmt><expr><name>errno</name> = 0</expr>;</expr_stmt></else></if>
+<return>return <expr><name>r</name></expr>;</return>
+}</block></then></if>
+<if>if <condition>(<expr><name><name>z</name>.<name>real</name></name> &gt; <name>CM_LOG_LARGE_DOUBLE</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>l</name> = <call><name>exp</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name>-1.</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = <name>l</name>*<call><name>cos</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call>*<name>Py_MATH_E</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = <name>l</name>*<call><name>sin</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call>*<name>Py_MATH_E</name></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name>l</name> = <call><name>exp</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = <name>l</name>*<call><name>cos</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = <name>l</name>*<call><name>sin</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+<if>if <condition>(<expr><call><name>Py_IS_INFINITY</name><argument_list>(<argument><expr><name><name>r</name>.<name>real</name></name></expr></argument>)</argument_list></call> || <call><name>Py_IS_INFINITY</name><argument_list>(<argument><expr><name><name>r</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<expr_stmt><expr><name>errno</name> = <name>ERANGE</name></expr>;</expr_stmt></then>
+<else>else
+<expr_stmt><expr><name>errno</name> = 0</expr>;</expr_stmt></else></if>
+<return>return <expr><name>r</name></expr>;</return>
+}</block></function>
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>c_exp_doc</name></expr></argument>,
+<argument><expr>"exp(x)\n"
+"\n"
+"Return the exponential value e**x."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>Py_complex</name></type> <name><name>log_special_values</name><index>[<expr>7</expr>]</index><index>[<expr>7</expr>]</index></name></decl>;</decl_stmt>
+<function><type><specifier>static</specifier> <name>Py_complex</name></type>
+<name>c_log</name><parameter_list>(<param><decl><type><name>Py_complex</name></type> <name>z</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>Py_complex</name></type> <name>r</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>double</name></type> <name>ax</name></decl>, <decl><type ref="prev"/><name>ay</name></decl>, <decl><type ref="prev"/><name>am</name></decl>, <decl><type ref="prev"/><name>an</name></decl>, <decl><type ref="prev"/><name>h</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>SPECIAL_VALUE</name><argument_list>(<argument><expr><name>z</name></expr></argument>, <argument><expr><name>log_special_values</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>ax</name> = <call><name>fabs</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>ay</name> = <call><name>fabs</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>ax</name> &gt; <name>CM_LARGE_DOUBLE</name> || <name>ay</name> &gt; <name>CM_LARGE_DOUBLE</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = <call><name>log</name><argument_list>(<argument><expr><call><name>hypot</name><argument_list>(<argument><expr><name>ax</name>/2.</expr></argument>, <argument><expr><name>ay</name>/2.</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call> + <name>M_LN2</name></expr>;</expr_stmt>
+}</block></then> <else>else <if>if <condition>(<expr><name>ax</name> &lt; <name>DBL_MIN</name> &amp;&amp; <name>ay</name> &lt; <name>DBL_MIN</name></expr>)</condition><then> <block>{
+<if>if <condition>(<expr><name>ax</name> &gt; 0. || <name>ay</name> &gt; 0.</expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = <call><name>log</name><argument_list>(<argument><expr><call><name>hypot</name><argument_list>(<argument><expr><call><name>ldexp</name><argument_list>(<argument><expr><name>ax</name></expr></argument>, <argument><expr><name>DBL_MANT_DIG</name></expr></argument>)</argument_list></call></expr></argument>,
+<argument><expr><call><name>ldexp</name><argument_list>(<argument><expr><name>ay</name></expr></argument>, <argument><expr><name>DBL_MANT_DIG</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call> - <name>DBL_MANT_DIG</name>*<name>M_LN2</name></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = -<name>INF</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = <call><name>atan2</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>, <argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>errno</name> = <name>EDOM</name></expr>;</expr_stmt>
+<return>return <expr><name>r</name></expr>;</return>
+}</block></else></if>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name>h</name> = <call><name>hypot</name><argument_list>(<argument><expr><name>ax</name></expr></argument>, <argument><expr><name>ay</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr>0.71 &lt;= <name>h</name> &amp;&amp; <name>h</name> &lt;= 1.73</expr>)</condition><then> <block>{
+<expr_stmt><expr><name>am</name> = <name>ax</name> &gt; <name>ay</name> ? <name>ax</name> : <name>ay</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>an</name> = <name>ax</name> &gt; <name>ay</name> ? <name>ay</name> : <name>ax</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = <call><name>log1p</name><argument_list>(<argument><expr>(<name>am</name>-1)*(<name>am</name>+1)+<name>an</name>*<name>an</name></expr></argument>)</argument_list></call>/2.</expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = <call><name>log</name><argument_list>(<argument><expr><name>h</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+}</block></else></if></else></if>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = <call><name>atan2</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>, <argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>errno</name> = 0</expr>;</expr_stmt>
+<return>return <expr><name>r</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>Py_complex</name></type>
+<name>c_log10</name><parameter_list>(<param><decl><type><name>Py_complex</name></type> <name>z</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>Py_complex</name></type> <name>r</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>errno_save</name></decl>;</decl_stmt>
+<expr_stmt><expr><name>r</name> = <call><name>c_log</name><argument_list>(<argument><expr><name>z</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>errno_save</name> = <name>errno</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = <name><name>r</name>.<name>real</name></name> / <name>M_LN10</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = <name><name>r</name>.<name>imag</name></name> / <name>M_LN10</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>errno</name> = <name>errno_save</name></expr>;</expr_stmt>
+<return>return <expr><name>r</name></expr>;</return>
+}</block></function>
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>c_log10_doc</name></expr></argument>,
+<argument><expr>"log10(x)\n"
+"\n"
+"Return the base-10 logarithm of x."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<function><type><specifier>static</specifier> <name>Py_complex</name></type>
+<name>c_sin</name><parameter_list>(<param><decl><type><name>Py_complex</name></type> <name>z</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>Py_complex</name></type> <name>s</name></decl>, <decl><type ref="prev"/><name>r</name></decl>;</decl_stmt>
+<expr_stmt><expr><name><name>s</name>.<name>real</name></name> = -<name><name>z</name>.<name>imag</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>s</name>.<name>imag</name></name> = <name><name>z</name>.<name>real</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name>s</name> = <call><name>c_sinh</name><argument_list>(<argument><expr><name>s</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = <name><name>s</name>.<name>imag</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = -<name><name>s</name>.<name>real</name></name></expr>;</expr_stmt>
+<return>return <expr><name>r</name></expr>;</return>
+}</block></function>
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>c_sin_doc</name></expr></argument>,
+<argument><expr>"sin(x)\n"
+"\n"
+"Return the sine of x."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>Py_complex</name></type> <name><name>sinh_special_values</name><index>[<expr>7</expr>]</index><index>[<expr>7</expr>]</index></name></decl>;</decl_stmt>
+<function><type><specifier>static</specifier> <name>Py_complex</name></type>
+<name>c_sinh</name><parameter_list>(<param><decl><type><name>Py_complex</name></type> <name>z</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>Py_complex</name></type> <name>r</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>double</name></type> <name>x_minus_one</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>!<call><name>Py_IS_FINITE</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call> || !<call><name>Py_IS_FINITE</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<if>if <condition>(<expr><call><name>Py_IS_INFINITY</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call> &amp;&amp; <call><name>Py_IS_FINITE</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call>
+&amp;&amp; (<name><name>z</name>.<name>imag</name></name> != 0.)</expr>)</condition><then> <block>{
+<if>if <condition>(<expr><name><name>z</name>.<name>real</name></name> &gt; 0</expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = <call><name>copysign</name><argument_list>(<argument><expr><name>INF</name></expr></argument>, <argument><expr><call><name>cos</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = <call><name>copysign</name><argument_list>(<argument><expr><name>INF</name></expr></argument>, <argument><expr><call><name>sin</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = -<call><name>copysign</name><argument_list>(<argument><expr><name>INF</name></expr></argument>, <argument><expr><call><name>cos</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = <call><name>copysign</name><argument_list>(<argument><expr><name>INF</name></expr></argument>, <argument><expr><call><name>sin</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name>r</name> = <name><name>sinh_special_values</name><index>[<expr><call><name>special_type</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call></expr>]</index>
+<index>[<expr><call><name>special_type</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr>]</index></name></expr>;</expr_stmt>
+}</block></else></if>
+<if>if <condition>(<expr><call><name>Py_IS_INFINITY</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call> &amp;&amp; !<call><name>Py_IS_NAN</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<expr_stmt><expr><name>errno</name> = <name>EDOM</name></expr>;</expr_stmt></then>
+<else>else
+<expr_stmt><expr><name>errno</name> = 0</expr>;</expr_stmt></else></if>
+<return>return <expr><name>r</name></expr>;</return>
+}</block></then></if>
+<if>if <condition>(<expr><call><name>fabs</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call> &gt; <name>CM_LOG_LARGE_DOUBLE</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>x_minus_one</name> = <name><name>z</name>.<name>real</name></name> - <call><name>copysign</name><argument_list>(<argument><expr>1.</expr></argument>, <argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = <call><name>cos</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call> * <call><name>sinh</name><argument_list>(<argument><expr><name>x_minus_one</name></expr></argument>)</argument_list></call> * <name>Py_MATH_E</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = <call><name>sin</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call> * <call><name>cosh</name><argument_list>(<argument><expr><name>x_minus_one</name></expr></argument>)</argument_list></call> * <name>Py_MATH_E</name></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = <call><name>cos</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call> * <call><name>sinh</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = <call><name>sin</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call> * <call><name>cosh</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+<if>if <condition>(<expr><call><name>Py_IS_INFINITY</name><argument_list>(<argument><expr><name><name>r</name>.<name>real</name></name></expr></argument>)</argument_list></call> || <call><name>Py_IS_INFINITY</name><argument_list>(<argument><expr><name><name>r</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<expr_stmt><expr><name>errno</name> = <name>ERANGE</name></expr>;</expr_stmt></then>
+<else>else
+<expr_stmt><expr><name>errno</name> = 0</expr>;</expr_stmt></else></if>
+<return>return <expr><name>r</name></expr>;</return>
+}</block></function>
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>c_sinh_doc</name></expr></argument>,
+<argument><expr>"sinh(x)\n"
+"\n"
+"Return the hyperbolic sine of x."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>Py_complex</name></type> <name><name>sqrt_special_values</name><index>[<expr>7</expr>]</index><index>[<expr>7</expr>]</index></name></decl>;</decl_stmt>
+<function><type><specifier>static</specifier> <name>Py_complex</name></type>
+<name>c_sqrt</name><parameter_list>(<param><decl><type><name>Py_complex</name></type> <name>z</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>Py_complex</name></type> <name>r</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>double</name></type> <name>s</name></decl>,<decl><type ref="prev"/><name>d</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>double</name></type> <name>ax</name></decl>, <decl><type ref="prev"/><name>ay</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>SPECIAL_VALUE</name><argument_list>(<argument><expr><name>z</name></expr></argument>, <argument><expr><name>sqrt_special_values</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>z</name>.<name>real</name></name> == 0. &amp;&amp; <name><name>z</name>.<name>imag</name></name> == 0.</expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = 0.</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = <name><name>z</name>.<name>imag</name></name></expr>;</expr_stmt>
+<return>return <expr><name>r</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>ax</name> = <call><name>fabs</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>ay</name> = <call><name>fabs</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>ax</name> &lt; <name>DBL_MIN</name> &amp;&amp; <name>ay</name> &lt; <name>DBL_MIN</name> &amp;&amp; (<name>ax</name> &gt; 0. || <name>ay</name> &gt; 0.)</expr>)</condition><then> <block>{
+<expr_stmt><expr><name>ax</name> = <call><name>ldexp</name><argument_list>(<argument><expr><name>ax</name></expr></argument>, <argument><expr><name>CM_SCALE_UP</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>s</name> = <call><name>ldexp</name><argument_list>(<argument><expr><call><name>sqrt</name><argument_list>(<argument><expr><name>ax</name> + <call><name>hypot</name><argument_list>(<argument><expr><name>ax</name></expr></argument>, <argument><expr><call><name>ldexp</name><argument_list>(<argument><expr><name>ay</name></expr></argument>, <argument><expr><name>CM_SCALE_UP</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr></argument>,
+<argument><expr><name>CM_SCALE_DOWN</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name>ax</name> /= 8.</expr>;</expr_stmt>
+<expr_stmt><expr><name>s</name> = 2.*<call><name>sqrt</name><argument_list>(<argument><expr><name>ax</name> + <call><name>hypot</name><argument_list>(<argument><expr><name>ax</name></expr></argument>, <argument><expr><name>ay</name>/8.</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+<expr_stmt><expr><name>d</name> = <name>ay</name>/(2.*<name>s</name>)</expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>z</name>.<name>real</name></name> &gt;= 0.</expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = <name>s</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = <call><name>copysign</name><argument_list>(<argument><expr><name>d</name></expr></argument>, <argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = <name>d</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = <call><name>copysign</name><argument_list>(<argument><expr><name>s</name></expr></argument>, <argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+<expr_stmt><expr><name>errno</name> = 0</expr>;</expr_stmt>
+<return>return <expr><name>r</name></expr>;</return>
+}</block></function>
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>c_sqrt_doc</name></expr></argument>,
+<argument><expr>"sqrt(x)\n"
+"\n"
+"Return the square root of x."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<function><type><specifier>static</specifier> <name>Py_complex</name></type>
+<name>c_tan</name><parameter_list>(<param><decl><type><name>Py_complex</name></type> <name>z</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>Py_complex</name></type> <name>s</name></decl>, <decl><type ref="prev"/><name>r</name></decl>;</decl_stmt>
+<expr_stmt><expr><name><name>s</name>.<name>real</name></name> = -<name><name>z</name>.<name>imag</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>s</name>.<name>imag</name></name> = <name><name>z</name>.<name>real</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name>s</name> = <call><name>c_tanh</name><argument_list>(<argument><expr><name>s</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = <name><name>s</name>.<name>imag</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = -<name><name>s</name>.<name>real</name></name></expr>;</expr_stmt>
+<return>return <expr><name>r</name></expr>;</return>
+}</block></function>
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>c_tan_doc</name></expr></argument>,
+<argument><expr>"tan(x)\n"
+"\n"
+"Return the tangent of x."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>Py_complex</name></type> <name><name>tanh_special_values</name><index>[<expr>7</expr>]</index><index>[<expr>7</expr>]</index></name></decl>;</decl_stmt>
+<function><type><specifier>static</specifier> <name>Py_complex</name></type>
+<name>c_tanh</name><parameter_list>(<param><decl><type><name>Py_complex</name></type> <name>z</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>Py_complex</name></type> <name>r</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>double</name></type> <name>tx</name></decl>, <decl><type ref="prev"/><name>ty</name></decl>, <decl><type ref="prev"/><name>cx</name></decl>, <decl><type ref="prev"/><name>txty</name></decl>, <decl><type ref="prev"/><name>denom</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>!<call><name>Py_IS_FINITE</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call> || !<call><name>Py_IS_FINITE</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<if>if <condition>(<expr><call><name>Py_IS_INFINITY</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call> &amp;&amp; <call><name>Py_IS_FINITE</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call>
+&amp;&amp; (<name><name>z</name>.<name>imag</name></name> != 0.)</expr>)</condition><then> <block>{
+<if>if <condition>(<expr><name><name>z</name>.<name>real</name></name> &gt; 0</expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = 1.0</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = <call><name>copysign</name><argument_list>(<argument><expr>0.</expr></argument>,
+<argument><expr>2.*<call><name>sin</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call>*<call><name>cos</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = -1.0</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = <call><name>copysign</name><argument_list>(<argument><expr>0.</expr></argument>,
+<argument><expr>2.*<call><name>sin</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call>*<call><name>cos</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name>r</name> = <name><name>tanh_special_values</name><index>[<expr><call><name>special_type</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call></expr>]</index>
+<index>[<expr><call><name>special_type</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr>]</index></name></expr>;</expr_stmt>
+}</block></else></if>
+<if>if <condition>(<expr><call><name>Py_IS_INFINITY</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call> &amp;&amp; <call><name>Py_IS_FINITE</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<expr_stmt><expr><name>errno</name> = <name>EDOM</name></expr>;</expr_stmt></then>
+<else>else
+<expr_stmt><expr><name>errno</name> = 0</expr>;</expr_stmt></else></if>
+<return>return <expr><name>r</name></expr>;</return>
+}</block></then></if>
+<if>if <condition>(<expr><call><name>fabs</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call> &gt; <name>CM_LOG_LARGE_DOUBLE</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = <call><name>copysign</name><argument_list>(<argument><expr>1.</expr></argument>, <argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = 4.*<call><name>sin</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call>*<call><name>cos</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call>*<call><name>exp</name><argument_list>(<argument><expr>-2.*<call><name>fabs</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name>tx</name> = <call><name>tanh</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>ty</name> = <call><name>tan</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>cx</name> = 1./<call><name>cosh</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>txty</name> = <name>tx</name>*<name>ty</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>denom</name> = 1. + <name>txty</name>*<name>txty</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>real</name></name> = <call><name>tx</name>*<argument_list>(<argument><expr>1.+<name>ty</name>*<name>ty</name></expr></argument>)</argument_list></call>/<name>denom</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>.<name>imag</name></name> = ((<name>ty</name>/<name>denom</name>)*<name>cx</name>)*<name>cx</name></expr>;</expr_stmt>
+}</block></else></if>
+<expr_stmt><expr><name>errno</name> = 0</expr>;</expr_stmt>
+<return>return <expr><name>r</name></expr>;</return>
+}</block></function>
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>c_tanh_doc</name></expr></argument>,
+<argument><expr>"tanh(x)\n"
+"\n"
+"Return the hyperbolic tangent of x."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>cmath_log</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>Py_complex</name></type> <name>x</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>Py_complex</name></type> <name>y</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"D|D"</expr></argument>, <argument><expr>&amp;<name>x</name></expr></argument>, <argument><expr>&amp;<name>y</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<expr_stmt><expr><name>errno</name> = 0</expr>;</expr_stmt>
+<macro><name>PyFPE_START_PROTECT</name><argument_list>(<argument>"complex function"</argument>, <argument>return 0</argument>)</argument_list></macro>
+<expr_stmt><expr><name>x</name> = <call><name>c_log</name><argument_list>(<argument><expr><name>x</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><call><name>PyTuple_GET_SIZE</name><argument_list>(<argument><expr><name>args</name></expr></argument>)</argument_list></call> == 2</expr>)</condition><then> <block>{
+<expr_stmt><expr><name>y</name> = <call><name>c_log</name><argument_list>(<argument><expr><name>y</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>x</name> = <call><name>c_quot</name><argument_list>(<argument><expr><name>x</name></expr></argument>, <argument><expr><name>y</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+<macro><name>PyFPE_END_PROTECT</name><argument_list>(<argument>x</argument>)</argument_list></macro>
+<if>if <condition>(<expr><name>errno</name> != 0</expr>)</condition><then>
+<return>return <expr><call><name>math_error</name><argument_list>()</argument_list></call></expr>;</return></then></if>
+<return>return <expr><call><name>PyComplex_FromCComplex</name><argument_list>(<argument><expr><name>x</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>cmath_log_doc</name></expr></argument>,
+<argument><expr>"log(x[, base]) -&gt; the logarithm of x to the given base.\n\
+If the base not specified, returns the natural logarithm (base e) of x."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>math_error</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list> <block>{
+<if>if <condition>(<expr><name>errno</name> == <name>EDOM</name></expr>)</condition><then>
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>, <argument><expr>"math domain error"</expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+<else>else <if>if <condition>(<expr><name>errno</name> == <name>ERANGE</name></expr>)</condition><then>
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_OverflowError</name></expr></argument>, <argument><expr>"math range error"</expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+<else>else
+<expr_stmt><expr><call><name>PyErr_SetFromErrno</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if></else></if>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>math_1</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>, <param><function_decl><type><name>Py_complex</name></type> (*<name>func</name>)<parameter_list>(<param><decl><type><name>Py_complex</name></type></decl></param>)</parameter_list></function_decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>Py_complex</name></type> <name>x</name></decl>,<decl><type ref="prev"/><name>r</name></decl> ;</decl_stmt>
+<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"D"</expr></argument>, <argument><expr>&amp;<name>x</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<expr_stmt><expr><name>errno</name> = 0</expr>;</expr_stmt>
+<macro><name>PyFPE_START_PROTECT</name><argument_list>(<argument>"complex function"</argument>, <argument>return 0</argument>)</argument_list></macro><empty_stmt>;</empty_stmt>
+<expr_stmt><expr><name>r</name> = <call>(*<name>func</name>)<argument_list>(<argument><expr><name>x</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyFPE_END_PROTECT</name><argument_list>(<argument><expr><name>r</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>errno</name> == <name>EDOM</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>, <argument><expr>"math domain error"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></then> <else>else <if>if <condition>(<expr><name>errno</name> == <name>ERANGE</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_OverflowError</name></expr></argument>, <argument><expr>"math range error"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></then> <else>else <block>{
+<return>return <expr><call><name>PyComplex_FromCComplex</name><argument_list>(<argument><expr><name>r</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></else></if></else></if>
+}</block></function>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>FUNC1</name><parameter_list>(<param><type><name>stubname</name></type></param>, <param><type><name>func</name></type></param>)</parameter_list></cpp:macro> <cpp:value>static PyObject * stubname(PyObject *self, PyObject *args) { return math_1(args, func); }</cpp:value></cpp:define>
+<macro><name>FUNC1</name><argument_list>(<argument>cmath_acos</argument>, <argument>c_acos</argument>)</argument_list></macro>
+<macro><name>FUNC1</name><argument_list>(<argument>cmath_acosh</argument>, <argument>c_acosh</argument>)</argument_list></macro>
+<macro><name>FUNC1</name><argument_list>(<argument>cmath_asin</argument>, <argument>c_asin</argument>)</argument_list></macro>
+<macro><name>FUNC1</name><argument_list>(<argument>cmath_asinh</argument>, <argument>c_asinh</argument>)</argument_list></macro>
+<macro><name>FUNC1</name><argument_list>(<argument>cmath_atan</argument>, <argument>c_atan</argument>)</argument_list></macro>
+<macro><name>FUNC1</name><argument_list>(<argument>cmath_atanh</argument>, <argument>c_atanh</argument>)</argument_list></macro>
+<macro><name>FUNC1</name><argument_list>(<argument>cmath_cos</argument>, <argument>c_cos</argument>)</argument_list></macro>
+<macro><name>FUNC1</name><argument_list>(<argument>cmath_cosh</argument>, <argument>c_cosh</argument>)</argument_list></macro>
+<macro><name>FUNC1</name><argument_list>(<argument>cmath_exp</argument>, <argument>c_exp</argument>)</argument_list></macro>
+<macro><name>FUNC1</name><argument_list>(<argument>cmath_log10</argument>, <argument>c_log10</argument>)</argument_list></macro>
+<macro><name>FUNC1</name><argument_list>(<argument>cmath_sin</argument>, <argument>c_sin</argument>)</argument_list></macro>
+<macro><name>FUNC1</name><argument_list>(<argument>cmath_sinh</argument>, <argument>c_sinh</argument>)</argument_list></macro>
+<macro><name>FUNC1</name><argument_list>(<argument>cmath_sqrt</argument>, <argument>c_sqrt</argument>)</argument_list></macro>
+<macro><name>FUNC1</name><argument_list>(<argument>cmath_tan</argument>, <argument>c_tan</argument>)</argument_list></macro>
+<macro><name>FUNC1</name><argument_list>(<argument>cmath_tanh</argument>, <argument>c_tanh</argument>)</argument_list></macro>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>cmath_phase</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>Py_complex</name></type> <name>z</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>double</name></type> <name>phi</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"D:phase"</expr></argument>, <argument><expr>&amp;<name>z</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<expr_stmt><expr><name>errno</name> = 0</expr>;</expr_stmt>
+<macro><name>PyFPE_START_PROTECT</name><argument_list>(<argument>"arg function"</argument>, <argument>return 0</argument>)</argument_list></macro>
+<expr_stmt><expr><name>phi</name> = <call><name>c_atan2</name><argument_list>(<argument><expr><name>z</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyFPE_END_PROTECT</name><argument_list>(<argument>phi</argument>)</argument_list></macro>
+<if>if <condition>(<expr><name>errno</name> != 0</expr>)</condition><then>
+<return>return <expr><call><name>math_error</name><argument_list>()</argument_list></call></expr>;</return></then>
+<else>else
+<return>return <expr><call><name>PyFloat_FromDouble</name><argument_list>(<argument><expr><name>phi</name></expr></argument>)</argument_list></call></expr>;</return></else></if>
+}</block></function>
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>cmath_phase_doc</name></expr></argument>,
+<argument><expr>"phase(z) -&gt; float\n\n\
+Return argument, also known as the phase angle, of a complex."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>cmath_polar</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>Py_complex</name></type> <name>z</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>double</name></type> <name>r</name></decl>, <decl><type ref="prev"/><name>phi</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"D:polar"</expr></argument>, <argument><expr>&amp;<name>z</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<macro><name>PyFPE_START_PROTECT</name><argument_list>(<argument>"polar function"</argument>, <argument>return 0</argument>)</argument_list></macro>
+<expr_stmt><expr><name>phi</name> = <call><name>c_atan2</name><argument_list>(<argument><expr><name>z</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>r</name> = <call><name>c_abs</name><argument_list>(<argument><expr><name>z</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyFPE_END_PROTECT</name><argument_list>(<argument>r</argument>)</argument_list></macro>
+<if>if <condition>(<expr><name>errno</name> != 0</expr>)</condition><then>
+<return>return <expr><call><name>math_error</name><argument_list>()</argument_list></call></expr>;</return></then>
+<else>else
+<return>return <expr><call><name>Py_BuildValue</name><argument_list>(<argument><expr>"dd"</expr></argument>, <argument><expr><name>r</name></expr></argument>, <argument><expr><name>phi</name></expr></argument>)</argument_list></call></expr>;</return></else></if>
+}</block></function>
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>cmath_polar_doc</name></expr></argument>,
+<argument><expr>"polar(z) -&gt; r: float, phi: float\n\n\
+Convert a complex from rectangular coordinates to polar coordinates. r is\n\
+the distance from 0 and phi the phase angle."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>Py_complex</name></type> <name><name>rect_special_values</name><index>[<expr>7</expr>]</index><index>[<expr>7</expr>]</index></name></decl>;</decl_stmt>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>cmath_rect</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>Py_complex</name></type> <name>z</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>double</name></type> <name>r</name></decl>, <decl><type ref="prev"/><name>phi</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"dd:rect"</expr></argument>, <argument><expr>&amp;<name>r</name></expr></argument>, <argument><expr>&amp;<name>phi</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<expr_stmt><expr><name>errno</name> = 0</expr>;</expr_stmt>
+<macro><name>PyFPE_START_PROTECT</name><argument_list>(<argument>"rect function"</argument>, <argument>return 0</argument>)</argument_list></macro>
+<if>if <condition>(<expr>!<call><name>Py_IS_FINITE</name><argument_list>(<argument><expr><name>r</name></expr></argument>)</argument_list></call> || !<call><name>Py_IS_FINITE</name><argument_list>(<argument><expr><name>phi</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<if>if <condition>(<expr><call><name>Py_IS_INFINITY</name><argument_list>(<argument><expr><name>r</name></expr></argument>)</argument_list></call> &amp;&amp; (<call><name>Py_IS_FINITE</name><argument_list>(<argument><expr><name>phi</name></expr></argument>)</argument_list></call>
+&amp;&amp; (<name>phi</name> != 0.))</expr>)</condition><then> <block>{
+<if>if <condition>(<expr><name>r</name> &gt; 0</expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>z</name>.<name>real</name></name> = <call><name>copysign</name><argument_list>(<argument><expr><name>INF</name></expr></argument>, <argument><expr><call><name>cos</name><argument_list>(<argument><expr><name>phi</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>z</name>.<name>imag</name></name> = <call><name>copysign</name><argument_list>(<argument><expr><name>INF</name></expr></argument>, <argument><expr><call><name>sin</name><argument_list>(<argument><expr><name>phi</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name><name>z</name>.<name>real</name></name> = -<call><name>copysign</name><argument_list>(<argument><expr><name>INF</name></expr></argument>, <argument><expr><call><name>cos</name><argument_list>(<argument><expr><name>phi</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>z</name>.<name>imag</name></name> = -<call><name>copysign</name><argument_list>(<argument><expr><name>INF</name></expr></argument>, <argument><expr><call><name>sin</name><argument_list>(<argument><expr><name>phi</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name>z</name> = <name><name>rect_special_values</name><index>[<expr><call><name>special_type</name><argument_list>(<argument><expr><name>r</name></expr></argument>)</argument_list></call></expr>]</index>
+<index>[<expr><call><name>special_type</name><argument_list>(<argument><expr><name>phi</name></expr></argument>)</argument_list></call></expr>]</index></name></expr>;</expr_stmt>
+}</block></else></if>
+<if>if <condition>(<expr><name>r</name> != 0. &amp;&amp; !<call><name>Py_IS_NAN</name><argument_list>(<argument><expr><name>r</name></expr></argument>)</argument_list></call> &amp;&amp; <call><name>Py_IS_INFINITY</name><argument_list>(<argument><expr><name>phi</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<expr_stmt><expr><name>errno</name> = <name>EDOM</name></expr>;</expr_stmt></then>
+<else>else
+<expr_stmt><expr><name>errno</name> = 0</expr>;</expr_stmt></else></if>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name><name>z</name>.<name>real</name></name> = <name>r</name> * <call><name>cos</name><argument_list>(<argument><expr><name>phi</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>z</name>.<name>imag</name></name> = <name>r</name> * <call><name>sin</name><argument_list>(<argument><expr><name>phi</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>errno</name> = 0</expr>;</expr_stmt>
+}</block></else></if>
+<macro><name>PyFPE_END_PROTECT</name><argument_list>(<argument>z</argument>)</argument_list></macro>
+<if>if <condition>(<expr><name>errno</name> != 0</expr>)</condition><then>
+<return>return <expr><call><name>math_error</name><argument_list>()</argument_list></call></expr>;</return></then>
+<else>else
+<return>return <expr><call><name>PyComplex_FromCComplex</name><argument_list>(<argument><expr><name>z</name></expr></argument>)</argument_list></call></expr>;</return></else></if>
+}</block></function>
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>cmath_rect_doc</name></expr></argument>,
+<argument><expr>"rect(r, phi) -&gt; z: complex\n\n\
+Convert from polar coordinates to rectangular coordinates."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>cmath_isnan</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>Py_complex</name></type> <name>z</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"D:isnan"</expr></argument>, <argument><expr>&amp;<name>z</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<return>return <expr><call><name>PyBool_FromLong</name><argument_list>(<argument><expr><call><name>Py_IS_NAN</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call> || <call><name>Py_IS_NAN</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>cmath_isnan_doc</name></expr></argument>,
+<argument><expr>"isnan(z) -&gt; bool\n\
+Checks if the real or imaginary part of z not a number (NaN)"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>cmath_isinf</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>Py_complex</name></type> <name>z</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"D:isnan"</expr></argument>, <argument><expr>&amp;<name>z</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<return>return <expr><call><name>PyBool_FromLong</name><argument_list>(<argument><expr><call><name>Py_IS_INFINITY</name><argument_list>(<argument><expr><name><name>z</name>.<name>real</name></name></expr></argument>)</argument_list></call> ||
+<call><name>Py_IS_INFINITY</name><argument_list>(<argument><expr><name><name>z</name>.<name>imag</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>cmath_isinf_doc</name></expr></argument>,
+<argument><expr>"isinf(z) -&gt; bool\n\
+Checks if the real or imaginary part of z is infinite."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>module_doc</name></expr></argument>,
+<argument><expr>"This module is always available. It provides access to mathematical\n"
+"functions for complex numbers."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyMethodDef</name></type> <name><name>cmath_methods</name><index>[]</index></name> <init>= <expr><block>{
+<expr><block>{<expr>"acos"</expr>, <expr><name>cmath_acos</name></expr>, <expr><name>METH_VARARGS</name></expr>, <expr><name>c_acos_doc</name></expr>}</block></expr>,
+<expr><block>{<expr>"acosh"</expr>, <expr><name>cmath_acosh</name></expr>, <expr><name>METH_VARARGS</name></expr>, <expr><name>c_acosh_doc</name></expr>}</block></expr>,
+<expr><block>{<expr>"asin"</expr>, <expr><name>cmath_asin</name></expr>, <expr><name>METH_VARARGS</name></expr>, <expr><name>c_asin_doc</name></expr>}</block></expr>,
+<expr><block>{<expr>"asinh"</expr>, <expr><name>cmath_asinh</name></expr>, <expr><name>METH_VARARGS</name></expr>, <expr><name>c_asinh_doc</name></expr>}</block></expr>,
+<expr><block>{<expr>"atan"</expr>, <expr><name>cmath_atan</name></expr>, <expr><name>METH_VARARGS</name></expr>, <expr><name>c_atan_doc</name></expr>}</block></expr>,
+<expr><block>{<expr>"atanh"</expr>, <expr><name>cmath_atanh</name></expr>, <expr><name>METH_VARARGS</name></expr>, <expr><name>c_atanh_doc</name></expr>}</block></expr>,
+<expr><block>{<expr>"cos"</expr>, <expr><name>cmath_cos</name></expr>, <expr><name>METH_VARARGS</name></expr>, <expr><name>c_cos_doc</name></expr>}</block></expr>,
+<expr><block>{<expr>"cosh"</expr>, <expr><name>cmath_cosh</name></expr>, <expr><name>METH_VARARGS</name></expr>, <expr><name>c_cosh_doc</name></expr>}</block></expr>,
+<expr><block>{<expr>"exp"</expr>, <expr><name>cmath_exp</name></expr>, <expr><name>METH_VARARGS</name></expr>, <expr><name>c_exp_doc</name></expr>}</block></expr>,
+<expr><block>{<expr>"isinf"</expr>, <expr><name>cmath_isinf</name></expr>, <expr><name>METH_VARARGS</name></expr>, <expr><name>cmath_isinf_doc</name></expr>}</block></expr>,
+<expr><block>{<expr>"isnan"</expr>, <expr><name>cmath_isnan</name></expr>, <expr><name>METH_VARARGS</name></expr>, <expr><name>cmath_isnan_doc</name></expr>}</block></expr>,
+<expr><block>{<expr>"log"</expr>, <expr><name>cmath_log</name></expr>, <expr><name>METH_VARARGS</name></expr>, <expr><name>cmath_log_doc</name></expr>}</block></expr>,
+<expr><block>{<expr>"log10"</expr>, <expr><name>cmath_log10</name></expr>, <expr><name>METH_VARARGS</name></expr>, <expr><name>c_log10_doc</name></expr>}</block></expr>,
+<expr><block>{<expr>"phase"</expr>, <expr><name>cmath_phase</name></expr>, <expr><name>METH_VARARGS</name></expr>, <expr><name>cmath_phase_doc</name></expr>}</block></expr>,
+<expr><block>{<expr>"polar"</expr>, <expr><name>cmath_polar</name></expr>, <expr><name>METH_VARARGS</name></expr>, <expr><name>cmath_polar_doc</name></expr>}</block></expr>,
+<expr><block>{<expr>"rect"</expr>, <expr><name>cmath_rect</name></expr>, <expr><name>METH_VARARGS</name></expr>, <expr><name>cmath_rect_doc</name></expr>}</block></expr>,
+<expr><block>{<expr>"sin"</expr>, <expr><name>cmath_sin</name></expr>, <expr><name>METH_VARARGS</name></expr>, <expr><name>c_sin_doc</name></expr>}</block></expr>,
+<expr><block>{<expr>"sinh"</expr>, <expr><name>cmath_sinh</name></expr>, <expr><name>METH_VARARGS</name></expr>, <expr><name>c_sinh_doc</name></expr>}</block></expr>,
+<expr><block>{<expr>"sqrt"</expr>, <expr><name>cmath_sqrt</name></expr>, <expr><name>METH_VARARGS</name></expr>, <expr><name>c_sqrt_doc</name></expr>}</block></expr>,
+<expr><block>{<expr>"tan"</expr>, <expr><name>cmath_tan</name></expr>, <expr><name>METH_VARARGS</name></expr>, <expr><name>c_tan_doc</name></expr>}</block></expr>,
+<expr><block>{<expr>"tanh"</expr>, <expr><name>cmath_tanh</name></expr>, <expr><name>METH_VARARGS</name></expr>, <expr><name>c_tanh_doc</name></expr>}</block></expr>,
+<expr><block>{<expr><name>NULL</name></expr>, <expr><name>NULL</name></expr>}</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+<function><type><name>PyMODINIT_FUNC</name></type>
+<name>initcmath</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>m</name></decl>;</decl_stmt>
+<expr_stmt><expr><name>m</name> = <call><name>Py_InitModule3</name><argument_list>(<argument><expr>"cmath"</expr></argument>, <argument><expr><name>cmath_methods</name></expr></argument>, <argument><expr><name>module_doc</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>m</name> == <name>NULL</name></expr>)</condition><then>
+<return>return;</return></then></if>
+<expr_stmt><expr><call><name>PyModule_AddObject</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"pi"</expr></argument>,
+<argument><expr><call><name>PyFloat_FromDouble</name><argument_list>(<argument><expr><name>Py_MATH_PI</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddObject</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"e"</expr></argument>, <argument><expr><call><name>PyFloat_FromDouble</name><argument_list>(<argument><expr><name>Py_MATH_E</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>INIT_SPECIAL_VALUES</name><parameter_list>(<param><type><name>NAME</name></type></param>, <param><type><name>BODY</name></type></param>)</parameter_list></cpp:macro> <cpp:value>{ Py_complex* p = (Py_complex*)NAME; BODY }</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>C</name><parameter_list>(<param><type><name>REAL</name></type></param>, <param><type><name>IMAG</name></type></param>)</parameter_list></cpp:macro> <cpp:value>p-&gt;real = REAL; p-&gt;imag = IMAG; ++p;</cpp:value></cpp:define>
+<macro><name>INIT_SPECIAL_VALUES</name><argument_list>(<argument>acos_special_values</argument>, <argument>{
+C(P34,INF) C(P,INF) C(P,INF) C(P,-INF) C(P,-INF) C(P34,-INF) C(N,INF)
+C(P12,INF) C(U,U) C(U,U) C(U,U) C(U,U) C(P12,-INF) C(N,N)
+C(P12,INF) C(U,U) C(P12,0.) C(P12,-0.) C(U,U) C(P12,-INF) C(P12,N)
+C(P12,INF) C(U,U) C(P12,0.) C(P12,-0.) C(U,U) C(P12,-INF) C(P12,N)
+C(P12,INF) C(U,U) C(U,U) C(U,U) C(U,U) C(P12,-INF) C(N,N)
+C(P14,INF) C(0.,INF) C(0.,INF) C(0.,-INF) C(0.,-INF) C(P14,-INF) C(N,INF)
+C(N,INF) C(N,N) C(N,N) C(N,N) C(N,N) C(N,-INF) C(N,N)
+}</argument>)</argument_list></macro>
+<macro><name>INIT_SPECIAL_VALUES</name><argument_list>(<argument>acosh_special_values</argument>, <argument>{
+C(INF,-P34) C(INF,-P) C(INF,-P) C(INF,P) C(INF,P) C(INF,P34) C(INF,N)
+C(INF,-P12) C(U,U) C(U,U) C(U,U) C(U,U) C(INF,P12) C(N,N)
+C(INF,-P12) C(U,U) C(0.,-P12) C(0.,P12) C(U,U) C(INF,P12) C(N,N)
+C(INF,-P12) C(U,U) C(0.,-P12) C(0.,P12) C(U,U) C(INF,P12) C(N,N)
+C(INF,-P12) C(U,U) C(U,U) C(U,U) C(U,U) C(INF,P12) C(N,N)
+C(INF,-P14) C(INF,-0.) C(INF,-0.) C(INF,0.) C(INF,0.) C(INF,P14) C(INF,N)
+C(INF,N) C(N,N) C(N,N) C(N,N) C(N,N) C(INF,N) C(N,N)
+}</argument>)</argument_list></macro>
+<macro><name>INIT_SPECIAL_VALUES</name><argument_list>(<argument>asinh_special_values</argument>, <argument>{
+C(-INF,-P14) C(-INF,-0.) C(-INF,-0.) C(-INF,0.) C(-INF,0.) C(-INF,P14) C(-INF,N)
+C(-INF,-P12) C(U,U) C(U,U) C(U,U) C(U,U) C(-INF,P12) C(N,N)
+C(-INF,-P12) C(U,U) C(-0.,-0.) C(-0.,0.) C(U,U) C(-INF,P12) C(N,N)
+C(INF,-P12) C(U,U) C(0.,-0.) C(0.,0.) C(U,U) C(INF,P12) C(N,N)
+C(INF,-P12) C(U,U) C(U,U) C(U,U) C(U,U) C(INF,P12) C(N,N)
+C(INF,-P14) C(INF,-0.) C(INF,-0.) C(INF,0.) C(INF,0.) C(INF,P14) C(INF,N)
+C(INF,N) C(N,N) C(N,-0.) C(N,0.) C(N,N) C(INF,N) C(N,N)
+}</argument>)</argument_list></macro>
+<macro><name>INIT_SPECIAL_VALUES</name><argument_list>(<argument>atanh_special_values</argument>, <argument>{
+C(-0.,-P12) C(-0.,-P12) C(-0.,-P12) C(-0.,P12) C(-0.,P12) C(-0.,P12) C(-0.,N)
+C(-0.,-P12) C(U,U) C(U,U) C(U,U) C(U,U) C(-0.,P12) C(N,N)
+C(-0.,-P12) C(U,U) C(-0.,-0.) C(-0.,0.) C(U,U) C(-0.,P12) C(-0.,N)
+C(0.,-P12) C(U,U) C(0.,-0.) C(0.,0.) C(U,U) C(0.,P12) C(0.,N)
+C(0.,-P12) C(U,U) C(U,U) C(U,U) C(U,U) C(0.,P12) C(N,N)
+C(0.,-P12) C(0.,-P12) C(0.,-P12) C(0.,P12) C(0.,P12) C(0.,P12) C(0.,N)
+C(0.,-P12) C(N,N) C(N,N) C(N,N) C(N,N) C(0.,P12) C(N,N)
+}</argument>)</argument_list></macro>
+<macro><name>INIT_SPECIAL_VALUES</name><argument_list>(<argument>cosh_special_values</argument>, <argument>{
+C(INF,N) C(U,U) C(INF,0.) C(INF,-0.) C(U,U) C(INF,N) C(INF,N)
+C(N,N) C(U,U) C(U,U) C(U,U) C(U,U) C(N,N) C(N,N)
+C(N,0.) C(U,U) C(1.,0.) C(1.,-0.) C(U,U) C(N,0.) C(N,0.)
+C(N,0.) C(U,U) C(1.,-0.) C(1.,0.) C(U,U) C(N,0.) C(N,0.)
+C(N,N) C(U,U) C(U,U) C(U,U) C(U,U) C(N,N) C(N,N)
+C(INF,N) C(U,U) C(INF,-0.) C(INF,0.) C(U,U) C(INF,N) C(INF,N)
+C(N,N) C(N,N) C(N,0.) C(N,0.) C(N,N) C(N,N) C(N,N)
+}</argument>)</argument_list></macro>
+<macro><name>INIT_SPECIAL_VALUES</name><argument_list>(<argument>exp_special_values</argument>, <argument>{
+C(0.,0.) C(U,U) C(0.,-0.) C(0.,0.) C(U,U) C(0.,0.) C(0.,0.)
+C(N,N) C(U,U) C(U,U) C(U,U) C(U,U) C(N,N) C(N,N)
+C(N,N) C(U,U) C(1.,-0.) C(1.,0.) C(U,U) C(N,N) C(N,N)
+C(N,N) C(U,U) C(1.,-0.) C(1.,0.) C(U,U) C(N,N) C(N,N)
+C(N,N) C(U,U) C(U,U) C(U,U) C(U,U) C(N,N) C(N,N)
+C(INF,N) C(U,U) C(INF,-0.) C(INF,0.) C(U,U) C(INF,N) C(INF,N)
+C(N,N) C(N,N) C(N,-0.) C(N,0.) C(N,N) C(N,N) C(N,N)
+}</argument>)</argument_list></macro>
+<macro><name>INIT_SPECIAL_VALUES</name><argument_list>(<argument>log_special_values</argument>, <argument>{
+C(INF,-P34) C(INF,-P) C(INF,-P) C(INF,P) C(INF,P) C(INF,P34) C(INF,N)
+C(INF,-P12) C(U,U) C(U,U) C(U,U) C(U,U) C(INF,P12) C(N,N)
+C(INF,-P12) C(U,U) C(-INF,-P) C(-INF,P) C(U,U) C(INF,P12) C(N,N)
+C(INF,-P12) C(U,U) C(-INF,-0.) C(-INF,0.) C(U,U) C(INF,P12) C(N,N)
+C(INF,-P12) C(U,U) C(U,U) C(U,U) C(U,U) C(INF,P12) C(N,N)
+C(INF,-P14) C(INF,-0.) C(INF,-0.) C(INF,0.) C(INF,0.) C(INF,P14) C(INF,N)
+C(INF,N) C(N,N) C(N,N) C(N,N) C(N,N) C(INF,N) C(N,N)
+}</argument>)</argument_list></macro>
+<macro><name>INIT_SPECIAL_VALUES</name><argument_list>(<argument>sinh_special_values</argument>, <argument>{
+C(INF,N) C(U,U) C(-INF,-0.) C(-INF,0.) C(U,U) C(INF,N) C(INF,N)
+C(N,N) C(U,U) C(U,U) C(U,U) C(U,U) C(N,N) C(N,N)
+C(0.,N) C(U,U) C(-0.,-0.) C(-0.,0.) C(U,U) C(0.,N) C(0.,N)
+C(0.,N) C(U,U) C(0.,-0.) C(0.,0.) C(U,U) C(0.,N) C(0.,N)
+C(N,N) C(U,U) C(U,U) C(U,U) C(U,U) C(N,N) C(N,N)
+C(INF,N) C(U,U) C(INF,-0.) C(INF,0.) C(U,U) C(INF,N) C(INF,N)
+C(N,N) C(N,N) C(N,-0.) C(N,0.) C(N,N) C(N,N) C(N,N)
+}</argument>)</argument_list></macro>
+<macro><name>INIT_SPECIAL_VALUES</name><argument_list>(<argument>sqrt_special_values</argument>, <argument>{
+C(INF,-INF) C(0.,-INF) C(0.,-INF) C(0.,INF) C(0.,INF) C(INF,INF) C(N,INF)
+C(INF,-INF) C(U,U) C(U,U) C(U,U) C(U,U) C(INF,INF) C(N,N)
+C(INF,-INF) C(U,U) C(0.,-0.) C(0.,0.) C(U,U) C(INF,INF) C(N,N)
+C(INF,-INF) C(U,U) C(0.,-0.) C(0.,0.) C(U,U) C(INF,INF) C(N,N)
+C(INF,-INF) C(U,U) C(U,U) C(U,U) C(U,U) C(INF,INF) C(N,N)
+C(INF,-INF) C(INF,-0.) C(INF,-0.) C(INF,0.) C(INF,0.) C(INF,INF) C(INF,N)
+C(INF,-INF) C(N,N) C(N,N) C(N,N) C(N,N) C(INF,INF) C(N,N)
+}</argument>)</argument_list></macro>
+<macro><name>INIT_SPECIAL_VALUES</name><argument_list>(<argument>tanh_special_values</argument>, <argument>{
+C(-1.,0.) C(U,U) C(-1.,-0.) C(-1.,0.) C(U,U) C(-1.,0.) C(-1.,0.)
+C(N,N) C(U,U) C(U,U) C(U,U) C(U,U) C(N,N) C(N,N)
+C(N,N) C(U,U) C(-0.,-0.) C(-0.,0.) C(U,U) C(N,N) C(N,N)
+C(N,N) C(U,U) C(0.,-0.) C(0.,0.) C(U,U) C(N,N) C(N,N)
+C(N,N) C(U,U) C(U,U) C(U,U) C(U,U) C(N,N) C(N,N)
+C(1.,0.) C(U,U) C(1.,-0.) C(1.,0.) C(U,U) C(1.,0.) C(1.,0.)
+C(N,N) C(N,N) C(N,-0.) C(N,0.) C(N,N) C(N,N) C(N,N)
+}</argument>)</argument_list></macro>
+<macro><name>INIT_SPECIAL_VALUES</name><argument_list>(<argument>rect_special_values</argument>, <argument>{
+C(INF,N) C(U,U) C(-INF,0.) C(-INF,-0.) C(U,U) C(INF,N) C(INF,N)
+C(N,N) C(U,U) C(U,U) C(U,U) C(U,U) C(N,N) C(N,N)
+C(0.,0.) C(U,U) C(-0.,0.) C(-0.,-0.) C(U,U) C(0.,0.) C(0.,0.)
+C(0.,0.) C(U,U) C(0.,-0.) C(0.,0.) C(U,U) C(0.,0.) C(0.,0.)
+C(N,N) C(U,U) C(U,U) C(U,U) C(U,U) C(N,N) C(N,N)
+C(INF,N) C(U,U) C(INF,-0.) C(INF,0.) C(U,U) C(INF,N) C(INF,N)
+C(N,N) C(N,N) C(N,0.) C(N,0.) C(N,N) C(N,N) C(N,N)
+}</argument>)</argument_list></macro>
+}</block></function>
+</unit>

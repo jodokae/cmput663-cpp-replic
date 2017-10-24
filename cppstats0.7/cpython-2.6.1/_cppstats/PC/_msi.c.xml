@@ -1,0 +1,888 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="PC/_msi.c"><cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;Python.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;fci.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;fcntl.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;windows.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;msi.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;msiquery.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;msidefs.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;rpc.h&gt;</cpp:file></cpp:include>
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyObject</name> *</type><name>MSIError</name></decl>;</decl_stmt>
+<function><type><specifier>static</specifier> <name>PyObject</name>*</type>
+<name>uuidcreate</name><parameter_list>(<param><decl><type><name>PyObject</name>*</type> <name>obj</name></decl></param>, <param><decl><type><name>PyObject</name>*</type><name>args</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>UUID</name></type> <name>result</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>char</name> *</type><name>cresult</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>oresult</name></decl>;</decl_stmt>
+<if>if <condition>(<expr><call><name>UuidCreate</name><argument_list>(<argument><expr>&amp;<name>result</name></expr></argument>)</argument_list></call> == <name>RPC_S_UUID_NO_ADDRESS</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_NotImplementedError</name></expr></argument>, <argument><expr>"processing 'no address' result"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></then></if>
+<if>if <condition>(<expr><call><name>UuidToString</name><argument_list>(<argument><expr>&amp;<name>result</name></expr></argument>, <argument><expr>&amp;<name>cresult</name></expr></argument>)</argument_list></call> == <name>RPC_S_OUT_OF_MEMORY</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_MemoryError</name></expr></argument>, <argument><expr>"out of memory in uuidgen"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>oresult</name> = <call><name>PyString_FromString</name><argument_list>(<argument><expr><name>cresult</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>RpcStringFree</name><argument_list>(<argument><expr>&amp;<name>cresult</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>oresult</name></expr>;</return>
+}</block></function>
+<expr_stmt><expr>static <macro><name>FNFCIALLOC</name><argument_list>(<argument>cb_alloc</argument>)</argument_list></macro> <block>{
+<return>return <expr><call><name>malloc</name><argument_list>(<argument><expr><name>cb</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></expr></expr_stmt>
+<expr_stmt><expr>static <macro><name>FNFCIFREE</name><argument_list>(<argument>cb_free</argument>)</argument_list></macro> <block>{
+<expr><call><name>free</name><argument_list>(<argument><expr><name>memory</name></expr></argument>)</argument_list></call></expr>;
+}</block>
+static <macro><name>FNFCIOPEN</name><argument_list>(<argument>cb_open</argument>)</argument_list></macro> <block>{
+<expr><name>int</name> <name>result</name> = <call><name>_open</name><argument_list>(<argument><expr><name>pszFile</name></expr></argument>, <argument><expr><name>oflag</name></expr></argument>, <argument><expr><name>pmode</name></expr></argument>)</argument_list></call></expr>;
+<if>if <condition>(<expr><name>result</name> == -1</expr>)</condition><then>
+<expr_stmt><expr>*<name>err</name> = <name>errno</name></expr>;</expr_stmt></then></if></block></expr></expr_stmt>
+<return>return <expr><name>result</name></expr>;</return>
+}
+static <macro><name>FNFCIREAD</name><argument_list>(<argument>cb_read</argument>)</argument_list></macro> <block>{
+<decl_stmt><decl><type><name>UINT</name></type> <name>result</name> <init>= <expr>(<name>UINT</name>)<call><name>_read</name><argument_list>(<argument><expr><name>hf</name></expr></argument>, <argument><expr><name>memory</name></expr></argument>, <argument><expr><name>cb</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>result</name> != <name>cb</name></expr>)</condition><then>
+<expr_stmt><expr>*<name>err</name> = <name>errno</name></expr>;</expr_stmt></then></if>
+<return>return <expr><name>result</name></expr>;</return>
+}</block>
+<expr_stmt><expr>static <macro><name>FNFCIWRITE</name><argument_list>(<argument>cb_write</argument>)</argument_list></macro> <block>{
+<expr><name>UINT</name> <name>result</name> = (<name>UINT</name>)<call><name>_write</name><argument_list>(<argument><expr><name>hf</name></expr></argument>, <argument><expr><name>memory</name></expr></argument>, <argument><expr><name>cb</name></expr></argument>)</argument_list></call></expr>;
+<if>if <condition>(<expr><name>result</name> != <name>cb</name></expr>)</condition><then>
+<expr_stmt><expr>*<name>err</name> = <name>errno</name></expr>;</expr_stmt></then></if></block></expr></expr_stmt>
+<return>return <expr><name>result</name></expr>;</return>
+}
+static <macro><name>FNFCICLOSE</name><argument_list>(<argument>cb_close</argument>)</argument_list></macro> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>result</name> <init>= <expr><call><name>_close</name><argument_list>(<argument><expr><name>hf</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>result</name> != 0</expr>)</condition><then>
+<expr_stmt><expr>*<name>err</name> = <name>errno</name></expr>;</expr_stmt></then></if>
+<return>return <expr><name>result</name></expr>;</return>
+}</block>
+<expr_stmt><expr>static <macro><name>FNFCISEEK</name><argument_list>(<argument>cb_seek</argument>)</argument_list></macro> <block>{
+<expr><name>long</name> <name>result</name> = (<name>long</name>)<call><name>_lseek</name><argument_list>(<argument><expr><name>hf</name></expr></argument>, <argument><expr><name>dist</name></expr></argument>, <argument><expr><name>seektype</name></expr></argument>)</argument_list></call></expr>;
+<if>if <condition>(<expr><name>result</name> == -1</expr>)</condition><then>
+<expr_stmt><expr>*<name>err</name> = <name>errno</name></expr>;</expr_stmt></then></if></block></expr></expr_stmt>
+<return>return <expr><name>result</name></expr>;</return>
+}
+static <macro><name>FNFCIDELETE</name><argument_list>(<argument>cb_delete</argument>)</argument_list></macro> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>result</name> <init>= <expr><call><name>remove</name><argument_list>(<argument><expr><name>pszFile</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>result</name> != 0</expr>)</condition><then>
+<expr_stmt><expr>*<name>err</name> = <name>errno</name></expr>;</expr_stmt></then></if>
+<return>return <expr><name>result</name></expr>;</return>
+}</block>
+<expr_stmt><expr>static <macro><name>FNFCIFILEPLACED</name><argument_list>(<argument>cb_fileplaced</argument>)</argument_list></macro> <block>{
+<return>return <expr>0</expr>;</return>
+}</block></expr></expr_stmt>
+<expr_stmt><expr>static <macro><name>FNFCIGETTEMPFILE</name><argument_list>(<argument>cb_gettempfile</argument>)</argument_list></macro> <block>{
+<expr><name>char</name> *<name>name</name> = <call><name>_tempnam</name><argument_list>(<argument><expr>""</expr></argument>, <argument><expr>"tmp"</expr></argument>)</argument_list></call></expr>;
+<if>if <condition>(<expr>(<name>name</name> != <name>NULL</name>) &amp;&amp; ((<name>int</name>)<call><name>strlen</name><argument_list>(<argument><expr><name>name</name></expr></argument>)</argument_list></call> &lt; <name>cbTempName</name>)</expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>strcpy</name><argument_list>(<argument><expr><name>pszTempName</name></expr></argument>, <argument><expr><name>name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>free</name><argument_list>(<argument><expr><name>name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>TRUE</name></expr>;</return>
+<expr_stmt/></block></then></if>}</block></expr></expr_stmt>
+<if>if <condition>(<expr><name>name</name></expr>)</condition><then> <expr_stmt><expr><call><name>free</name><argument_list>(<argument><expr><name>name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<return>return <expr><name>FALSE</name></expr>;</return>
+}
+static <macro><name>FNFCISTATUS</name><argument_list>(<argument>cb_status</argument>)</argument_list></macro> <block>{
+<if>if <condition>(<expr><name>pv</name></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>result</name> <init>= <expr><call><name>PyObject_CallMethod</name><argument_list>(<argument><expr><name>pv</name></expr></argument>, <argument><expr>"status"</expr></argument>, <argument><expr>"iii"</expr></argument>, <argument><expr><name>typeStatus</name></expr></argument>, <argument><expr><name>cb1</name></expr></argument>, <argument><expr><name>cb2</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>result</name> == <name>NULL</name></expr>)</condition><then>
+<return>return <expr>-1</expr>;</return></then></if>
+<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>result</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+<return>return <expr>0</expr>;</return>
+}</block>
+<expr_stmt><expr>static <macro><name>FNFCIGETNEXTCABINET</name><argument_list>(<argument>cb_getnextcabinet</argument>)</argument_list></macro> <block>{
+<if>if <condition>(<expr><name>pv</name></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>result</name> <init>= <expr><call><name>PyObject_CallMethod</name><argument_list>(<argument><expr><name>pv</name></expr></argument>, <argument><expr>"getnextcabinet"</expr></argument>, <argument><expr>"i"</expr></argument>, <argument><expr><name><name>pccab</name>-&gt;<name>iCab</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>result</name> == <name>NULL</name></expr>)</condition><then>
+<return>return <expr>-1</expr>;</return></then></if>
+<if>if <condition>(<expr>!<call><name>PyString_Check</name><argument_list>(<argument><expr><name>result</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>PyErr_Format</name><argument_list>(<argument><expr><name>PyExc_TypeError</name></expr></argument>,
+<argument><expr>"Incorrect return type %s from getnextcabinet"</expr></argument>,
+<argument><expr><name><name>result</name>-&gt;<name>ob_type</name>-&gt;<name>tp_name</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>result</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>FALSE</name></expr>;</return>
+<expr_stmt/></block></then></if></block></then></if>}</block>
+<call><name>strncpy</name><argument_list>(<argument><expr><name><name>pccab</name>-&gt;<name>szCab</name></name></expr></argument>, <argument><expr><call><name>PyString_AsString</name><argument_list>(<argument><expr><name>result</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name><name>pccab</name>-&gt;<name>szCab</name></name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>TRUE</name></expr>;</return>
+}
+return <expr_stmt><expr><name>FALSE</name></expr>;</expr_stmt>
+}
+static <macro><name>FNFCIGETOPENINFO</name><argument_list>(<argument>cb_getopeninfo</argument>)</argument_list></macro> <block>{
+<decl_stmt><decl><type><name>BY_HANDLE_FILE_INFORMATION</name></type> <name>bhfi</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>FILETIME</name></type> <name>filetime</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>HANDLE</name></type> <name>handle</name></decl>;</decl_stmt>
+<expr_stmt><expr><name>handle</name> = <call><name>CreateFile</name><argument_list>(<argument><expr><name>pszName</name></expr></argument>, <argument><expr><name>GENERIC_READ</name></expr></argument>, <argument><expr><name>FILE_SHARE_READ</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+<argument><expr><name>OPEN_EXISTING</name></expr></argument>, <argument><expr><name>FILE_ATTRIBUTE_NORMAL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>handle</name> == <name>INVALID_HANDLE_VALUE</name></expr>)</condition><then>
+<return>return <expr>-1</expr>;</return></then></if>
+<if>if <condition>(<expr><call><name>GetFileInformationByHandle</name><argument_list>(<argument><expr><name>handle</name></expr></argument>, <argument><expr>&amp;<name>bhfi</name></expr></argument>)</argument_list></call> == <name>FALSE</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>CloseHandle</name><argument_list>(<argument><expr><name>handle</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr>-1</expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><call><name>FileTimeToLocalFileTime</name><argument_list>(<argument><expr>&amp;<name><name>bhfi</name>.<name>ftLastWriteTime</name></name></expr></argument>, <argument><expr>&amp;<name>filetime</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>FileTimeToDosDateTime</name><argument_list>(<argument><expr>&amp;<name>filetime</name></expr></argument>, <argument><expr><name>pdate</name></expr></argument>, <argument><expr><name>ptime</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr>*<name>pattribs</name> = <call>(<name>int</name>)<argument_list>(<argument><expr><name><name>bhfi</name>.<name>dwFileAttributes</name></name> &amp;
+(<name>_A_RDONLY</name> | <name>_A_SYSTEM</name> | <name>_A_HIDDEN</name> | <name>_A_ARCH</name>)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>CloseHandle</name><argument_list>(<argument><expr><name>handle</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><call><name>_open</name><argument_list>(<argument><expr><name>pszName</name></expr></argument>, <argument><expr><name>_O_RDONLY</name> | <name>_O_BINARY</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block>
+<function><type><specifier>static</specifier> <name>PyObject</name>*</type> <name>fcicreate</name><parameter_list>(<param><decl><type><name>PyObject</name>*</type> <name>obj</name></decl></param>, <param><decl><type><name>PyObject</name>*</type> <name>args</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>char</name> *</type><name>cabname</name></decl>, *<decl><type ref="prev"/><name>p</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>files</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>CCAB</name></type> <name>ccab</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>HFCI</name></type> <name>hfci</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>ERF</name></type> <name>erf</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>i</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"sO:FCICreate"</expr></argument>, <argument><expr>&amp;<name>cabname</name></expr></argument>, <argument><expr>&amp;<name>files</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<if>if <condition>(<expr>!<call><name>PyList_Check</name><argument_list>(<argument><expr><name>files</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_TypeError</name></expr></argument>, <argument><expr>"FCICreate expects a list"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name><name>ccab</name>.<name>cb</name></name> = <name>INT_MAX</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>ccab</name>.<name>cbFolderThresh</name></name> = 1000000</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>ccab</name>.<name>cbReserveCFData</name></name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>ccab</name>.<name>cbReserveCFFolder</name></name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>ccab</name>.<name>cbReserveCFHeader</name></name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>ccab</name>.<name>iCab</name></name> = 1</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>ccab</name>.<name>iDisk</name></name> = 1</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>ccab</name>.<name>setID</name></name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>ccab</name>.<name>szDisk</name><index>[<expr>0</expr>]</index></name> = '\0'</expr>;</expr_stmt>
+<for>for (<init><expr><name>i</name> = 0</expr>, <expr><name>p</name> = <name>cabname</name></expr>;</init> <condition><expr>*<name>p</name></expr>;</condition> <incr><expr><name>p</name> = <call><name>CharNext</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr></incr>)
+<if>if <condition>(<expr>*<name>p</name> == '\\' || *<name>p</name> == '/'</expr>)</condition><then>
+<expr_stmt><expr><name>i</name> = <name>p</name> - <name>cabname</name> + 1</expr>;</expr_stmt></then></if></for>
+<if>if <condition>(<expr><name>i</name> &gt;= <sizeof>sizeof<argument_list>(<argument><expr><name><name>ccab</name>.<name>szCabPath</name></name></expr></argument>)</argument_list></sizeof> ||
+<call><name>strlen</name><argument_list>(<argument><expr><name>cabname</name>+<name>i</name></expr></argument>)</argument_list></call> &gt;= <sizeof>sizeof<argument_list>(<argument><expr><name><name>ccab</name>.<name>szCab</name></name></expr></argument>)</argument_list></sizeof></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>, <argument><expr>"path name too long"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr>0</expr>;</return>
+}</block></then></if>
+<if>if <condition>(<expr><name>i</name> &gt; 0</expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name><name>ccab</name>.<name>szCabPath</name></name></expr></argument>, <argument><expr><name>cabname</name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>ccab</name>.<name>szCabPath</name><index>[<expr><name>i</name></expr>]</index></name> = '\0'</expr>;</expr_stmt>
+<expr_stmt><expr><call><name>strcpy</name><argument_list>(<argument><expr><name><name>ccab</name>.<name>szCab</name></name></expr></argument>, <argument><expr><name>cabname</name>+<name>i</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><call><name>strcpy</name><argument_list>(<argument><expr><name><name>ccab</name>.<name>szCabPath</name></name></expr></argument>, <argument><expr>".\\"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>strcpy</name><argument_list>(<argument><expr><name><name>ccab</name>.<name>szCab</name></name></expr></argument>, <argument><expr><name>cabname</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+<expr_stmt><expr><name>hfci</name> = <call><name>FCICreate</name><argument_list>(<argument><expr>&amp;<name>erf</name></expr></argument>, <argument><expr><name>cb_fileplaced</name></expr></argument>, <argument><expr><name>cb_alloc</name></expr></argument>, <argument><expr><name>cb_free</name></expr></argument>,
+<argument><expr><name>cb_open</name></expr></argument>, <argument><expr><name>cb_read</name></expr></argument>, <argument><expr><name>cb_write</name></expr></argument>, <argument><expr><name>cb_close</name></expr></argument>, <argument><expr><name>cb_seek</name></expr></argument>, <argument><expr><name>cb_delete</name></expr></argument>,
+<argument><expr><name>cb_gettempfile</name></expr></argument>, <argument><expr>&amp;<name>ccab</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>hfci</name> == <name>NULL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>PyErr_Format</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>, <argument><expr>"FCI error %d"</expr></argument>, <argument><expr><name><name>erf</name>.<name>erfOper</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></then></if>
+<for>for (<init><expr><name>i</name>=0</expr>;</init> <condition><expr><name>i</name> &lt; <call><name>PyList_GET_SIZE</name><argument_list>(<argument><expr><name>files</name></expr></argument>)</argument_list></call></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>) <block>{
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>item</name> <init>= <expr><call><name>PyList_GET_ITEM</name><argument_list>(<argument><expr><name>files</name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>char</name> *</type><name>filename</name></decl>, *<decl><type ref="prev"/><name>cabname</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>item</name></expr></argument>, <argument><expr>"ss"</expr></argument>, <argument><expr>&amp;<name>filename</name></expr></argument>, <argument><expr>&amp;<name>cabname</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<goto>goto <name>err</name>;</goto></then></if>
+<if>if <condition>(<expr>!<call><name>FCIAddFile</name><argument_list>(<argument><expr><name>hfci</name></expr></argument>, <argument><expr><name>filename</name></expr></argument>, <argument><expr><name>cabname</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>,
+<argument><expr><name>cb_getnextcabinet</name></expr></argument>, <argument><expr><name>cb_status</name></expr></argument>, <argument><expr><name>cb_getopeninfo</name></expr></argument>,
+<argument><expr><name>tcompTYPE_MSZIP</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<goto>goto <name>err</name>;</goto></then></if>
+}</block></for>
+<if>if <condition>(<expr>!<call><name>FCIFlushCabinet</name><argument_list>(<argument><expr><name>hfci</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>cb_getnextcabinet</name></expr></argument>, <argument><expr><name>cb_status</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<goto>goto <name>err</name>;</goto></then></if>
+<if>if <condition>(<expr>!<call><name>FCIDestroy</name><argument_list>(<argument><expr><name>hfci</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<goto>goto <name>err</name>;</goto></then></if>
+<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>Py_None</name></expr>;</return>
+<label><name>err</name>:</label>
+<expr_stmt><expr><call><name>PyErr_Format</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>, <argument><expr>"FCI error %d"</expr></argument>, <argument><expr><name><name>erf</name>.<name>erfOper</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>FCIDestroy</name><argument_list>(<argument><expr><name>hfci</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+<typedef>typedef <type><struct>struct <name>msiobj</name> <block>{
+<decl_stmt><decl><type><name>PyObject_HEAD</name>
+<name>MSIHANDLE</name></type> <name>h</name></decl>;</decl_stmt>
+}</block></struct></type> <name>msiobj</name>;</typedef>
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>msiobj_dealloc</name><parameter_list>(<param><decl><type><name>msiobj</name>*</type> <name>msidb</name></decl></param>)</parameter_list> <block>{
+<expr_stmt><expr><call><name>MsiCloseHandle</name><argument_list>(<argument><expr><name><name>msidb</name>-&gt;<name>h</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>msidb</name>-&gt;<name>h</name></name> = 0</expr>;</expr_stmt>
+}</block></function>
+<function><type><specifier>static</specifier> <name>PyObject</name>*</type>
+<name>msiobj_close</name><parameter_list>(<param><decl><type><name>msiobj</name>*</type> <name>msidb</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list> <block>{
+<expr_stmt><expr><call><name>MsiCloseHandle</name><argument_list>(<argument><expr><name><name>msidb</name>-&gt;<name>h</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>msidb</name>-&gt;<name>h</name></name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>PyObject</name>*</type>
+<name>msierror</name><parameter_list>(<param><decl><type><name>int</name></type> <name>status</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>code</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>char</name></type> <name><name>buf</name><index>[<expr>2000</expr>]</index></name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>char</name> *</type><name>res</name> <init>= <expr><name>buf</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>DWORD</name></type> <name>size</name> <init>= <expr><sizeof>sizeof<argument_list>(<argument><expr><name>buf</name></expr></argument>)</argument_list></sizeof></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>MSIHANDLE</name></type> <name>err</name> <init>= <expr><call><name>MsiGetLastErrorRecord</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>err</name> == 0</expr>)</condition><then> <block>{
+<switch>switch<condition>(<expr><name>status</name></expr>)</condition> <block>{
+<case>case <expr><name>ERROR_ACCESS_DENIED</name></expr>:
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>MSIError</name></expr></argument>, <argument><expr>"access denied"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+</case><case>case <expr><name>ERROR_FUNCTION_FAILED</name></expr>:
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>MSIError</name></expr></argument>, <argument><expr>"function failed"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+</case><case>case <expr><name>ERROR_INVALID_DATA</name></expr>:
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>MSIError</name></expr></argument>, <argument><expr>"invalid data"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+</case><case>case <expr><name>ERROR_INVALID_HANDLE</name></expr>:
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>MSIError</name></expr></argument>, <argument><expr>"invalid handle"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+</case><case>case <expr><name>ERROR_INVALID_STATE</name></expr>:
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>MSIError</name></expr></argument>, <argument><expr>"invalid state"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+</case><case>case <expr><name>ERROR_INVALID_PARAMETER</name></expr>:
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>MSIError</name></expr></argument>, <argument><expr>"invalid parameter"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+</case><default>default:
+<expr_stmt><expr><call><name>PyErr_Format</name><argument_list>(<argument><expr><name>MSIError</name></expr></argument>, <argument><expr>"unknown error %x"</expr></argument>, <argument><expr><name>status</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+</default>}</block></switch>
+}</block></then></if>
+<expr_stmt><expr><name>code</name> = <call><name>MsiRecordGetInteger</name><argument_list>(<argument><expr><name>err</name></expr></argument>, <argument><expr>1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><call><name>MsiFormatRecord</name><argument_list>(<argument><expr>0</expr></argument>, <argument><expr><name>err</name></expr></argument>, <argument><expr><name>res</name></expr></argument>, <argument><expr>&amp;<name>size</name></expr></argument>)</argument_list></call> == <name>ERROR_MORE_DATA</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>res</name> = <call><name>malloc</name><argument_list>(<argument><expr><name>size</name>+1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>MsiFormatRecord</name><argument_list>(<argument><expr>0</expr></argument>, <argument><expr><name>err</name></expr></argument>, <argument><expr><name>res</name></expr></argument>, <argument><expr>&amp;<name>size</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>res</name><index>[<expr><name>size</name></expr>]</index></name>='\0'</expr>;</expr_stmt>
+}</block></then></if>
+<expr_stmt><expr><call><name>MsiCloseHandle</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>MSIError</name></expr></argument>, <argument><expr><name>res</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>res</name> != <name>buf</name></expr>)</condition><then>
+<expr_stmt><expr><call><name>free</name><argument_list>(<argument><expr><name>res</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>PyObject</name>*</type>
+<name>record_getfieldcount</name><parameter_list>(<param><decl><type><name>msiobj</name>*</type> <name>record</name></decl></param>, <param><decl><type><name>PyObject</name>*</type> <name>args</name></decl></param>)</parameter_list> <block>{
+<return>return <expr><call><name>PyInt_FromLong</name><argument_list>(<argument><expr><call><name>MsiRecordGetFieldCount</name><argument_list>(<argument><expr><name><name>record</name>-&gt;<name>h</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>PyObject</name>*</type>
+<name>record_getinteger</name><parameter_list>(<param><decl><type><name>msiobj</name>*</type> <name>record</name></decl></param>, <param><decl><type><name>PyObject</name>*</type> <name>args</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>unsigned</name> <name>int</name></type> <name>field</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>status</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"I:GetInteger"</expr></argument>, <argument><expr>&amp;<name>field</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<expr_stmt><expr><name>status</name> = <call><name>MsiRecordGetInteger</name><argument_list>(<argument><expr><name><name>record</name>-&gt;<name>h</name></name></expr></argument>, <argument><expr><name>field</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>status</name> == <name>MSI_NULL_INTEGER</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>MSIError</name></expr></argument>, <argument><expr>"could not convert record field to integer"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></then></if>
+<return>return <expr><call><name>PyInt_FromLong</name><argument_list>(<argument><expr>(<name>long</name>) <name>status</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>PyObject</name>*</type>
+<name>record_getstring</name><parameter_list>(<param><decl><type><name>msiobj</name>*</type> <name>record</name></decl></param>, <param><decl><type><name>PyObject</name>*</type> <name>args</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>unsigned</name> <name>int</name></type> <name>field</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>unsigned</name> <name>int</name></type> <name>status</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>char</name></type> <name><name>buf</name><index>[<expr>2000</expr>]</index></name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>char</name> *</type><name>res</name> <init>= <expr><name>buf</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>DWORD</name></type> <name>size</name> <init>= <expr><sizeof>sizeof<argument_list>(<argument><expr><name>buf</name></expr></argument>)</argument_list></sizeof></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>PyObject</name>*</type> <name>string</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"I:GetString"</expr></argument>, <argument><expr>&amp;<name>field</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<expr_stmt><expr><name>status</name> = <call><name>MsiRecordGetString</name><argument_list>(<argument><expr><name><name>record</name>-&gt;<name>h</name></name></expr></argument>, <argument><expr><name>field</name></expr></argument>, <argument><expr><name>res</name></expr></argument>, <argument><expr>&amp;<name>size</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>status</name> == <name>ERROR_MORE_DATA</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>res</name> = (<name>char</name>*) <call><name>malloc</name><argument_list>(<argument><expr><name>size</name> + 1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>res</name> == <name>NULL</name></expr>)</condition><then>
+<return>return <expr><call><name>PyErr_NoMemory</name><argument_list>()</argument_list></call></expr>;</return></then></if>
+<expr_stmt><expr><name>status</name> = <call><name>MsiRecordGetString</name><argument_list>(<argument><expr><name><name>record</name>-&gt;<name>h</name></name></expr></argument>, <argument><expr><name>field</name></expr></argument>, <argument><expr><name>res</name></expr></argument>, <argument><expr>&amp;<name>size</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+<if>if <condition>(<expr><name>status</name> != <name>ERROR_SUCCESS</name></expr>)</condition><then>
+<return>return <expr><call><name>msierror</name><argument_list>(<argument><expr>(<name>int</name>) <name>status</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<expr_stmt><expr><name>string</name> = <call><name>PyString_FromString</name><argument_list>(<argument><expr><name>res</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>buf</name> != <name>res</name></expr>)</condition><then>
+<expr_stmt><expr><call><name>free</name><argument_list>(<argument><expr><name>res</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<return>return <expr><name>string</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>PyObject</name>*</type>
+<name>record_cleardata</name><parameter_list>(<param><decl><type><name>msiobj</name>*</type> <name>record</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>status</name> <init>= <expr><call><name>MsiRecordClearData</name><argument_list>(<argument><expr><name><name>record</name>-&gt;<name>h</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>status</name> != <name>ERROR_SUCCESS</name></expr>)</condition><then>
+<return>return <expr><call><name>msierror</name><argument_list>(<argument><expr><name>status</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>PyObject</name>*</type>
+<name>record_setstring</name><parameter_list>(<param><decl><type><name>msiobj</name>*</type> <name>record</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>status</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>field</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>char</name> *</type><name>data</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"is:SetString"</expr></argument>, <argument><expr>&amp;<name>field</name></expr></argument>, <argument><expr>&amp;<name>data</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<if>if <condition>(<expr>(<name>status</name> = <call><name>MsiRecordSetString</name><argument_list>(<argument><expr><name><name>record</name>-&gt;<name>h</name></name></expr></argument>, <argument><expr><name>field</name></expr></argument>, <argument><expr><name>data</name></expr></argument>)</argument_list></call>) != <name>ERROR_SUCCESS</name></expr>)</condition><then>
+<return>return <expr><call><name>msierror</name><argument_list>(<argument><expr><name>status</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>PyObject</name>*</type>
+<name>record_setstream</name><parameter_list>(<param><decl><type><name>msiobj</name>*</type> <name>record</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>status</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>field</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>char</name> *</type><name>data</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"is:SetStream"</expr></argument>, <argument><expr>&amp;<name>field</name></expr></argument>, <argument><expr>&amp;<name>data</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<if>if <condition>(<expr>(<name>status</name> = <call><name>MsiRecordSetStream</name><argument_list>(<argument><expr><name><name>record</name>-&gt;<name>h</name></name></expr></argument>, <argument><expr><name>field</name></expr></argument>, <argument><expr><name>data</name></expr></argument>)</argument_list></call>) != <name>ERROR_SUCCESS</name></expr>)</condition><then>
+<return>return <expr><call><name>msierror</name><argument_list>(<argument><expr><name>status</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>PyObject</name>*</type>
+<name>record_setinteger</name><parameter_list>(<param><decl><type><name>msiobj</name>*</type> <name>record</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>status</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>field</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>data</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"ii:SetInteger"</expr></argument>, <argument><expr>&amp;<name>field</name></expr></argument>, <argument><expr>&amp;<name>data</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<if>if <condition>(<expr>(<name>status</name> = <call><name>MsiRecordSetInteger</name><argument_list>(<argument><expr><name><name>record</name>-&gt;<name>h</name></name></expr></argument>, <argument><expr><name>field</name></expr></argument>, <argument><expr><name>data</name></expr></argument>)</argument_list></call>) != <name>ERROR_SUCCESS</name></expr>)</condition><then>
+<return>return <expr><call><name>msierror</name><argument_list>(<argument><expr><name>status</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyMethodDef</name></type> <name><name>record_methods</name><index>[]</index></name> <init>= <expr><block>{
+<expr><block>{
+<expr>"GetFieldCount"</expr>, <expr>(<name>PyCFunction</name>)<name>record_getfieldcount</name></expr>, <expr><name>METH_NOARGS</name></expr>,
+<macro><name>PyDoc_STR</name><argument_list>(<argument>"GetFieldCount() -&gt; int\nWraps MsiRecordGetFieldCount"</argument>)</argument_list></macro>
+}</block></expr>,
+<expr><block>{
+<expr>"GetInteger"</expr>, <expr>(<name>PyCFunction</name>)<name>record_getinteger</name></expr>, <expr><name>METH_VARARGS</name></expr>,
+<macro><name>PyDoc_STR</name><argument_list>(<argument>"GetInteger(field) -&gt; int\nWraps MsiRecordGetInteger"</argument>)</argument_list></macro>
+}</block></expr>,
+<expr><block>{
+<expr>"GetString"</expr>, <expr>(<name>PyCFunction</name>)<name>record_getstring</name></expr>, <expr><name>METH_VARARGS</name></expr>,
+<macro><name>PyDoc_STR</name><argument_list>(<argument>"GetString(field) -&gt; string\nWraps MsiRecordGetString"</argument>)</argument_list></macro>
+}</block></expr>,
+<expr><block>{
+<expr>"SetString"</expr>, <expr>(<name>PyCFunction</name>)<name>record_setstring</name></expr>, <expr><name>METH_VARARGS</name></expr>,
+<macro><name>PyDoc_STR</name><argument_list>(<argument>"SetString(field,str) -&gt; None\nWraps MsiRecordSetString"</argument>)</argument_list></macro>
+}</block></expr>,
+<expr><block>{
+<expr>"SetStream"</expr>, <expr>(<name>PyCFunction</name>)<name>record_setstream</name></expr>, <expr><name>METH_VARARGS</name></expr>,
+<macro><name>PyDoc_STR</name><argument_list>(<argument>"SetStream(field,filename) -&gt; None\nWraps MsiRecordSetInteger"</argument>)</argument_list></macro>
+}</block></expr>,
+<expr><block>{
+<expr>"SetInteger"</expr>, <expr>(<name>PyCFunction</name>)<name>record_setinteger</name></expr>, <expr><name>METH_VARARGS</name></expr>,
+<macro><name>PyDoc_STR</name><argument_list>(<argument>"SetInteger(field,int) -&gt; None\nWraps MsiRecordSetInteger"</argument>)</argument_list></macro>
+}</block></expr>,
+<expr><block>{
+<expr>"ClearData"</expr>, <expr>(<name>PyCFunction</name>)<name>record_cleardata</name></expr>, <expr><name>METH_NOARGS</name></expr>,
+<macro><name>PyDoc_STR</name><argument_list>(<argument>"ClearData() -&gt; int\nWraps MsiRecordGClearData"</argument>)</argument_list></macro>
+}</block></expr>,
+<expr><block>{ <expr><name>NULL</name></expr>, <expr><name>NULL</name></expr> }</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyTypeObject</name></type> <name>record_Type</name> <init>= <expr><block>{
+<expr><call><name>PyVarObject_HEAD_INIT</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call>
+"_msi.Record"</expr>,
+<expr><sizeof>sizeof<argument_list>(<argument><expr><name>msiobj</name></expr></argument>)</argument_list></sizeof></expr>,
+<expr>0</expr>,
+<expr>(<name>destructor</name>)<name>msiobj_dealloc</name></expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr><name>PyObject_GenericGetAttr</name></expr>,
+<expr><name>PyObject_GenericSetAttr</name></expr>,
+<expr>0</expr>,
+<expr><name>Py_TPFLAGS_DEFAULT</name></expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr><name>record_methods</name></expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+}</block></expr></init></decl>;</decl_stmt>
+<function><type><specifier>static</specifier> <name>PyObject</name>*</type>
+<name>record_new</name><parameter_list>(<param><decl><type><name>MSIHANDLE</name></type> <name>h</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>msiobj</name> *</type><name>result</name> <init>= <expr><call><name>PyObject_NEW</name><argument_list>(<argument>struct <expr><name>msiobj</name></expr></argument>, <argument><expr>&amp;<name>record_Type</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr>!<name>result</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>MsiCloseHandle</name><argument_list>(<argument><expr><name>h</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name><name>result</name>-&gt;<name>h</name></name> = <name>h</name></expr>;</expr_stmt>
+<return>return <expr>(<name>PyObject</name>*)<name>result</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>PyObject</name>*</type>
+<name>summary_getproperty</name><parameter_list>(<param><decl><type><name>msiobj</name>*</type> <name>si</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>status</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>field</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>result</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>UINT</name></type> <name>type</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>INT</name></type> <name>ival</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>FILETIME</name></type> <name>fval</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>char</name></type> <name><name>sbuf</name><index>[<expr>1000</expr>]</index></name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>char</name> *</type><name>sval</name> <init>= <expr><name>sbuf</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>DWORD</name></type> <name>ssize</name> <init>= <expr><sizeof>sizeof<argument_list>(<argument><expr><name>sval</name></expr></argument>)</argument_list></sizeof></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"i:GetProperty"</expr></argument>, <argument><expr>&amp;<name>field</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<expr_stmt><expr><name>status</name> = <call><name>MsiSummaryInfoGetProperty</name><argument_list>(<argument><expr><name><name>si</name>-&gt;<name>h</name></name></expr></argument>, <argument><expr><name>field</name></expr></argument>, <argument><expr>&amp;<name>type</name></expr></argument>, <argument><expr>&amp;<name>ival</name></expr></argument>,
+<argument><expr>&amp;<name>fval</name></expr></argument>, <argument><expr><name>sval</name></expr></argument>, <argument><expr>&amp;<name>ssize</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>status</name> == <name>ERROR_MORE_DATA</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>sval</name> = <call><name>malloc</name><argument_list>(<argument><expr><name>ssize</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>status</name> = <call><name>MsiSummaryInfoGetProperty</name><argument_list>(<argument><expr><name><name>si</name>-&gt;<name>h</name></name></expr></argument>, <argument><expr><name>field</name></expr></argument>, <argument><expr>&amp;<name>type</name></expr></argument>, <argument><expr>&amp;<name>ival</name></expr></argument>,
+<argument><expr>&amp;<name>fval</name></expr></argument>, <argument><expr><name>sval</name></expr></argument>, <argument><expr>&amp;<name>ssize</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+<switch>switch<condition>(<expr><name>type</name></expr>)</condition> <block>{
+<case>case <expr><name>VT_I2</name></expr>:
+</case><case>case <expr><name>VT_I4</name></expr>:
+<return>return <expr><call><name>PyInt_FromLong</name><argument_list>(<argument><expr><name>ival</name></expr></argument>)</argument_list></call></expr>;</return>
+</case><case>case <expr><name>VT_FILETIME</name></expr>:
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_NotImplementedError</name></expr></argument>, <argument><expr>"FILETIME result"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+</case><case>case <expr><name>VT_LPSTR</name></expr>:
+<expr_stmt><expr><name>result</name> = <call><name>PyString_FromStringAndSize</name><argument_list>(<argument><expr><name>sval</name></expr></argument>, <argument><expr><name>ssize</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>sval</name> != <name>sbuf</name></expr>)</condition><then>
+<expr_stmt><expr><call><name>free</name><argument_list>(<argument><expr><name>sval</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<return>return <expr><name>result</name></expr>;</return>
+</case>}</block></switch>
+<expr_stmt><expr><call><name>PyErr_Format</name><argument_list>(<argument><expr><name>PyExc_NotImplementedError</name></expr></argument>, <argument><expr>"result of type %d"</expr></argument>, <argument><expr><name>type</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>PyObject</name>*</type>
+<name>summary_getpropertycount</name><parameter_list>(<param><decl><type><name>msiobj</name>*</type> <name>si</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>status</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>UINT</name></type> <name>result</name></decl>;</decl_stmt>
+<expr_stmt><expr><name>status</name> = <call><name>MsiSummaryInfoGetPropertyCount</name><argument_list>(<argument><expr><name><name>si</name>-&gt;<name>h</name></name></expr></argument>, <argument><expr>&amp;<name>result</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>status</name> != <name>ERROR_SUCCESS</name></expr>)</condition><then>
+<return>return <expr><call><name>msierror</name><argument_list>(<argument><expr><name>status</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<return>return <expr><call><name>PyInt_FromLong</name><argument_list>(<argument><expr><name>result</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>PyObject</name>*</type>
+<name>summary_setproperty</name><parameter_list>(<param><decl><type><name>msiobj</name>*</type> <name>si</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>status</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>field</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>PyObject</name>*</type> <name>data</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"iO:SetProperty"</expr></argument>, <argument><expr>&amp;<name>field</name></expr></argument>, <argument><expr>&amp;<name>data</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<if>if <condition>(<expr><call><name>PyString_Check</name><argument_list>(<argument><expr><name>data</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>status</name> = <call><name>MsiSummaryInfoSetProperty</name><argument_list>(<argument><expr><name><name>si</name>-&gt;<name>h</name></name></expr></argument>, <argument><expr><name>field</name></expr></argument>, <argument><expr><name>VT_LPSTR</name></expr></argument>,
+<argument><expr>0</expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><call><name>PyString_AsString</name><argument_list>(<argument><expr><name>data</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <if>if <condition>(<expr><call><name>PyInt_Check</name><argument_list>(<argument><expr><name>data</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>status</name> = <call><name>MsiSummaryInfoSetProperty</name><argument_list>(<argument><expr><name><name>si</name>-&gt;<name>h</name></name></expr></argument>, <argument><expr><name>field</name></expr></argument>, <argument><expr><name>VT_I4</name></expr></argument>,
+<argument><expr><call><name>PyInt_AsLong</name><argument_list>(<argument><expr><name>data</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_TypeError</name></expr></argument>, <argument><expr>"unsupported type"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></else></if></else></if>
+<if>if <condition>(<expr><name>status</name> != <name>ERROR_SUCCESS</name></expr>)</condition><then>
+<return>return <expr><call><name>msierror</name><argument_list>(<argument><expr><name>status</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>PyObject</name>*</type>
+<name>summary_persist</name><parameter_list>(<param><decl><type><name>msiobj</name>*</type> <name>si</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>status</name></decl>;</decl_stmt>
+<expr_stmt><expr><name>status</name> = <call><name>MsiSummaryInfoPersist</name><argument_list>(<argument><expr><name><name>si</name>-&gt;<name>h</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>status</name> != <name>ERROR_SUCCESS</name></expr>)</condition><then>
+<return>return <expr><call><name>msierror</name><argument_list>(<argument><expr><name>status</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyMethodDef</name></type> <name><name>summary_methods</name><index>[]</index></name> <init>= <expr><block>{
+<expr><block>{
+<expr>"GetProperty"</expr>, <expr>(<name>PyCFunction</name>)<name>summary_getproperty</name></expr>, <expr><name>METH_VARARGS</name></expr>,
+<macro><name>PyDoc_STR</name><argument_list>(<argument>"GetProperty(propid) -&gt; value\nWraps MsiSummaryInfoGetProperty"</argument>)</argument_list></macro>
+}</block></expr>,
+<expr><block>{
+<expr>"GetPropertyCount"</expr>, <expr>(<name>PyCFunction</name>)<name>summary_getpropertycount</name></expr>, <expr><name>METH_NOARGS</name></expr>,
+<macro><name>PyDoc_STR</name><argument_list>(<argument>"GetProperty() -&gt; int\nWraps MsiSummaryInfoGetPropertyCount"</argument>)</argument_list></macro>
+}</block></expr>,
+<expr><block>{
+<expr>"SetProperty"</expr>, <expr>(<name>PyCFunction</name>)<name>summary_setproperty</name></expr>, <expr><name>METH_VARARGS</name></expr>,
+<macro><name>PyDoc_STR</name><argument_list>(<argument>"SetProperty(value) -&gt; None\nWraps MsiSummaryInfoProperty"</argument>)</argument_list></macro>
+}</block></expr>,
+<expr><block>{
+<expr>"Persist"</expr>, <expr>(<name>PyCFunction</name>)<name>summary_persist</name></expr>, <expr><name>METH_NOARGS</name></expr>,
+<macro><name>PyDoc_STR</name><argument_list>(<argument>"Persist() -&gt; None\nWraps MsiSummaryInfoPersist"</argument>)</argument_list></macro>
+}</block></expr>,
+<expr><block>{ <expr><name>NULL</name></expr>, <expr><name>NULL</name></expr> }</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyTypeObject</name></type> <name>summary_Type</name> <init>= <expr><block>{
+<expr><call><name>PyVarObject_HEAD_INIT</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call>
+"_msi.SummaryInformation"</expr>,
+<expr><sizeof>sizeof<argument_list>(<argument><expr><name>msiobj</name></expr></argument>)</argument_list></sizeof></expr>,
+<expr>0</expr>,
+<expr>(<name>destructor</name>)<name>msiobj_dealloc</name></expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr><name>PyObject_GenericGetAttr</name></expr>,
+<expr><name>PyObject_GenericSetAttr</name></expr>,
+<expr>0</expr>,
+<expr><name>Py_TPFLAGS_DEFAULT</name></expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr><name>summary_methods</name></expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+}</block></expr></init></decl>;</decl_stmt>
+<function><type><specifier>static</specifier> <name>PyObject</name>*</type>
+<name>view_execute</name><parameter_list>(<param><decl><type><name>msiobj</name> *</type><name>view</name></decl></param>, <param><decl><type><name>PyObject</name>*</type><name>args</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>status</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>MSIHANDLE</name></type> <name>params</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>oparams</name> <init>= <expr><name>Py_None</name></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"O:Execute"</expr></argument>, <argument><expr>&amp;<name>oparams</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<if>if <condition>(<expr><name>oparams</name> != <name>Py_None</name></expr>)</condition><then> <block>{
+<if>if <condition>(<expr><name><name>oparams</name>-&gt;<name>ob_type</name></name> != &amp;<name>record_Type</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_TypeError</name></expr></argument>, <argument><expr>"Execute argument must be a record"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>params</name> = ((<name>msiobj</name>*)<name>oparams</name>)-&gt;<name>h</name></expr>;</expr_stmt>
+}</block></then></if>
+<expr_stmt><expr><name>status</name> = <call><name>MsiViewExecute</name><argument_list>(<argument><expr><name><name>view</name>-&gt;<name>h</name></name></expr></argument>, <argument><expr><name>params</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>status</name> != <name>ERROR_SUCCESS</name></expr>)</condition><then>
+<return>return <expr><call><name>msierror</name><argument_list>(<argument><expr><name>status</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>PyObject</name>*</type>
+<name>view_fetch</name><parameter_list>(<param><decl><type><name>msiobj</name> *</type><name>view</name></decl></param>, <param><decl><type><name>PyObject</name>*</type><name>args</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>status</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>MSIHANDLE</name></type> <name>result</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>(<name>status</name> = <call><name>MsiViewFetch</name><argument_list>(<argument><expr><name><name>view</name>-&gt;<name>h</name></name></expr></argument>, <argument><expr>&amp;<name>result</name></expr></argument>)</argument_list></call>) != <name>ERROR_SUCCESS</name></expr>)</condition><then>
+<return>return <expr><call><name>msierror</name><argument_list>(<argument><expr><name>status</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<return>return <expr><call><name>record_new</name><argument_list>(<argument><expr><name>result</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>PyObject</name>*</type>
+<name>view_getcolumninfo</name><parameter_list>(<param><decl><type><name>msiobj</name> *</type><name>view</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>status</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>kind</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>MSIHANDLE</name></type> <name>result</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"i:GetColumnInfo"</expr></argument>, <argument><expr>&amp;<name>kind</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<if>if <condition>(<expr>(<name>status</name> = <call><name>MsiViewGetColumnInfo</name><argument_list>(<argument><expr><name><name>view</name>-&gt;<name>h</name></name></expr></argument>, <argument><expr><name>kind</name></expr></argument>, <argument><expr>&amp;<name>result</name></expr></argument>)</argument_list></call>) != <name>ERROR_SUCCESS</name></expr>)</condition><then>
+<return>return <expr><call><name>msierror</name><argument_list>(<argument><expr><name>status</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<return>return <expr><call><name>record_new</name><argument_list>(<argument><expr><name>result</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>PyObject</name>*</type>
+<name>view_modify</name><parameter_list>(<param><decl><type><name>msiobj</name> *</type><name>view</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>kind</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>data</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>status</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"iO:Modify"</expr></argument>, <argument><expr>&amp;<name>kind</name></expr></argument>, <argument><expr>&amp;<name>data</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<if>if <condition>(<expr><name><name>data</name>-&gt;<name>ob_type</name></name> != &amp;<name>record_Type</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_TypeError</name></expr></argument>, <argument><expr>"Modify expects a record object"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></then></if>
+<if>if <condition>(<expr>(<name>status</name> = <call><name>MsiViewModify</name><argument_list>(<argument><expr><name><name>view</name>-&gt;<name>h</name></name></expr></argument>, <argument><expr><name>kind</name></expr></argument>, <argument><expr>((<name>msiobj</name>*)<name>data</name>)-&gt;<name>h</name></expr></argument>)</argument_list></call>) != <name>ERROR_SUCCESS</name></expr>)</condition><then>
+<return>return <expr><call><name>msierror</name><argument_list>(<argument><expr><name>status</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>PyObject</name>*</type>
+<name>view_close</name><parameter_list>(<param><decl><type><name>msiobj</name> *</type><name>view</name></decl></param>, <param><decl><type><name>PyObject</name>*</type><name>args</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>status</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>(<name>status</name> = <call><name>MsiViewClose</name><argument_list>(<argument><expr><name><name>view</name>-&gt;<name>h</name></name></expr></argument>)</argument_list></call>) != <name>ERROR_SUCCESS</name></expr>)</condition><then>
+<return>return <expr><call><name>msierror</name><argument_list>(<argument><expr><name>status</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyMethodDef</name></type> <name><name>view_methods</name><index>[]</index></name> <init>= <expr><block>{
+<expr><block>{
+<expr>"Execute"</expr>, <expr>(<name>PyCFunction</name>)<name>view_execute</name></expr>, <expr><name>METH_VARARGS</name></expr>,
+<macro><name>PyDoc_STR</name><argument_list>(<argument>"Execute(params=None) -&gt; None\nWraps MsiViewExecute"</argument>)</argument_list></macro>
+}</block></expr>,
+<expr><block>{
+<expr>"GetColumnInfo"</expr>, <expr>(<name>PyCFunction</name>)<name>view_getcolumninfo</name></expr>, <expr><name>METH_VARARGS</name></expr>,
+<macro><name>PyDoc_STR</name><argument_list>(<argument>"GetColumnInfo() -&gt; result\nWraps MsiGetColumnInfo"</argument>)</argument_list></macro>
+}</block></expr>,
+<expr><block>{
+<expr>"Fetch"</expr>, <expr>(<name>PyCFunction</name>)<name>view_fetch</name></expr>, <expr><name>METH_NOARGS</name></expr>,
+<macro><name>PyDoc_STR</name><argument_list>(<argument>"Fetch() -&gt; result\nWraps MsiViewFetch"</argument>)</argument_list></macro>
+}</block></expr>,
+<expr><block>{
+<expr>"Modify"</expr>, <expr>(<name>PyCFunction</name>)<name>view_modify</name></expr>, <expr><name>METH_VARARGS</name></expr>,
+<macro><name>PyDoc_STR</name><argument_list>(<argument>"Modify(mode,record) -&gt; None\nWraps MsiViewModify"</argument>)</argument_list></macro>
+}</block></expr>,
+<expr><block>{
+<expr>"Close"</expr>, <expr>(<name>PyCFunction</name>)<name>view_close</name></expr>, <expr><name>METH_NOARGS</name></expr>,
+<macro><name>PyDoc_STR</name><argument_list>(<argument>"Close() -&gt; result\nWraps MsiViewClose"</argument>)</argument_list></macro>
+}</block></expr>,
+<expr><block>{ <expr><name>NULL</name></expr>, <expr><name>NULL</name></expr> }</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyTypeObject</name></type> <name>msiview_Type</name> <init>= <expr><block>{
+<expr><call><name>PyVarObject_HEAD_INIT</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call>
+"_msi.View"</expr>,
+<expr><sizeof>sizeof<argument_list>(<argument><expr><name>msiobj</name></expr></argument>)</argument_list></sizeof></expr>,
+<expr>0</expr>,
+<expr>(<name>destructor</name>)<name>msiobj_dealloc</name></expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr><name>PyObject_GenericGetAttr</name></expr>,
+<expr><name>PyObject_GenericSetAttr</name></expr>,
+<expr>0</expr>,
+<expr><name>Py_TPFLAGS_DEFAULT</name></expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr><name>view_methods</name></expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+}</block></expr></init></decl>;</decl_stmt>
+<function><type><specifier>static</specifier> <name>PyObject</name>*</type>
+<name>msidb_openview</name><parameter_list>(<param><decl><type><name>msiobj</name> *</type><name>msidb</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>status</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>char</name> *</type><name>sql</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>MSIHANDLE</name></type> <name>hView</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>msiobj</name> *</type><name>result</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"s:OpenView"</expr></argument>, <argument><expr>&amp;<name>sql</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<if>if <condition>(<expr>(<name>status</name> = <call><name>MsiDatabaseOpenView</name><argument_list>(<argument><expr><name><name>msidb</name>-&gt;<name>h</name></name></expr></argument>, <argument><expr><name>sql</name></expr></argument>, <argument><expr>&amp;<name>hView</name></expr></argument>)</argument_list></call>) != <name>ERROR_SUCCESS</name></expr>)</condition><then>
+<return>return <expr><call><name>msierror</name><argument_list>(<argument><expr><name>status</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<expr_stmt><expr><name>result</name> = <call><name>PyObject_NEW</name><argument_list>(<argument>struct <expr><name>msiobj</name></expr></argument>, <argument><expr>&amp;<name>msiview_Type</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr>!<name>result</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>MsiCloseHandle</name><argument_list>(<argument><expr><name>hView</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name><name>result</name>-&gt;<name>h</name></name> = <name>hView</name></expr>;</expr_stmt>
+<return>return <expr>(<name>PyObject</name>*)<name>result</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>PyObject</name>*</type>
+<name>msidb_commit</name><parameter_list>(<param><decl><type><name>msiobj</name> *</type><name>msidb</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>status</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>(<name>status</name> = <call><name>MsiDatabaseCommit</name><argument_list>(<argument><expr><name><name>msidb</name>-&gt;<name>h</name></name></expr></argument>)</argument_list></call>) != <name>ERROR_SUCCESS</name></expr>)</condition><then>
+<return>return <expr><call><name>msierror</name><argument_list>(<argument><expr><name>status</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>PyObject</name>*</type>
+<name>msidb_getsummaryinformation</name><parameter_list>(<param><decl><type><name>msiobj</name> *</type><name>db</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>status</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>count</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>MSIHANDLE</name></type> <name>result</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>msiobj</name> *</type><name>oresult</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"i:GetSummaryInformation"</expr></argument>, <argument><expr>&amp;<name>count</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<expr_stmt><expr><name>status</name> = <call><name>MsiGetSummaryInformation</name><argument_list>(<argument><expr><name><name>db</name>-&gt;<name>h</name></name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>count</name></expr></argument>, <argument><expr>&amp;<name>result</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>status</name> != <name>ERROR_SUCCESS</name></expr>)</condition><then>
+<return>return <expr><call><name>msierror</name><argument_list>(<argument><expr><name>status</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<expr_stmt><expr><name>oresult</name> = <call><name>PyObject_NEW</name><argument_list>(<argument>struct <expr><name>msiobj</name></expr></argument>, <argument><expr>&amp;<name>summary_Type</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr>!<name>result</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>MsiCloseHandle</name><argument_list>(<argument><expr><name>result</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name><name>oresult</name>-&gt;<name>h</name></name> = <name>result</name></expr>;</expr_stmt>
+<return>return <expr>(<name>PyObject</name>*)<name>oresult</name></expr>;</return>
+}</block></function>
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyMethodDef</name></type> <name><name>db_methods</name><index>[]</index></name> <init>= <expr><block>{
+<expr><block>{
+<expr>"OpenView"</expr>, <expr>(<name>PyCFunction</name>)<name>msidb_openview</name></expr>, <expr><name>METH_VARARGS</name></expr>,
+<macro><name>PyDoc_STR</name><argument_list>(<argument>"OpenView(sql) -&gt; viewobj\nWraps MsiDatabaseOpenView"</argument>)</argument_list></macro>
+}</block></expr>,
+<expr><block>{
+<expr>"Commit"</expr>, <expr>(<name>PyCFunction</name>)<name>msidb_commit</name></expr>, <expr><name>METH_NOARGS</name></expr>,
+<macro><name>PyDoc_STR</name><argument_list>(<argument>"Commit() -&gt; None\nWraps MsiDatabaseCommit"</argument>)</argument_list></macro>
+}</block></expr>,
+<expr><block>{
+<expr>"GetSummaryInformation"</expr>, <expr>(<name>PyCFunction</name>)<name>msidb_getsummaryinformation</name></expr>, <expr><name>METH_VARARGS</name></expr>,
+<macro><name>PyDoc_STR</name><argument_list>(<argument>"GetSummaryInformation(updateCount) -&gt; viewobj\nWraps MsiGetSummaryInformation"</argument>)</argument_list></macro>
+}</block></expr>,
+<expr><block>{ <expr><name>NULL</name></expr>, <expr><name>NULL</name></expr> }</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyTypeObject</name></type> <name>msidb_Type</name> <init>= <expr><block>{
+<expr><call><name>PyVarObject_HEAD_INIT</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call>
+"_msi.Database"</expr>,
+<expr><sizeof>sizeof<argument_list>(<argument><expr><name>msiobj</name></expr></argument>)</argument_list></sizeof></expr>,
+<expr>0</expr>,
+<expr>(<name>destructor</name>)<name>msiobj_dealloc</name></expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr><name>PyObject_GenericGetAttr</name></expr>,
+<expr><name>PyObject_GenericSetAttr</name></expr>,
+<expr>0</expr>,
+<expr><name>Py_TPFLAGS_DEFAULT</name></expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr><name>db_methods</name></expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+<expr>0</expr>,
+}</block></expr></init></decl>;</decl_stmt>
+<function><type><specifier>static</specifier> <name>PyObject</name>*</type> <name>msiopendb</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>obj</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>status</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>char</name> *</type><name>path</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>persist</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>MSIHANDLE</name></type> <name>h</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>msiobj</name> *</type><name>result</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"si:MSIOpenDatabase"</expr></argument>, <argument><expr>&amp;<name>path</name></expr></argument>, <argument><expr>&amp;<name>persist</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<expr_stmt><expr><name>status</name> = <call><name>MsiOpenDatabase</name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr>(<name>LPCSTR</name>)<name>persist</name></expr></argument>, <argument><expr>&amp;<name>h</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>status</name> != <name>ERROR_SUCCESS</name></expr>)</condition><then>
+<return>return <expr><call><name>msierror</name><argument_list>(<argument><expr><name>status</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<expr_stmt><expr><name>result</name> = <call><name>PyObject_NEW</name><argument_list>(<argument>struct <expr><name>msiobj</name></expr></argument>, <argument><expr>&amp;<name>msidb_Type</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr>!<name>result</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>MsiCloseHandle</name><argument_list>(<argument><expr><name>h</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name><name>result</name>-&gt;<name>h</name></name> = <name>h</name></expr>;</expr_stmt>
+<return>return <expr>(<name>PyObject</name>*)<name>result</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>PyObject</name>*</type>
+<name>createrecord</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>o</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>count</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>MSIHANDLE</name></type> <name>h</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"i:CreateRecord"</expr></argument>, <argument><expr>&amp;<name>count</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<expr_stmt><expr><name>h</name> = <call><name>MsiCreateRecord</name><argument_list>(<argument><expr><name>count</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>h</name> == 0</expr>)</condition><then>
+<return>return <expr><call><name>msierror</name><argument_list>(<argument><expr>0</expr></argument>)</argument_list></call></expr>;</return></then></if>
+<return>return <expr><call><name>record_new</name><argument_list>(<argument><expr><name>h</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyMethodDef</name></type> <name><name>msi_methods</name><index>[]</index></name> <init>= <expr><block>{
+<expr><block>{
+<expr>"UuidCreate"</expr>, <expr>(<name>PyCFunction</name>)<name>uuidcreate</name></expr>, <expr><name>METH_NOARGS</name></expr>,
+<macro><name>PyDoc_STR</name><argument_list>(<argument>"UuidCreate() -&gt; string"</argument>)</argument_list></macro>
+}</block></expr>,
+<expr><block>{
+<expr>"FCICreate"</expr>, <expr>(<name>PyCFunction</name>)<name>fcicreate</name></expr>, <expr><name>METH_VARARGS</name></expr>,
+<macro><name>PyDoc_STR</name><argument_list>(<argument>"fcicreate(cabname,files) -&gt; None"</argument>)</argument_list></macro>
+}</block></expr>,
+<expr><block>{
+<expr>"OpenDatabase"</expr>, <expr>(<name>PyCFunction</name>)<name>msiopendb</name></expr>, <expr><name>METH_VARARGS</name></expr>,
+<macro><name>PyDoc_STR</name><argument_list>(<argument>"OpenDatabase(name, flags) -&gt; dbobj\nWraps MsiOpenDatabase"</argument>)</argument_list></macro>
+}</block></expr>,
+<expr><block>{
+<expr>"CreateRecord"</expr>, <expr>(<name>PyCFunction</name>)<name>createrecord</name></expr>, <expr><name>METH_VARARGS</name></expr>,
+<macro><name>PyDoc_STR</name><argument_list>(<argument>"OpenDatabase(name, flags) -&gt; dbobj\nWraps MsiCreateRecord"</argument>)</argument_list></macro>
+}</block></expr>,
+<expr><block>{<expr><name>NULL</name></expr>, <expr><name>NULL</name></expr>}</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>char</name></type> <name><name>msi_doc</name><index>[]</index></name> <init>= <expr>"Documentation"</expr></init></decl>;</decl_stmt>
+<function><type><name>PyMODINIT_FUNC</name></type>
+<name>init_msi</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>m</name></decl>;</decl_stmt>
+<expr_stmt><expr><name>m</name> = <call><name>Py_InitModule3</name><argument_list>(<argument><expr>"_msi"</expr></argument>, <argument><expr><name>msi_methods</name></expr></argument>, <argument><expr><name>msi_doc</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>m</name> == <name>NULL</name></expr>)</condition><then>
+<return>return;</return></then></if>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"MSIDBOPEN_CREATEDIRECT"</expr></argument>, <argument><expr>(<name>int</name>)<name>MSIDBOPEN_CREATEDIRECT</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"MSIDBOPEN_CREATE"</expr></argument>, <argument><expr>(<name>int</name>)<name>MSIDBOPEN_CREATE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"MSIDBOPEN_DIRECT"</expr></argument>, <argument><expr>(<name>int</name>)<name>MSIDBOPEN_DIRECT</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"MSIDBOPEN_READONLY"</expr></argument>, <argument><expr>(<name>int</name>)<name>MSIDBOPEN_READONLY</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"MSIDBOPEN_TRANSACT"</expr></argument>, <argument><expr>(<name>int</name>)<name>MSIDBOPEN_TRANSACT</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"MSIDBOPEN_PATCHFILE"</expr></argument>, <argument><expr>(<name>int</name>)<name>MSIDBOPEN_PATCHFILE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"MSICOLINFO_NAMES"</expr></argument>, <argument><expr><name>MSICOLINFO_NAMES</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"MSICOLINFO_TYPES"</expr></argument>, <argument><expr><name>MSICOLINFO_TYPES</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"MSIMODIFY_SEEK"</expr></argument>, <argument><expr><name>MSIMODIFY_SEEK</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"MSIMODIFY_REFRESH"</expr></argument>, <argument><expr><name>MSIMODIFY_REFRESH</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"MSIMODIFY_INSERT"</expr></argument>, <argument><expr><name>MSIMODIFY_INSERT</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"MSIMODIFY_UPDATE"</expr></argument>, <argument><expr><name>MSIMODIFY_UPDATE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"MSIMODIFY_ASSIGN"</expr></argument>, <argument><expr><name>MSIMODIFY_ASSIGN</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"MSIMODIFY_REPLACE"</expr></argument>, <argument><expr><name>MSIMODIFY_REPLACE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"MSIMODIFY_MERGE"</expr></argument>, <argument><expr><name>MSIMODIFY_MERGE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"MSIMODIFY_DELETE"</expr></argument>, <argument><expr><name>MSIMODIFY_DELETE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"MSIMODIFY_INSERT_TEMPORARY"</expr></argument>, <argument><expr><name>MSIMODIFY_INSERT_TEMPORARY</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"MSIMODIFY_VALIDATE"</expr></argument>, <argument><expr><name>MSIMODIFY_VALIDATE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"MSIMODIFY_VALIDATE_NEW"</expr></argument>, <argument><expr><name>MSIMODIFY_VALIDATE_NEW</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"MSIMODIFY_VALIDATE_FIELD"</expr></argument>, <argument><expr><name>MSIMODIFY_VALIDATE_FIELD</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"MSIMODIFY_VALIDATE_DELETE"</expr></argument>, <argument><expr><name>MSIMODIFY_VALIDATE_DELETE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"PID_CODEPAGE"</expr></argument>, <argument><expr><name>PID_CODEPAGE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"PID_TITLE"</expr></argument>, <argument><expr><name>PID_TITLE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"PID_SUBJECT"</expr></argument>, <argument><expr><name>PID_SUBJECT</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"PID_AUTHOR"</expr></argument>, <argument><expr><name>PID_AUTHOR</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"PID_KEYWORDS"</expr></argument>, <argument><expr><name>PID_KEYWORDS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"PID_COMMENTS"</expr></argument>, <argument><expr><name>PID_COMMENTS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"PID_TEMPLATE"</expr></argument>, <argument><expr><name>PID_TEMPLATE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"PID_LASTAUTHOR"</expr></argument>, <argument><expr><name>PID_LASTAUTHOR</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"PID_REVNUMBER"</expr></argument>, <argument><expr><name>PID_REVNUMBER</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"PID_LASTPRINTED"</expr></argument>, <argument><expr><name>PID_LASTPRINTED</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"PID_CREATE_DTM"</expr></argument>, <argument><expr><name>PID_CREATE_DTM</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"PID_LASTSAVE_DTM"</expr></argument>, <argument><expr><name>PID_LASTSAVE_DTM</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"PID_PAGECOUNT"</expr></argument>, <argument><expr><name>PID_PAGECOUNT</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"PID_WORDCOUNT"</expr></argument>, <argument><expr><name>PID_WORDCOUNT</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"PID_CHARCOUNT"</expr></argument>, <argument><expr><name>PID_CHARCOUNT</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"PID_APPNAME"</expr></argument>, <argument><expr><name>PID_APPNAME</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"PID_SECURITY"</expr></argument>, <argument><expr><name>PID_SECURITY</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>MSIError</name> = <call><name>PyErr_NewException</name> <argument_list>(<argument><expr>"_msi.MSIError"</expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr>!<name>MSIError</name></expr>)</condition><then>
+<return>return;</return></then></if>
+<expr_stmt><expr><call><name>PyModule_AddObject</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"MSIError"</expr></argument>, <argument><expr><name>MSIError</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+</unit>

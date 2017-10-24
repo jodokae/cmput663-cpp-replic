@@ -1,0 +1,1067 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="Python/marshal.c"><cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PY_SSIZE_T_CLEAN</name></cpp:macro></cpp:define>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"Python.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"longintrepr.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"code.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"marshal.h"</cpp:file></cpp:include>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>MAX_MARSHAL_STACK_DEPTH</name></cpp:macro> <cpp:value>2000</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>TYPE_NULL</name></cpp:macro> <cpp:value>'0'</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>TYPE_NONE</name></cpp:macro> <cpp:value>'N'</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>TYPE_FALSE</name></cpp:macro> <cpp:value>'F'</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>TYPE_TRUE</name></cpp:macro> <cpp:value>'T'</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>TYPE_STOPITER</name></cpp:macro> <cpp:value>'S'</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>TYPE_ELLIPSIS</name></cpp:macro> <cpp:value>'.'</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>TYPE_INT</name></cpp:macro> <cpp:value>'i'</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>TYPE_INT64</name></cpp:macro> <cpp:value>'I'</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>TYPE_FLOAT</name></cpp:macro> <cpp:value>'f'</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>TYPE_BINARY_FLOAT</name></cpp:macro> <cpp:value>'g'</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>TYPE_COMPLEX</name></cpp:macro> <cpp:value>'x'</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>TYPE_BINARY_COMPLEX</name></cpp:macro> <cpp:value>'y'</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>TYPE_LONG</name></cpp:macro> <cpp:value>'l'</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>TYPE_STRING</name></cpp:macro> <cpp:value>'s'</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>TYPE_INTERNED</name></cpp:macro> <cpp:value>'t'</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>TYPE_STRINGREF</name></cpp:macro> <cpp:value>'R'</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>TYPE_TUPLE</name></cpp:macro> <cpp:value>'('</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>TYPE_LIST</name></cpp:macro> <cpp:value>'['</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>TYPE_DICT</name></cpp:macro> <cpp:value>'{'</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>TYPE_CODE</name></cpp:macro> <cpp:value>'c'</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>TYPE_UNICODE</name></cpp:macro> <cpp:value>'u'</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>TYPE_UNKNOWN</name></cpp:macro> <cpp:value>'?'</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>TYPE_SET</name></cpp:macro> <cpp:value>'&lt;'</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>TYPE_FROZENSET</name></cpp:macro> <cpp:value>'&gt;'</cpp:value></cpp:define>
+<typedef>typedef <type><struct>struct <block>{
+<decl_stmt><decl><type><name>FILE</name> *</type><name>fp</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>error</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>depth</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>str</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>char</name> *</type><name>ptr</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>char</name> *</type><name>end</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>strings</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>version</name></decl>;</decl_stmt>
+}</block></struct></type> <name>WFILE</name>;</typedef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>w_byte</name><parameter_list>(<param><type><name>c</name></type></param>, <param><type><name>p</name></type></param>)</parameter_list></cpp:macro> <cpp:value>if (((p)-&gt;fp)) putc((c), (p)-&gt;fp); else if ((p)-&gt;ptr != (p)-&gt;end) *(p)-&gt;ptr++ = (c); else w_more(c, p)</cpp:value></cpp:define>
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>w_more</name><parameter_list>(<param><decl><type><name>int</name></type> <name>c</name></decl></param>, <param><decl><type><name>WFILE</name> *</type><name>p</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>size</name></decl>, <decl><type ref="prev"/><name>newsize</name></decl>;</decl_stmt>
+<if>if <condition>(<expr><name><name>p</name>-&gt;<name>str</name></name> == <name>NULL</name></expr>)</condition><then>
+<return>return;</return></then></if>
+<expr_stmt><expr><name>size</name> = <call><name>PyString_Size</name><argument_list>(<argument><expr><name><name>p</name>-&gt;<name>str</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>newsize</name> = <name>size</name> + <name>size</name> + 1024</expr>;</expr_stmt>
+<if>if <condition>(<expr><name>newsize</name> &gt; 32*1024*1024</expr>)</condition><then> <block>{
+<expr_stmt><expr><name>newsize</name> = <name>size</name> + (<name>size</name> &gt;&gt; 3)</expr>;</expr_stmt>
+}</block></then></if>
+<if>if <condition>(<expr><call><name>_PyString_Resize</name><argument_list>(<argument><expr>&amp;<name><name>p</name>-&gt;<name>str</name></name></expr></argument>, <argument><expr><name>newsize</name></expr></argument>)</argument_list></call> != 0</expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>p</name>-&gt;<name>ptr</name></name> = <name><name>p</name>-&gt;<name>end</name></name> = <name>NULL</name></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name><name>p</name>-&gt;<name>ptr</name></name> = <call><name>PyString_AS_STRING</name><argument_list>(<argument><expr>(<name>PyStringObject</name> *)<name><name>p</name>-&gt;<name>str</name></name></expr></argument>)</argument_list></call> + <name>size</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>p</name>-&gt;<name>end</name></name> =
+<call><name>PyString_AS_STRING</name><argument_list>(<argument><expr>(<name>PyStringObject</name> *)<name><name>p</name>-&gt;<name>str</name></name></expr></argument>)</argument_list></call> + <name>newsize</name></expr>;</expr_stmt>
+<expr_stmt><expr>*<name><name>p</name>-&gt;<name>ptr</name></name>++ = <call><name>Py_SAFE_DOWNCAST</name><argument_list>(<argument><expr><name>c</name></expr></argument>, <argument><expr><name>int</name></expr></argument>, <argument><expr><name>char</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+}</block></function>
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>w_string</name><parameter_list>(<param><decl><type><name>char</name> *</type><name>s</name></decl></param>, <param><decl><type><name>int</name></type> <name>n</name></decl></param>, <param><decl><type><name>WFILE</name> *</type><name>p</name></decl></param>)</parameter_list> <block>{
+<if>if <condition>(<expr><name><name>p</name>-&gt;<name>fp</name></name> != <name>NULL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>fwrite</name><argument_list>(<argument><expr><name>s</name></expr></argument>, <argument><expr>1</expr></argument>, <argument><expr><name>n</name></expr></argument>, <argument><expr><name><name>p</name>-&gt;<name>fp</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<while>while <condition>(<expr>--<name>n</name> &gt;= 0</expr>)</condition> <block>{
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr>*<name>s</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>s</name>++</expr>;</expr_stmt>
+}</block></while>
+}</block></else></if>
+}</block></function>
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>w_short</name><parameter_list>(<param><decl><type><name>int</name></type> <name>x</name></decl></param>, <param><decl><type><name>WFILE</name> *</type><name>p</name></decl></param>)</parameter_list> <block>{
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr><call>(<name>char</name>)<argument_list>( <argument><expr><name>x</name> &amp; 0xff</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr><call>(<name>char</name>)<argument_list>(<argument><expr>(<name>x</name>&gt;&gt; 8) &amp; 0xff</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>w_long</name><parameter_list>(<param><decl><type><name>long</name></type> <name>x</name></decl></param>, <param><decl><type><name>WFILE</name> *</type><name>p</name></decl></param>)</parameter_list> <block>{
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr><call>(<name>char</name>)<argument_list>( <argument><expr><name>x</name> &amp; 0xff</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr><call>(<name>char</name>)<argument_list>(<argument><expr>(<name>x</name>&gt;&gt; 8) &amp; 0xff</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr><call>(<name>char</name>)<argument_list>(<argument><expr>(<name>x</name>&gt;&gt;16) &amp; 0xff</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr><call>(<name>char</name>)<argument_list>(<argument><expr>(<name>x</name>&gt;&gt;24) &amp; 0xff</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>SIZEOF_LONG</name> &gt; 4</expr></cpp:if>
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>w_long64</name><parameter_list>(<param><decl><type><name>long</name></type> <name>x</name></decl></param>, <param><decl><type><name>WFILE</name> *</type><name>p</name></decl></param>)</parameter_list> <block>{
+<expr_stmt><expr><call><name>w_long</name><argument_list>(<argument><expr><name>x</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_long</name><argument_list>(<argument><expr><name>x</name>&gt;&gt;32</expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>w_object</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>v</name></decl></param>, <param><decl><type><name>WFILE</name> *</type><name>p</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>i</name></decl>, <decl><type ref="prev"/><name>n</name></decl>;</decl_stmt>
+<expr_stmt><expr><name><name>p</name>-&gt;<name>depth</name></name>++</expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>p</name>-&gt;<name>depth</name></name> &gt; <name>MAX_MARSHAL_STACK_DEPTH</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>p</name>-&gt;<name>error</name></name> = 2</expr>;</expr_stmt>
+}</block></then> <else>else <if>if <condition>(<expr><name>v</name> == <name>NULL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr><name>TYPE_NULL</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <if>if <condition>(<expr><name>v</name> == <name>Py_None</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr><name>TYPE_NONE</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <if>if <condition>(<expr><name>v</name> == <name>PyExc_StopIteration</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr><name>TYPE_STOPITER</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <if>if <condition>(<expr><name>v</name> == <name>Py_Ellipsis</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr><name>TYPE_ELLIPSIS</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <if>if <condition>(<expr><name>v</name> == <name>Py_False</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr><name>TYPE_FALSE</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <if>if <condition>(<expr><name>v</name> == <name>Py_True</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr><name>TYPE_TRUE</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <if>if <condition>(<expr><call><name>PyInt_CheckExact</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>long</name></type> <name>x</name> <init>= <expr><call><name>PyInt_AS_LONG</name><argument_list>(<argument><expr>(<name>PyIntObject</name> *)<name>v</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>SIZEOF_LONG</name> &gt; 4</expr></cpp:if>
+<decl_stmt><decl><type><name>long</name></type> <name>y</name> <init>= <expr><call><name>Py_ARITHMETIC_RIGHT_SHIFT</name><argument_list>(<argument><expr><name>long</name></expr></argument>, <argument><expr><name>x</name></expr></argument>, <argument><expr>31</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>y</name> &amp;&amp; <name>y</name> != -1</expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr><name>TYPE_INT64</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_long64</name><argument_list>(<argument><expr><name>x</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<block>{
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr><name>TYPE_INT</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_long</name><argument_list>(<argument><expr><name>x</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+}</block></then> <else>else <if>if <condition>(<expr><call><name>PyLong_CheckExact</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>PyLongObject</name> *</type><name>ob</name> <init>= <expr>(<name>PyLongObject</name> *)<name>v</name></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr><name>TYPE_LONG</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>n</name> = <name><name>ob</name>-&gt;<name>ob_size</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_long</name><argument_list>(<argument><expr>(<name>long</name>)<name>n</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>n</name> &lt; 0</expr>)</condition><then>
+<expr_stmt><expr><name>n</name> = -<name>n</name></expr>;</expr_stmt></then></if>
+<for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name>n</name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>)
+<expr_stmt><expr><call><name>w_short</name><argument_list>(<argument><expr><name><name>ob</name>-&gt;<name>ob_digit</name><index>[<expr><name>i</name></expr>]</index></name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></for>
+}</block></then> <else>else <if>if <condition>(<expr><call><name>PyFloat_CheckExact</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<if>if <condition>(<expr><name><name>p</name>-&gt;<name>version</name></name> &gt; 1</expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>unsigned</name> <name>char</name></type> <name><name>buf</name><index>[<expr>8</expr>]</index></name></decl>;</decl_stmt>
+<if>if <condition>(<expr><call><name>_PyFloat_Pack8</name><argument_list>(<argument><expr><call><name>PyFloat_AsDouble</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr></argument>,
+<argument><expr><name>buf</name></expr></argument>, <argument><expr>1</expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>p</name>-&gt;<name>error</name></name> = 1</expr>;</expr_stmt>
+<return>return;</return>
+}</block></then></if>
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr><name>TYPE_BINARY_FLOAT</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_string</name><argument_list>(<argument><expr>(<name>char</name>*)<name>buf</name></expr></argument>, <argument><expr>8</expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<decl_stmt><decl><type><name>char</name></type> <name><name>buf</name><index>[<expr>256</expr>]</index></name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>PyFloat_AsReprString</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr>(<name>PyFloatObject</name> *)<name>v</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>n</name> = <call><name>strlen</name><argument_list>(<argument><expr><name>buf</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr><name>TYPE_FLOAT</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr>(<name>int</name>)<name>n</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_string</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr>(<name>int</name>)<name>n</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+}</block></then>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr>!<call><name>defined</name><argument_list>(<argument><expr><name>WITHOUT_COMPLEX</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<else>else <if>if <condition>(<expr><call><name>PyComplex_CheckExact</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<if>if <condition>(<expr><name><name>p</name>-&gt;<name>version</name></name> &gt; 1</expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>unsigned</name> <name>char</name></type> <name><name>buf</name><index>[<expr>8</expr>]</index></name></decl>;</decl_stmt>
+<if>if <condition>(<expr><call><name>_PyFloat_Pack8</name><argument_list>(<argument><expr><call><name>PyComplex_RealAsDouble</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr></argument>,
+<argument><expr><name>buf</name></expr></argument>, <argument><expr>1</expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>p</name>-&gt;<name>error</name></name> = 1</expr>;</expr_stmt>
+<return>return;</return>
+}</block></then></if>
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr><name>TYPE_BINARY_COMPLEX</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_string</name><argument_list>(<argument><expr>(<name>char</name>*)<name>buf</name></expr></argument>, <argument><expr>8</expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><call><name>_PyFloat_Pack8</name><argument_list>(<argument><expr><call><name>PyComplex_ImagAsDouble</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr></argument>,
+<argument><expr><name>buf</name></expr></argument>, <argument><expr>1</expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>p</name>-&gt;<name>error</name></name> = 1</expr>;</expr_stmt>
+<return>return;</return>
+}</block></then></if>
+<expr_stmt><expr><call><name>w_string</name><argument_list>(<argument><expr>(<name>char</name>*)<name>buf</name></expr></argument>, <argument><expr>8</expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<decl_stmt><decl><type><name>char</name></type> <name><name>buf</name><index>[<expr>256</expr>]</index></name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>PyFloatObject</name> *</type><name>temp</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr><name>TYPE_COMPLEX</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>temp</name> = (<name>PyFloatObject</name>*)<call><name>PyFloat_FromDouble</name><argument_list>(
+<argument><expr><call><name>PyComplex_RealAsDouble</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr>!<name>temp</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>p</name>-&gt;<name>error</name></name> = 1</expr>;</expr_stmt>
+<return>return;</return>
+}</block></then></if>
+<expr_stmt><expr><call><name>PyFloat_AsReprString</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr><name>temp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>temp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>n</name> = <call><name>strlen</name><argument_list>(<argument><expr><name>buf</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr>(<name>int</name>)<name>n</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_string</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr>(<name>int</name>)<name>n</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>temp</name> = (<name>PyFloatObject</name>*)<call><name>PyFloat_FromDouble</name><argument_list>(
+<argument><expr><call><name>PyComplex_ImagAsDouble</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr>!<name>temp</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>p</name>-&gt;<name>error</name></name> = 1</expr>;</expr_stmt>
+<return>return;</return>
+}</block></then></if>
+<expr_stmt><expr><call><name>PyFloat_AsReprString</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr><name>temp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>temp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>n</name> = <call><name>strlen</name><argument_list>(<argument><expr><name>buf</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr>(<name>int</name>)<name>n</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_string</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr>(<name>int</name>)<name>n</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+}</block></then>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<else>else <if>if <condition>(<expr><call><name>PyString_CheckExact</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<if>if <condition>(<expr><name><name>p</name>-&gt;<name>strings</name></name> &amp;&amp; <call><name>PyString_CHECK_INTERNED</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>o</name> <init>= <expr><call><name>PyDict_GetItem</name><argument_list>(<argument><expr><name><name>p</name>-&gt;<name>strings</name></name></expr></argument>, <argument><expr><name>v</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>o</name></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>long</name></type> <name>w</name> <init>= <expr><call><name>PyInt_AsLong</name><argument_list>(<argument><expr><name>o</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr><name>TYPE_STRINGREF</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_long</name><argument_list>(<argument><expr><name>w</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<goto>goto <name>exit</name>;</goto>
+}</block></then> <else>else <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>ok</name></decl>;</decl_stmt>
+<expr_stmt><expr><name>o</name> = <call><name>PyInt_FromSsize_t</name><argument_list>(<argument><expr><call><name>PyDict_Size</name><argument_list>(<argument><expr><name><name>p</name>-&gt;<name>strings</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>ok</name> = <name>o</name> &amp;&amp;
+<call><name>PyDict_SetItem</name><argument_list>(<argument><expr><name><name>p</name>-&gt;<name>strings</name></name></expr></argument>, <argument><expr><name>v</name></expr></argument>, <argument><expr><name>o</name></expr></argument>)</argument_list></call> &gt;= 0</expr>;</expr_stmt>
+<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>o</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr>!<name>ok</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>p</name>-&gt;<name>depth</name></name>--</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>p</name>-&gt;<name>error</name></name> = 1</expr>;</expr_stmt>
+<return>return;</return>
+}</block></then></if>
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr><name>TYPE_INTERNED</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr><name>TYPE_STRING</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+<expr_stmt><expr><name>n</name> = <call><name>PyString_GET_SIZE</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>n</name> &gt; <name>INT_MAX</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>p</name>-&gt;<name>depth</name></name>--</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>p</name>-&gt;<name>error</name></name> = 1</expr>;</expr_stmt>
+<return>return;</return>
+}</block></then></if>
+<expr_stmt><expr><call><name>w_long</name><argument_list>(<argument><expr>(<name>long</name>)<name>n</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_string</name><argument_list>(<argument><expr><call><name>PyString_AS_STRING</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr>(<name>int</name>)<name>n</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>Py_USING_UNICODE</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<else>else <if>if <condition>(<expr><call><name>PyUnicode_CheckExact</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>utf8</name></decl>;</decl_stmt>
+<expr_stmt><expr><name>utf8</name> = <call><name>PyUnicode_AsUTF8String</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>utf8</name> == <name>NULL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>p</name>-&gt;<name>depth</name></name>--</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>p</name>-&gt;<name>error</name></name> = 1</expr>;</expr_stmt>
+<return>return;</return>
+}</block></then></if>
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr><name>TYPE_UNICODE</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>n</name> = <call><name>PyString_GET_SIZE</name><argument_list>(<argument><expr><name>utf8</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>n</name> &gt; <name>INT_MAX</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>p</name>-&gt;<name>depth</name></name>--</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>p</name>-&gt;<name>error</name></name> = 1</expr>;</expr_stmt>
+<return>return;</return>
+}</block></then></if>
+<expr_stmt><expr><call><name>w_long</name><argument_list>(<argument><expr>(<name>long</name>)<name>n</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_string</name><argument_list>(<argument><expr><call><name>PyString_AS_STRING</name><argument_list>(<argument><expr><name>utf8</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr>(<name>int</name>)<name>n</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>utf8</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<else>else <if>if <condition>(<expr><call><name>PyTuple_CheckExact</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr><name>TYPE_TUPLE</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>n</name> = <call><name>PyTuple_Size</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_long</name><argument_list>(<argument><expr>(<name>long</name>)<name>n</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name>n</name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>) <block>{
+<expr_stmt><expr><call><name>w_object</name><argument_list>(<argument><expr><call><name>PyTuple_GET_ITEM</name><argument_list>(<argument><expr><name>v</name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></for>
+}</block></then> <else>else <if>if <condition>(<expr><call><name>PyList_CheckExact</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr><name>TYPE_LIST</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>n</name> = <call><name>PyList_GET_SIZE</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_long</name><argument_list>(<argument><expr>(<name>long</name>)<name>n</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name>n</name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>) <block>{
+<expr_stmt><expr><call><name>w_object</name><argument_list>(<argument><expr><call><name>PyList_GET_ITEM</name><argument_list>(<argument><expr><name>v</name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></for>
+}</block></then> <else>else <if>if <condition>(<expr><call><name>PyDict_CheckExact</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>pos</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>key</name></decl>, *<decl><type ref="prev"/><name>value</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr><name>TYPE_DICT</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>pos</name> = 0</expr>;</expr_stmt>
+<while>while <condition>(<expr><call><name>PyDict_Next</name><argument_list>(<argument><expr><name>v</name></expr></argument>, <argument><expr>&amp;<name>pos</name></expr></argument>, <argument><expr>&amp;<name>key</name></expr></argument>, <argument><expr>&amp;<name>value</name></expr></argument>)</argument_list></call></expr>)</condition> <block>{
+<expr_stmt><expr><call><name>w_object</name><argument_list>(<argument><expr><name>key</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_object</name><argument_list>(<argument><expr><name>value</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></while>
+<expr_stmt><expr><call><name>w_object</name><argument_list>(<argument><expr>(<name>PyObject</name> *)<name>NULL</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <if>if <condition>(<expr><call><name>PyAnySet_CheckExact</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>value</name></decl>, *<decl><type ref="prev"/><name>it</name></decl>;</decl_stmt>
+<if>if <condition>(<expr><call><name>PyObject_TypeCheck</name><argument_list>(<argument><expr><name>v</name></expr></argument>, <argument><expr>&amp;<name>PySet_Type</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr><name>TYPE_SET</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+<else>else
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr><name>TYPE_FROZENSET</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+<expr_stmt><expr><name>n</name> = <call><name>PyObject_Size</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>n</name> == -1</expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>p</name>-&gt;<name>depth</name></name>--</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>p</name>-&gt;<name>error</name></name> = 1</expr>;</expr_stmt>
+<return>return;</return>
+}</block></then></if>
+<expr_stmt><expr><call><name>w_long</name><argument_list>(<argument><expr>(<name>long</name>)<name>n</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>it</name> = <call><name>PyObject_GetIter</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>it</name> == <name>NULL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>p</name>-&gt;<name>depth</name></name>--</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>p</name>-&gt;<name>error</name></name> = 1</expr>;</expr_stmt>
+<return>return;</return>
+}</block></then></if>
+<while>while <condition>(<expr>(<name>value</name> = <call><name>PyIter_Next</name><argument_list>(<argument><expr><name>it</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition> <block>{
+<expr_stmt><expr><call><name>w_object</name><argument_list>(<argument><expr><name>value</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>value</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></while>
+<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>it</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><call><name>PyErr_Occurred</name><argument_list>()</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>p</name>-&gt;<name>depth</name></name>--</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>p</name>-&gt;<name>error</name></name> = 1</expr>;</expr_stmt>
+<return>return;</return>
+}</block></then></if>
+}</block></then> <else>else <if>if <condition>(<expr><call><name>PyCode_Check</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>PyCodeObject</name> *</type><name>co</name> <init>= <expr>(<name>PyCodeObject</name> *)<name>v</name></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr><name>TYPE_CODE</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_long</name><argument_list>(<argument><expr><name><name>co</name>-&gt;<name>co_argcount</name></name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_long</name><argument_list>(<argument><expr><name><name>co</name>-&gt;<name>co_nlocals</name></name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_long</name><argument_list>(<argument><expr><name><name>co</name>-&gt;<name>co_stacksize</name></name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_long</name><argument_list>(<argument><expr><name><name>co</name>-&gt;<name>co_flags</name></name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_object</name><argument_list>(<argument><expr><name><name>co</name>-&gt;<name>co_code</name></name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_object</name><argument_list>(<argument><expr><name><name>co</name>-&gt;<name>co_consts</name></name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_object</name><argument_list>(<argument><expr><name><name>co</name>-&gt;<name>co_names</name></name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_object</name><argument_list>(<argument><expr><name><name>co</name>-&gt;<name>co_varnames</name></name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_object</name><argument_list>(<argument><expr><name><name>co</name>-&gt;<name>co_freevars</name></name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_object</name><argument_list>(<argument><expr><name><name>co</name>-&gt;<name>co_cellvars</name></name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_object</name><argument_list>(<argument><expr><name><name>co</name>-&gt;<name>co_filename</name></name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_object</name><argument_list>(<argument><expr><name><name>co</name>-&gt;<name>co_name</name></name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_long</name><argument_list>(<argument><expr><name><name>co</name>-&gt;<name>co_firstlineno</name></name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_object</name><argument_list>(<argument><expr><name><name>co</name>-&gt;<name>co_lnotab</name></name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <if>if <condition>(<expr><call><name>PyObject_CheckReadBuffer</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>char</name> *</type><name>s</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>PyBufferProcs</name> *</type><name>pb</name> <init>= <expr><name><name>v</name>-&gt;<name>ob_type</name>-&gt;<name>tp_as_buffer</name></name></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr><name>TYPE_STRING</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>n</name> = <call>(*<name><name>pb</name>-&gt;<name>bf_getreadbuffer</name></name>)<argument_list>(<argument><expr><name>v</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr>(<name>void</name> **)&amp;<name>s</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>n</name> &gt; <name>INT_MAX</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>p</name>-&gt;<name>depth</name></name>--</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>p</name>-&gt;<name>error</name></name> = 1</expr>;</expr_stmt>
+<return>return;</return>
+}</block></then></if>
+<expr_stmt><expr><call><name>w_long</name><argument_list>(<argument><expr>(<name>long</name>)<name>n</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_string</name><argument_list>(<argument><expr><name>s</name></expr></argument>, <argument><expr>(<name>int</name>)<name>n</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><call><name>w_byte</name><argument_list>(<argument><expr><name>TYPE_UNKNOWN</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>p</name>-&gt;<name>error</name></name> = 1</expr>;</expr_stmt>
+}</block></else></if></else></if></else></if></else></if></else></if></else></if></else></if></else></if></else></if></else></if></else></if></else></if></else></if></else></if></else></if></else></if></else></if></else></if></else></if>
+<label><name>exit</name>:</label>
+<expr_stmt><expr><name><name>p</name>-&gt;<name>depth</name></name>--</expr>;</expr_stmt>
+}</block></function>
+<function><type><name>void</name></type>
+<name>PyMarshal_WriteLongToFile</name><parameter_list>(<param><decl><type><name>long</name></type> <name>x</name></decl></param>, <param><decl><type><name>FILE</name> *</type><name>fp</name></decl></param>, <param><decl><type><name>int</name></type> <name>version</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>WFILE</name></type> <name>wf</name></decl>;</decl_stmt>
+<expr_stmt><expr><name><name>wf</name>.<name>fp</name></name> = <name>fp</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>wf</name>.<name>error</name></name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>wf</name>.<name>depth</name></name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>wf</name>.<name>strings</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>wf</name>.<name>version</name></name> = <name>version</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_long</name><argument_list>(<argument><expr><name>x</name></expr></argument>, <argument><expr>&amp;<name>wf</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+<function><type><name>void</name></type>
+<name>PyMarshal_WriteObjectToFile</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>x</name></decl></param>, <param><decl><type><name>FILE</name> *</type><name>fp</name></decl></param>, <param><decl><type><name>int</name></type> <name>version</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>WFILE</name></type> <name>wf</name></decl>;</decl_stmt>
+<expr_stmt><expr><name><name>wf</name>.<name>fp</name></name> = <name>fp</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>wf</name>.<name>error</name></name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>wf</name>.<name>depth</name></name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>wf</name>.<name>strings</name></name> = (<name>version</name> &gt; 0) ? <call><name>PyDict_New</name><argument_list>()</argument_list></call> : <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>wf</name>.<name>version</name></name> = <name>version</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_object</name><argument_list>(<argument><expr><name>x</name></expr></argument>, <argument><expr>&amp;<name>wf</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name><name>wf</name>.<name>strings</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+<typedef>typedef <type><name>WFILE</name></type> <name>RFILE</name>;</typedef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>rs_byte</name><parameter_list>(<param><type><name>p</name></type></param>)</parameter_list></cpp:macro> <cpp:value>(((p)-&gt;ptr &lt; (p)-&gt;end) ? (unsigned char)*(p)-&gt;ptr++ : EOF)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>r_byte</name><parameter_list>(<param><type><name>p</name></type></param>)</parameter_list></cpp:macro> <cpp:value>((p)-&gt;fp ? getc((p)-&gt;fp) : rs_byte(p))</cpp:value></cpp:define>
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>r_string</name><parameter_list>(<param><decl><type><name>char</name> *</type><name>s</name></decl></param>, <param><decl><type><name>int</name></type> <name>n</name></decl></param>, <param><decl><type><name>RFILE</name> *</type><name>p</name></decl></param>)</parameter_list> <block>{
+<if>if <condition>(<expr><name><name>p</name>-&gt;<name>fp</name></name> != <name>NULL</name></expr>)</condition><then>
+<return>return <expr>(<name>int</name>)<call><name>fread</name><argument_list>(<argument><expr><name>s</name></expr></argument>, <argument><expr>1</expr></argument>, <argument><expr><name>n</name></expr></argument>, <argument><expr><name><name>p</name>-&gt;<name>fp</name></name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<if>if <condition>(<expr><name><name>p</name>-&gt;<name>end</name></name> - <name><name>p</name>-&gt;<name>ptr</name></name> &lt; <name>n</name></expr>)</condition><then>
+<expr_stmt><expr><name>n</name> = <call>(<name>int</name>)<argument_list>(<argument><expr><name><name>p</name>-&gt;<name>end</name></name> - <name><name>p</name>-&gt;<name>ptr</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>s</name></expr></argument>, <argument><expr><name><name>p</name>-&gt;<name>ptr</name></name></expr></argument>, <argument><expr><name>n</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>p</name>-&gt;<name>ptr</name></name> += <name>n</name></expr>;</expr_stmt>
+<return>return <expr><name>n</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>r_short</name><parameter_list>(<param><decl><type><name>RFILE</name> *</type><name>p</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>register</name> <name>short</name></type> <name>x</name></decl>;</decl_stmt>
+<expr_stmt><expr><name>x</name> = <call><name>r_byte</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>x</name> |= <call><name>r_byte</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call> &lt;&lt; 8</expr>;</expr_stmt>
+<expr_stmt><expr><name>x</name> |= -(<name>x</name> &amp; 0x8000)</expr>;</expr_stmt>
+<return>return <expr><name>x</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>long</name></type>
+<name>r_long</name><parameter_list>(<param><decl><type><name>RFILE</name> *</type><name>p</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>register</name> <name>long</name></type> <name>x</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>register</name> <name>FILE</name> *</type><name>fp</name> <init>= <expr><name><name>p</name>-&gt;<name>fp</name></name></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>fp</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>x</name> = <call><name>getc</name><argument_list>(<argument><expr><name>fp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>x</name> |= (<name>long</name>)<call><name>getc</name><argument_list>(<argument><expr><name>fp</name></expr></argument>)</argument_list></call> &lt;&lt; 8</expr>;</expr_stmt>
+<expr_stmt><expr><name>x</name> |= (<name>long</name>)<call><name>getc</name><argument_list>(<argument><expr><name>fp</name></expr></argument>)</argument_list></call> &lt;&lt; 16</expr>;</expr_stmt>
+<expr_stmt><expr><name>x</name> |= (<name>long</name>)<call><name>getc</name><argument_list>(<argument><expr><name>fp</name></expr></argument>)</argument_list></call> &lt;&lt; 24</expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name>x</name> = <call><name>rs_byte</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>x</name> |= (<name>long</name>)<call><name>rs_byte</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call> &lt;&lt; 8</expr>;</expr_stmt>
+<expr_stmt><expr><name>x</name> |= (<name>long</name>)<call><name>rs_byte</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call> &lt;&lt; 16</expr>;</expr_stmt>
+<expr_stmt><expr><name>x</name> |= (<name>long</name>)<call><name>rs_byte</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call> &lt;&lt; 24</expr>;</expr_stmt>
+}</block></else></if>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>SIZEOF_LONG</name> &gt; 4</expr></cpp:if>
+<expr_stmt><expr><name>x</name> |= -(<name>x</name> &amp; 0x80000000L)</expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<return>return <expr><name>x</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>r_long64</name><parameter_list>(<param><decl><type><name>RFILE</name> *</type><name>p</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>long</name></type> <name>lo4</name> <init>= <expr><call><name>r_long</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>long</name></type> <name>hi4</name> <init>= <expr><call><name>r_long</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>SIZEOF_LONG</name> &gt; 4</expr></cpp:if>
+<decl_stmt><decl><type><name>long</name></type> <name>x</name> <init>= <expr>(<name>hi4</name> &lt;&lt; 32) | (<name>lo4</name> &amp; 0xFFFFFFFFL)</expr></init></decl>;</decl_stmt>
+<return>return <expr><call><name>PyInt_FromLong</name><argument_list>(<argument><expr><name>x</name></expr></argument>)</argument_list></call></expr>;</return>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+<decl_stmt><decl><type><name>unsigned</name> <name>char</name></type> <name><name>buf</name><index>[<expr>8</expr>]</index></name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>one</name> <init>= <expr>1</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>is_little_endian</name> <init>= <expr>(<name>int</name>)*(<name>char</name>*)&amp;<name>one</name></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>is_little_endian</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr>&amp;<name>lo4</name></expr></argument>, <argument><expr>4</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>buf</name>+4</expr></argument>, <argument><expr>&amp;<name>hi4</name></expr></argument>, <argument><expr>4</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr>&amp;<name>hi4</name></expr></argument>, <argument><expr>4</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>buf</name>+4</expr></argument>, <argument><expr>&amp;<name>lo4</name></expr></argument>, <argument><expr>4</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+<return>return <expr><call><name>_PyLong_FromByteArray</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr>8</expr></argument>, <argument><expr><name>is_little_endian</name></expr></argument>, <argument><expr>1</expr></argument>)</argument_list></call></expr>;</return>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+}</block></function>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>r_object</name><parameter_list>(<param><decl><type><name>RFILE</name> *</type><name>p</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>v</name></decl>, *<decl><type ref="prev"/><name>v2</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>long</name></type> <name>i</name></decl>, <decl><type ref="prev"/><name>n</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>type</name> <init>= <expr><call><name>r_byte</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>retval</name></decl>;</decl_stmt>
+<expr_stmt><expr><name><name>p</name>-&gt;<name>depth</name></name>++</expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>p</name>-&gt;<name>depth</name></name> &gt; <name>MAX_MARSHAL_STACK_DEPTH</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>p</name>-&gt;<name>depth</name></name>--</expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>, <argument><expr>"recursion limit exceeded"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></then></if>
+<switch>switch <condition>(<expr><name>type</name></expr>)</condition> <block>{
+<case>case <expr><name>EOF</name></expr>:
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_EOFError</name></expr></argument>,
+<argument><expr>"EOF read where object expected"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>retval</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>TYPE_NULL</name></expr>:
+<expr_stmt><expr><name>retval</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>TYPE_NONE</name></expr>:
+<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>retval</name> = <name>Py_None</name></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>TYPE_STOPITER</name></expr>:
+<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>PyExc_StopIteration</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>retval</name> = <name>PyExc_StopIteration</name></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>TYPE_ELLIPSIS</name></expr>:
+<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_Ellipsis</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>retval</name> = <name>Py_Ellipsis</name></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>TYPE_FALSE</name></expr>:
+<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_False</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>retval</name> = <name>Py_False</name></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>TYPE_TRUE</name></expr>:
+<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_True</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>retval</name> = <name>Py_True</name></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>TYPE_INT</name></expr>:
+<expr_stmt><expr><name>retval</name> = <call><name>PyInt_FromLong</name><argument_list>(<argument><expr><call><name>r_long</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>TYPE_INT64</name></expr>:
+<expr_stmt><expr><name>retval</name> = <call><name>r_long64</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>TYPE_LONG</name></expr>: <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>size</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>PyLongObject</name> *</type><name>ob</name></decl>;</decl_stmt>
+<expr_stmt><expr><name>n</name> = <call><name>r_long</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>n</name> &lt; -<name>INT_MAX</name> || <name>n</name> &gt; <name>INT_MAX</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>,
+<argument><expr>"bad marshal data"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>retval</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<expr_stmt><expr><name>size</name> = <name>n</name>&lt;0 ? -<name>n</name> : <name>n</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>ob</name> = <call><name>_PyLong_New</name><argument_list>(<argument><expr><name>size</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>ob</name> == <name>NULL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>retval</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<expr_stmt><expr><name><name>ob</name>-&gt;<name>ob_size</name></name> = <name>n</name></expr>;</expr_stmt>
+<for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name>size</name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>) <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>digit</name> <init>= <expr><call><name>r_short</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>digit</name> &lt; 0</expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>ob</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>,
+<argument><expr>"bad marshal data"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>ob</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<if>if <condition>(<expr><name>ob</name> != <name>NULL</name></expr>)</condition><then>
+<expr_stmt><expr><name><name>ob</name>-&gt;<name>ob_digit</name><index>[<expr><name>i</name></expr>]</index></name> = <name>digit</name></expr>;</expr_stmt></then></if>
+}</block></for>
+<expr_stmt><expr><name>retval</name> = (<name>PyObject</name> *)<name>ob</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block>
+</case><case>case <expr><name>TYPE_FLOAT</name></expr>: <block>{
+<decl_stmt><decl><type><name>char</name></type> <name><name>buf</name><index>[<expr>256</expr>]</index></name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>double</name></type> <name>dx</name></decl>;</decl_stmt>
+<expr_stmt><expr><name>n</name> = <call><name>r_byte</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>n</name> == <name>EOF</name> || <call><name>r_string</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr>(<name>int</name>)<name>n</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call> != <name>n</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_EOFError</name></expr></argument>,
+<argument><expr>"EOF read where object expected"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>retval</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<expr_stmt><expr><name><name>buf</name><index>[<expr><name>n</name></expr>]</index></name> = '\0'</expr>;</expr_stmt>
+<expr_stmt><expr><name>retval</name> = <name>NULL</name></expr>;</expr_stmt>
+<macro><name>PyFPE_START_PROTECT</name><argument_list>(<argument>"atof"</argument>, <argument>break</argument>)</argument_list></macro>
+<expr_stmt><expr><name>dx</name> = <call><name>PyOS_ascii_atof</name><argument_list>(<argument><expr><name>buf</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyFPE_END_PROTECT</name><argument_list>(<argument>dx</argument>)</argument_list></macro>
+<expr_stmt><expr><name>retval</name> = <call><name>PyFloat_FromDouble</name><argument_list>(<argument><expr><name>dx</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<break>break;</break>
+}</block>
+</case><case>case <expr><name>TYPE_BINARY_FLOAT</name></expr>: <block>{
+<decl_stmt><decl><type><name>unsigned</name> <name>char</name></type> <name><name>buf</name><index>[<expr>8</expr>]</index></name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>double</name></type> <name>x</name></decl>;</decl_stmt>
+<if>if <condition>(<expr><call><name>r_string</name><argument_list>(<argument><expr>(<name>char</name>*)<name>buf</name></expr></argument>, <argument><expr>8</expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call> != 8</expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_EOFError</name></expr></argument>,
+<argument><expr>"EOF read where object expected"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>retval</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<expr_stmt><expr><name>x</name> = <call><name>_PyFloat_Unpack8</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr>1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>x</name> == -1.0 &amp;&amp; <call><name>PyErr_Occurred</name><argument_list>()</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>retval</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<expr_stmt><expr><name>retval</name> = <call><name>PyFloat_FromDouble</name><argument_list>(<argument><expr><name>x</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<break>break;</break>
+}</block>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr>!<call><name>defined</name><argument_list>(<argument><expr><name>WITHOUT_COMPLEX</name></expr></argument>)</argument_list></call></expr></cpp:if>
+</case><case>case <expr><name>TYPE_COMPLEX</name></expr>: <block>{
+<decl_stmt><decl><type><name>char</name></type> <name><name>buf</name><index>[<expr>256</expr>]</index></name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>Py_complex</name></type> <name>c</name></decl>;</decl_stmt>
+<expr_stmt><expr><name>n</name> = <call><name>r_byte</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>n</name> == <name>EOF</name> || <call><name>r_string</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr>(<name>int</name>)<name>n</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call> != <name>n</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_EOFError</name></expr></argument>,
+<argument><expr>"EOF read where object expected"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>retval</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<expr_stmt><expr><name><name>buf</name><index>[<expr><name>n</name></expr>]</index></name> = '\0'</expr>;</expr_stmt>
+<expr_stmt><expr><name>retval</name> = <name>NULL</name></expr>;</expr_stmt>
+<macro><name>PyFPE_START_PROTECT</name><argument_list>(<argument>"atof"</argument>, <argument>break;</argument>)</argument_list></macro>
+<expr_stmt><expr><name><name>c</name>.<name>real</name></name> = <call><name>PyOS_ascii_atof</name><argument_list>(<argument><expr><name>buf</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyFPE_END_PROTECT</name><argument_list>(<argument>c</argument>)</argument_list></macro>
+<expr_stmt><expr><name>n</name> = <call><name>r_byte</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>n</name> == <name>EOF</name> || <call><name>r_string</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr>(<name>int</name>)<name>n</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call> != <name>n</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_EOFError</name></expr></argument>,
+<argument><expr>"EOF read where object expected"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>retval</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<expr_stmt><expr><name><name>buf</name><index>[<expr><name>n</name></expr>]</index></name> = '\0'</expr>;</expr_stmt>
+<macro><name>PyFPE_START_PROTECT</name><argument_list>(<argument>"atof"</argument>, <argument>break</argument>)</argument_list></macro>
+<expr_stmt><expr><name><name>c</name>.<name>imag</name></name> = <call><name>PyOS_ascii_atof</name><argument_list>(<argument><expr><name>buf</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyFPE_END_PROTECT</name><argument_list>(<argument>c</argument>)</argument_list></macro>
+<expr_stmt><expr><name>retval</name> = <call><name>PyComplex_FromCComplex</name><argument_list>(<argument><expr><name>c</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<break>break;</break>
+}</block>
+</case><case>case <expr><name>TYPE_BINARY_COMPLEX</name></expr>: <block>{
+<decl_stmt><decl><type><name>unsigned</name> <name>char</name></type> <name><name>buf</name><index>[<expr>8</expr>]</index></name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>Py_complex</name></type> <name>c</name></decl>;</decl_stmt>
+<if>if <condition>(<expr><call><name>r_string</name><argument_list>(<argument><expr>(<name>char</name>*)<name>buf</name></expr></argument>, <argument><expr>8</expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call> != 8</expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_EOFError</name></expr></argument>,
+<argument><expr>"EOF read where object expected"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>retval</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<expr_stmt><expr><name><name>c</name>.<name>real</name></name> = <call><name>_PyFloat_Unpack8</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr>1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>c</name>.<name>real</name></name> == -1.0 &amp;&amp; <call><name>PyErr_Occurred</name><argument_list>()</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>retval</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<if>if <condition>(<expr><call><name>r_string</name><argument_list>(<argument><expr>(<name>char</name>*)<name>buf</name></expr></argument>, <argument><expr>8</expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call> != 8</expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_EOFError</name></expr></argument>,
+<argument><expr>"EOF read where object expected"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>retval</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<expr_stmt><expr><name><name>c</name>.<name>imag</name></name> = <call><name>_PyFloat_Unpack8</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr>1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>c</name>.<name>imag</name></name> == -1.0 &amp;&amp; <call><name>PyErr_Occurred</name><argument_list>()</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>retval</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<expr_stmt><expr><name>retval</name> = <call><name>PyComplex_FromCComplex</name><argument_list>(<argument><expr><name>c</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<break>break;</break>
+}</block>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+</case><case>case <expr><name>TYPE_INTERNED</name></expr>:
+</case><case>case <expr><name>TYPE_STRING</name></expr>:
+<expr_stmt><expr><name>n</name> = <call><name>r_long</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>n</name> &lt; 0 || <name>n</name> &gt; <name>INT_MAX</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>, <argument><expr>"bad marshal data"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>retval</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<expr_stmt><expr><name>v</name> = <call><name>PyString_FromStringAndSize</name><argument_list>(<argument><expr>(<name>char</name> *)<name>NULL</name></expr></argument>, <argument><expr><name>n</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>v</name> == <name>NULL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>retval</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<if>if <condition>(<expr><call><name>r_string</name><argument_list>(<argument><expr><call><name>PyString_AS_STRING</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr>(<name>int</name>)<name>n</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call> != <name>n</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_EOFError</name></expr></argument>,
+<argument><expr>"EOF read where object expected"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>retval</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<if>if <condition>(<expr><name>type</name> == <name>TYPE_INTERNED</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>PyString_InternInPlace</name><argument_list>(<argument><expr>&amp;<name>v</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><call><name>PyList_Append</name><argument_list>(<argument><expr><name><name>p</name>-&gt;<name>strings</name></name></expr></argument>, <argument><expr><name>v</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then> <block>{
+<expr_stmt><expr><name>retval</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+}</block></then></if>
+<expr_stmt><expr><name>retval</name> = <name>v</name></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>TYPE_STRINGREF</name></expr>:
+<expr_stmt><expr><name>n</name> = <call><name>r_long</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>n</name> &lt; 0 || <name>n</name> &gt;= <call><name>PyList_GET_SIZE</name><argument_list>(<argument><expr><name><name>p</name>-&gt;<name>strings</name></name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>, <argument><expr>"bad marshal data"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>retval</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<expr_stmt><expr><name>v</name> = <call><name>PyList_GET_ITEM</name><argument_list>(<argument><expr><name><name>p</name>-&gt;<name>strings</name></name></expr></argument>, <argument><expr><name>n</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>retval</name> = <name>v</name></expr>;</expr_stmt>
+<break>break;</break>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>Py_USING_UNICODE</name></expr></argument>)</argument_list></call></expr></cpp:if>
+</case><case>case <expr><name>TYPE_UNICODE</name></expr>: <block>{
+<decl_stmt><decl><type><name>char</name> *</type><name>buffer</name></decl>;</decl_stmt>
+<expr_stmt><expr><name>n</name> = <call><name>r_long</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>n</name> &lt; 0 || <name>n</name> &gt; <name>INT_MAX</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>, <argument><expr>"bad marshal data"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>retval</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<expr_stmt><expr><name>buffer</name> = <call><name>PyMem_NEW</name><argument_list>(<argument><expr><name>char</name></expr></argument>, <argument><expr><name>n</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>buffer</name> == <name>NULL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>retval</name> = <call><name>PyErr_NoMemory</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<if>if <condition>(<expr><call><name>r_string</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>, <argument><expr>(<name>int</name>)<name>n</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call> != <name>n</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>PyMem_DEL</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_EOFError</name></expr></argument>,
+<argument><expr>"EOF read where object expected"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>retval</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<expr_stmt><expr><name>v</name> = <call><name>PyUnicode_DecodeUTF8</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>, <argument><expr><name>n</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyMem_DEL</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>retval</name> = <name>v</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+</case><case>case <expr><name>TYPE_TUPLE</name></expr>:
+<expr_stmt><expr><name>n</name> = <call><name>r_long</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>n</name> &lt; 0 || <name>n</name> &gt; <name>INT_MAX</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>, <argument><expr>"bad marshal data"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>retval</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<expr_stmt><expr><name>v</name> = <call><name>PyTuple_New</name><argument_list>(<argument><expr>(<name>int</name>)<name>n</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>v</name> == <name>NULL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>retval</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name>n</name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>) <block>{
+<expr_stmt><expr><name>v2</name> = <call><name>r_object</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>( <expr><name>v2</name> == <name>NULL</name></expr> )</condition><then> <block>{
+<if>if <condition>(<expr>!<call><name>PyErr_Occurred</name><argument_list>()</argument_list></call></expr>)</condition><then>
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_TypeError</name></expr></argument>,
+<argument><expr>"NULL object in marshal data"</expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>v</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<expr_stmt><expr><call><name>PyTuple_SET_ITEM</name><argument_list>(<argument><expr><name>v</name></expr></argument>, <argument><expr>(<name>int</name>)<name>i</name></expr></argument>, <argument><expr><name>v2</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></for>
+<expr_stmt><expr><name>retval</name> = <name>v</name></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>TYPE_LIST</name></expr>:
+<expr_stmt><expr><name>n</name> = <call><name>r_long</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>n</name> &lt; 0 || <name>n</name> &gt; <name>INT_MAX</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>, <argument><expr>"bad marshal data"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>retval</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<expr_stmt><expr><name>v</name> = <call><name>PyList_New</name><argument_list>(<argument><expr>(<name>int</name>)<name>n</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>v</name> == <name>NULL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>retval</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name>n</name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>) <block>{
+<expr_stmt><expr><name>v2</name> = <call><name>r_object</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>( <expr><name>v2</name> == <name>NULL</name></expr> )</condition><then> <block>{
+<if>if <condition>(<expr>!<call><name>PyErr_Occurred</name><argument_list>()</argument_list></call></expr>)</condition><then>
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_TypeError</name></expr></argument>,
+<argument><expr>"NULL object in marshal data"</expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>v</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<expr_stmt><expr><call><name>PyList_SET_ITEM</name><argument_list>(<argument><expr><name>v</name></expr></argument>, <argument><expr>(<name>int</name>)<name>i</name></expr></argument>, <argument><expr><name>v2</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></for>
+<expr_stmt><expr><name>retval</name> = <name>v</name></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>TYPE_DICT</name></expr>:
+<expr_stmt><expr><name>v</name> = <call><name>PyDict_New</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>v</name> == <name>NULL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>retval</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<for>for (<init>;</init><condition>;</condition><incr/>) <block>{
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>key</name></decl>, *<decl><type ref="prev"/><name>val</name></decl>;</decl_stmt>
+<expr_stmt><expr><name>key</name> = <call><name>r_object</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>key</name> == <name>NULL</name></expr>)</condition><then>
+<break>break;</break></then></if>
+<expr_stmt><expr><name>val</name> = <call><name>r_object</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>val</name> != <name>NULL</name></expr>)</condition><then>
+<expr_stmt><expr><call><name>PyDict_SetItem</name><argument_list>(<argument><expr><name>v</name></expr></argument>, <argument><expr><name>key</name></expr></argument>, <argument><expr><name>val</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>key</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>val</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></for>
+<if>if <condition>(<expr><call><name>PyErr_Occurred</name><argument_list>()</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>v</name> = <name>NULL</name></expr>;</expr_stmt>
+}</block></then></if>
+<expr_stmt><expr><name>retval</name> = <name>v</name></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>TYPE_SET</name></expr>:
+</case><case>case <expr><name>TYPE_FROZENSET</name></expr>:
+<expr_stmt><expr><name>n</name> = <call><name>r_long</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>n</name> &lt; 0 || <name>n</name> &gt; <name>INT_MAX</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>, <argument><expr>"bad marshal data"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>retval</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<expr_stmt><expr><name>v</name> = (<name>type</name> == <name>TYPE_SET</name>) ? <call><name>PySet_New</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>)</argument_list></call> : <call><name>PyFrozenSet_New</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>v</name> == <name>NULL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>retval</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name>n</name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>) <block>{
+<expr_stmt><expr><name>v2</name> = <call><name>r_object</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>( <expr><name>v2</name> == <name>NULL</name></expr> )</condition><then> <block>{
+<if>if <condition>(<expr>!<call><name>PyErr_Occurred</name><argument_list>()</argument_list></call></expr>)</condition><then>
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_TypeError</name></expr></argument>,
+<argument><expr>"NULL object in marshal data"</expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>v</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<if>if <condition>(<expr><call><name>PySet_Add</name><argument_list>(<argument><expr><name>v</name></expr></argument>, <argument><expr><name>v2</name></expr></argument>)</argument_list></call> == -1</expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>v2</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>v</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>v2</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></for>
+<expr_stmt><expr><name>retval</name> = <name>v</name></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>TYPE_CODE</name></expr>:
+<if>if <condition>(<expr><call><name>PyEval_GetRestricted</name><argument_list>()</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_RuntimeError</name></expr></argument>,
+<argument><expr>"cannot unmarshal code objects in "
+"restricted execution mode"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>retval</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then> <else>else <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>argcount</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>nlocals</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>stacksize</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>flags</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>code</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>consts</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>names</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>varnames</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>freevars</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>cellvars</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>filename</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>name</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>firstlineno</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>lnotab</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><name>v</name> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>argcount</name> = (<name>int</name>)<call><name>r_long</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>nlocals</name> = (<name>int</name>)<call><name>r_long</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>stacksize</name> = (<name>int</name>)<call><name>r_long</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>flags</name> = (<name>int</name>)<call><name>r_long</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>code</name> = <call><name>r_object</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>code</name> == <name>NULL</name></expr>)</condition><then>
+<goto>goto <name>code_error</name>;</goto></then></if>
+<expr_stmt><expr><name>consts</name> = <call><name>r_object</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>consts</name> == <name>NULL</name></expr>)</condition><then>
+<goto>goto <name>code_error</name>;</goto></then></if>
+<expr_stmt><expr><name>names</name> = <call><name>r_object</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>names</name> == <name>NULL</name></expr>)</condition><then>
+<goto>goto <name>code_error</name>;</goto></then></if>
+<expr_stmt><expr><name>varnames</name> = <call><name>r_object</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>varnames</name> == <name>NULL</name></expr>)</condition><then>
+<goto>goto <name>code_error</name>;</goto></then></if>
+<expr_stmt><expr><name>freevars</name> = <call><name>r_object</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>freevars</name> == <name>NULL</name></expr>)</condition><then>
+<goto>goto <name>code_error</name>;</goto></then></if>
+<expr_stmt><expr><name>cellvars</name> = <call><name>r_object</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>cellvars</name> == <name>NULL</name></expr>)</condition><then>
+<goto>goto <name>code_error</name>;</goto></then></if>
+<expr_stmt><expr><name>filename</name> = <call><name>r_object</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>filename</name> == <name>NULL</name></expr>)</condition><then>
+<goto>goto <name>code_error</name>;</goto></then></if>
+<expr_stmt><expr><name>name</name> = <call><name>r_object</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>name</name> == <name>NULL</name></expr>)</condition><then>
+<goto>goto <name>code_error</name>;</goto></then></if>
+<expr_stmt><expr><name>firstlineno</name> = (<name>int</name>)<call><name>r_long</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>lnotab</name> = <call><name>r_object</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>lnotab</name> == <name>NULL</name></expr>)</condition><then>
+<goto>goto <name>code_error</name>;</goto></then></if>
+<expr_stmt><expr><name>v</name> = (<name>PyObject</name> *) <call><name>PyCode_New</name><argument_list>(
+<argument><expr><name>argcount</name></expr></argument>, <argument><expr><name>nlocals</name></expr></argument>, <argument><expr><name>stacksize</name></expr></argument>, <argument><expr><name>flags</name></expr></argument>,
+<argument><expr><name>code</name></expr></argument>, <argument><expr><name>consts</name></expr></argument>, <argument><expr><name>names</name></expr></argument>, <argument><expr><name>varnames</name></expr></argument>,
+<argument><expr><name>freevars</name></expr></argument>, <argument><expr><name>cellvars</name></expr></argument>, <argument><expr><name>filename</name></expr></argument>, <argument><expr><name>name</name></expr></argument>,
+<argument><expr><name>firstlineno</name></expr></argument>, <argument><expr><name>lnotab</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<label><name>code_error</name>:</label>
+<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>code</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>consts</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>names</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>varnames</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>freevars</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>cellvars</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>filename</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>lnotab</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+<expr_stmt><expr><name>retval</name> = <name>v</name></expr>;</expr_stmt>
+<break>break;</break>
+</case><default>default:
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>, <argument><expr>"bad marshal data"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>retval</name> = <name>NULL</name></expr>;</expr_stmt>
+<break>break;</break>
+</default>}</block></switch>
+<expr_stmt><expr><name><name>p</name>-&gt;<name>depth</name></name>--</expr>;</expr_stmt>
+<return>return <expr><name>retval</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>read_object</name><parameter_list>(<param><decl><type><name>RFILE</name> *</type><name>p</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>v</name></decl>;</decl_stmt>
+<if>if <condition>(<expr><call><name>PyErr_Occurred</name><argument_list>()</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>fprintf</name><argument_list>(<argument><expr><name>stderr</name></expr></argument>, <argument><expr>"XXX readobject called with exception set\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>v</name> = <call><name>r_object</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>v</name> == <name>NULL</name> &amp;&amp; !<call><name>PyErr_Occurred</name><argument_list>()</argument_list></call></expr>)</condition><then>
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_TypeError</name></expr></argument>, <argument><expr>"NULL object in marshal data"</expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<return>return <expr><name>v</name></expr>;</return>
+}</block></function>
+<function><type><name>int</name></type>
+<name>PyMarshal_ReadShortFromFile</name><parameter_list>(<param><decl><type><name>FILE</name> *</type><name>fp</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>RFILE</name></type> <name>rf</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>fp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>rf</name>.<name>fp</name></name> = <name>fp</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>rf</name>.<name>strings</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>rf</name>.<name>end</name></name> = <name><name>rf</name>.<name>ptr</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<return>return <expr><call><name>r_short</name><argument_list>(<argument><expr>&amp;<name>rf</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+<function><type><name>long</name></type>
+<name>PyMarshal_ReadLongFromFile</name><parameter_list>(<param><decl><type><name>FILE</name> *</type><name>fp</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>RFILE</name></type> <name>rf</name></decl>;</decl_stmt>
+<expr_stmt><expr><name><name>rf</name>.<name>fp</name></name> = <name>fp</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>rf</name>.<name>strings</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>rf</name>.<name>ptr</name></name> = <name><name>rf</name>.<name>end</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<return>return <expr><call><name>r_long</name><argument_list>(<argument><expr>&amp;<name>rf</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>HAVE_FSTAT</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<function><type><specifier>static</specifier> <name>off_t</name></type>
+<name>getfilesize</name><parameter_list>(<param><decl><type><name>FILE</name> *</type><name>fp</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type>struct <name>stat</name></type> <name>st</name></decl>;</decl_stmt>
+<if>if <condition>(<expr><call><name>fstat</name><argument_list>(<argument><expr><call><name>fileno</name><argument_list>(<argument><expr><name>fp</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr>&amp;<name>st</name></expr></argument>)</argument_list></call> != 0</expr>)</condition><then>
+<return>return <expr>-1</expr>;</return></then>
+<else>else
+<return>return <expr><name><name>st</name>.<name>st_size</name></name></expr>;</return></else></if>
+}</block></function>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<function><type><name>PyObject</name> *</type>
+<name>PyMarshal_ReadLastObjectFromFile</name><parameter_list>(<param><decl><type><name>FILE</name> *</type><name>fp</name></decl></param>)</parameter_list> <block>{
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SMALL_FILE_LIMIT</name></cpp:macro> <cpp:value>(1L &lt;&lt; 14)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>REASONABLE_FILE_LIMIT</name></cpp:macro> <cpp:value>(1L &lt;&lt; 18)</cpp:value></cpp:define>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>HAVE_FSTAT</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<decl_stmt><decl><type><name>off_t</name></type> <name>filesize</name></decl>;</decl_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>HAVE_FSTAT</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<expr_stmt><expr><name>filesize</name> = <call><name>getfilesize</name><argument_list>(<argument><expr><name>fp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>filesize</name> &gt; 0</expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>char</name></type> <name><name>buf</name><index>[<expr><name>SMALL_FILE_LIMIT</name></expr>]</index></name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>char</name>*</type> <name>pBuf</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>filesize</name> &lt;= <name>SMALL_FILE_LIMIT</name></expr>)</condition><then>
+<expr_stmt><expr><name>pBuf</name> = <name>buf</name></expr>;</expr_stmt></then>
+<else>else <if>if <condition>(<expr><name>filesize</name> &lt;= <name>REASONABLE_FILE_LIMIT</name></expr>)</condition><then>
+<expr_stmt><expr><name>pBuf</name> = (<name>char</name> *)<call><name>PyMem_MALLOC</name><argument_list>(<argument><expr><name>filesize</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if></else></if>
+<if>if <condition>(<expr><name>pBuf</name> != <name>NULL</name></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>PyObject</name>*</type> <name>v</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>size_t</name></type> <name>n</name></decl>;</decl_stmt>
+<expr_stmt><expr><name>n</name> = <call><name>fread</name><argument_list>(<argument><expr><name>pBuf</name></expr></argument>, <argument><expr>1</expr></argument>, <argument><expr>(<name>int</name>)<name>filesize</name></expr></argument>, <argument><expr><name>fp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>v</name> = <call><name>PyMarshal_ReadObjectFromString</name><argument_list>(<argument><expr><name>pBuf</name></expr></argument>, <argument><expr><name>n</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>pBuf</name> != <name>buf</name></expr>)</condition><then>
+<expr_stmt><expr><call><name>PyMem_FREE</name><argument_list>(<argument><expr><name>pBuf</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<return>return <expr><name>v</name></expr>;</return>
+}</block></then></if>
+}</block></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<return>return <expr><call><name>PyMarshal_ReadObjectFromFile</name><argument_list>(<argument><expr><name>fp</name></expr></argument>)</argument_list></call></expr>;</return>
+<cpp:undef>#<cpp:directive>undef</cpp:directive> <name>SMALL_FILE_LIMIT</name></cpp:undef>
+<cpp:undef>#<cpp:directive>undef</cpp:directive> <name>REASONABLE_FILE_LIMIT</name></cpp:undef>
+}</block></function>
+<function><type><name>PyObject</name> *</type>
+<name>PyMarshal_ReadObjectFromFile</name><parameter_list>(<param><decl><type><name>FILE</name> *</type><name>fp</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>RFILE</name></type> <name>rf</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>result</name></decl>;</decl_stmt>
+<expr_stmt><expr><name><name>rf</name>.<name>fp</name></name> = <name>fp</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>rf</name>.<name>strings</name></name> = <call><name>PyList_New</name><argument_list>(<argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>rf</name>.<name>depth</name></name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>rf</name>.<name>ptr</name></name> = <name><name>rf</name>.<name>end</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>result</name> = <call><name>r_object</name><argument_list>(<argument><expr>&amp;<name>rf</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name><name>rf</name>.<name>strings</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>result</name></expr>;</return>
+}</block></function>
+<function><type><name>PyObject</name> *</type>
+<name>PyMarshal_ReadObjectFromString</name><parameter_list>(<param><decl><type><name>char</name> *</type><name>str</name></decl></param>, <param><decl><type><name>Py_ssize_t</name></type> <name>len</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>RFILE</name></type> <name>rf</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>result</name></decl>;</decl_stmt>
+<expr_stmt><expr><name><name>rf</name>.<name>fp</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>rf</name>.<name>ptr</name></name> = <name>str</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>rf</name>.<name>end</name></name> = <name>str</name> + <name>len</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>rf</name>.<name>strings</name></name> = <call><name>PyList_New</name><argument_list>(<argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>rf</name>.<name>depth</name></name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><name>result</name> = <call><name>r_object</name><argument_list>(<argument><expr>&amp;<name>rf</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name><name>rf</name>.<name>strings</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>result</name></expr>;</return>
+}</block></function>
+<function><type><name>PyObject</name> *</type>
+<name>PyMarshal_WriteObjectToString</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>x</name></decl></param>, <param><decl><type><name>int</name></type> <name>version</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>WFILE</name></type> <name>wf</name></decl>;</decl_stmt>
+<expr_stmt><expr><name><name>wf</name>.<name>fp</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>wf</name>.<name>str</name></name> = <call><name>PyString_FromStringAndSize</name><argument_list>(<argument><expr>(<name>char</name> *)<name>NULL</name></expr></argument>, <argument><expr>50</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>wf</name>.<name>str</name></name> == <name>NULL</name></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<expr_stmt><expr><name><name>wf</name>.<name>ptr</name></name> = <call><name>PyString_AS_STRING</name><argument_list>(<argument><expr>(<name>PyStringObject</name> *)<name><name>wf</name>.<name>str</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>wf</name>.<name>end</name></name> = <name><name>wf</name>.<name>ptr</name></name> + <call><name>PyString_Size</name><argument_list>(<argument><expr><name><name>wf</name>.<name>str</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>wf</name>.<name>error</name></name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>wf</name>.<name>depth</name></name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>wf</name>.<name>version</name></name> = <name>version</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>wf</name>.<name>strings</name></name> = (<name>version</name> &gt; 0) ? <call><name>PyDict_New</name><argument_list>()</argument_list></call> : <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_object</name><argument_list>(<argument><expr><name>x</name></expr></argument>, <argument><expr>&amp;<name>wf</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name><name>wf</name>.<name>strings</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>wf</name>.<name>str</name></name> != <name>NULL</name></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>char</name> *</type><name>base</name> <init>= <expr><call><name>PyString_AS_STRING</name><argument_list>(<argument><expr>(<name>PyStringObject</name> *)<name><name>wf</name>.<name>str</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name><name>wf</name>.<name>ptr</name></name> - <name>base</name> &gt; <name>PY_SSIZE_T_MAX</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name><name>wf</name>.<name>str</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_OverflowError</name></expr></argument>,
+<argument><expr>"too much marshall data for a string"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><call><name>_PyString_Resize</name><argument_list>(<argument><expr>&amp;<name><name>wf</name>.<name>str</name></name></expr></argument>, <argument><expr><call>(<name>Py_ssize_t</name>)<argument_list>(<argument><expr><name><name>wf</name>.<name>ptr</name></name> - <name>base</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+<if>if <condition>(<expr><name><name>wf</name>.<name>error</name></name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name><name>wf</name>.<name>str</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>,
+<argument><expr>(<name><name>wf</name>.<name>error</name></name>==1)?"unmarshallable object"
+:"object too deeply nested to marshal"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></then></if>
+<return>return <expr><name><name>wf</name>.<name>str</name></name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>marshal_dump</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>WFILE</name></type> <name>wf</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>x</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>f</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>version</name> <init>= <expr><name>Py_MARSHAL_VERSION</name></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"OO|i:dump"</expr></argument>, <argument><expr>&amp;<name>x</name></expr></argument>, <argument><expr>&amp;<name>f</name></expr></argument>, <argument><expr>&amp;<name>version</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<if>if <condition>(<expr>!<call><name>PyFile_Check</name><argument_list>(<argument><expr><name>f</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_TypeError</name></expr></argument>,
+<argument><expr>"marshal.dump() 2nd arg must be file"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name><name>wf</name>.<name>fp</name></name> = <call><name>PyFile_AsFile</name><argument_list>(<argument><expr><name>f</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>wf</name>.<name>str</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>wf</name>.<name>ptr</name></name> = <name><name>wf</name>.<name>end</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>wf</name>.<name>error</name></name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>wf</name>.<name>depth</name></name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>wf</name>.<name>strings</name></name> = (<name>version</name> &gt; 0) ? <call><name>PyDict_New</name><argument_list>()</argument_list></call> : 0</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>wf</name>.<name>version</name></name> = <name>version</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>w_object</name><argument_list>(<argument><expr><name>x</name></expr></argument>, <argument><expr>&amp;<name>wf</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name><name>wf</name>.<name>strings</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>wf</name>.<name>error</name></name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>,
+<argument><expr>(<name><name>wf</name>.<name>error</name></name>==1)?"unmarshallable object"
+:"object too deeply nested to marshal"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>marshal_load</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>f</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>RFILE</name></type> <name>rf</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>result</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>!<call><name>PyFile_Check</name><argument_list>(<argument><expr><name>f</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_TypeError</name></expr></argument>,
+<argument><expr>"marshal.load() arg must be file"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name><name>rf</name>.<name>fp</name></name> = <call><name>PyFile_AsFile</name><argument_list>(<argument><expr><name>f</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>rf</name>.<name>strings</name></name> = <call><name>PyList_New</name><argument_list>(<argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>rf</name>.<name>depth</name></name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><name>result</name> = <call><name>read_object</name><argument_list>(<argument><expr>&amp;<name>rf</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name><name>rf</name>.<name>strings</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>result</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>marshal_dumps</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>x</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>version</name> <init>= <expr><name>Py_MARSHAL_VERSION</name></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"O|i:dumps"</expr></argument>, <argument><expr>&amp;<name>x</name></expr></argument>, <argument><expr>&amp;<name>version</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<return>return <expr><call><name>PyMarshal_WriteObjectToString</name><argument_list>(<argument><expr><name>x</name></expr></argument>, <argument><expr><name>version</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>marshal_loads</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>RFILE</name></type> <name>rf</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>char</name> *</type><name>s</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>n</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>PyObject</name>*</type> <name>result</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"s#:loads"</expr></argument>, <argument><expr>&amp;<name>s</name></expr></argument>, <argument><expr>&amp;<name>n</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<return>return <expr><name>NULL</name></expr>;</return></then></if>
+<expr_stmt><expr><name><name>rf</name>.<name>fp</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>rf</name>.<name>ptr</name></name> = <name>s</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>rf</name>.<name>end</name></name> = <name>s</name> + <name>n</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>rf</name>.<name>strings</name></name> = <call><name>PyList_New</name><argument_list>(<argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>rf</name>.<name>depth</name></name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><name>result</name> = <call><name>read_object</name><argument_list>(<argument><expr>&amp;<name>rf</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name><name>rf</name>.<name>strings</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>result</name></expr>;</return>
+}</block></function>
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyMethodDef</name></type> <name><name>marshal_methods</name><index>[]</index></name> <init>= <expr><block>{
+<expr><block>{<expr>"dump"</expr>, <expr><name>marshal_dump</name></expr>, <expr><name>METH_VARARGS</name></expr>}</block></expr>,
+<expr><block>{<expr>"load"</expr>, <expr><name>marshal_load</name></expr>, <expr><name>METH_O</name></expr>}</block></expr>,
+<expr><block>{<expr>"dumps"</expr>, <expr><name>marshal_dumps</name></expr>, <expr><name>METH_VARARGS</name></expr>}</block></expr>,
+<expr><block>{<expr>"loads"</expr>, <expr><name>marshal_loads</name></expr>, <expr><name>METH_VARARGS</name></expr>}</block></expr>,
+<expr><block>{<expr><name>NULL</name></expr>, <expr><name>NULL</name></expr>}</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+<function><type><name>PyMODINIT_FUNC</name></type>
+<name>PyMarshal_Init</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>PyObject</name> *</type><name>mod</name> <init>= <expr><call><name>Py_InitModule</name><argument_list>(<argument><expr>"marshal"</expr></argument>, <argument><expr><name>marshal_methods</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>mod</name> == <name>NULL</name></expr>)</condition><then>
+<return>return;</return></then></if>
+<expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>mod</name></expr></argument>, <argument><expr>"version"</expr></argument>, <argument><expr><name>Py_MARSHAL_VERSION</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+</unit>
