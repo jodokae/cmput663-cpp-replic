@@ -1,0 +1,543 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="subversion/svnserve/main.c"><cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>APR_WANT_STRFUNC</name></cpp:macro></cpp:define>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_want.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_general.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_getopt.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_network_io.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_signal.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_thread_proc.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_portable.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;locale.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_cmdline.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_types.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_pools.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_error.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_ra_svn.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_utf.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_path.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_opt.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_repos.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_fs.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_version.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_io.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_private_config.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"winservice.h"</cpp:file></cpp:include>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>HAVE_UNISTD_H</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;unistd.h&gt;</cpp:file></cpp:include>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"server.h"</cpp:file></cpp:include>
+<enum>enum <name>connection_handling_mode</name> <block>{
+<decl><name>connection_mode_fork</name></decl>,
+<decl><name>connection_mode_thread</name></decl>,
+<decl><name>connection_mode_single</name></decl>
+}</block>;</enum>
+<enum>enum <name>run_mode</name> <block>{
+<decl><name>run_mode_unspecified</name></decl>,
+<decl><name>run_mode_inetd</name></decl>,
+<decl><name>run_mode_daemon</name></decl>,
+<decl><name>run_mode_tunnel</name></decl>,
+<decl><name>run_mode_listen_once</name></decl>,
+<decl><name>run_mode_service</name></decl>
+}</block>;</enum>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_HAS_FORK</name></expr></cpp:if>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_HAS_THREADS</name></expr></cpp:if>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>CONNECTION_DEFAULT</name></cpp:macro> <cpp:value>connection_mode_fork</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>CONNECTION_HAVE_THREAD_OPTION</name></cpp:macro></cpp:define>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>CONNECTION_DEFAULT</name></cpp:macro> <cpp:value>connection_mode_fork</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:elif>#<cpp:directive>elif</cpp:directive> <expr><name>APR_HAS_THREADS</name></expr></cpp:elif>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>CONNECTION_DEFAULT</name></cpp:macro> <cpp:value>connection_mode_thread</cpp:value></cpp:define>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>CONNECTION_DEFAULT</name></cpp:macro> <cpp:value>connection_mode_single</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>WIN32</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<decl_stmt><decl><type><specifier>static</specifier> <name>apr_os_sock_t</name></type> <name>winservice_svnserve_accept_socket</name> <init>= <expr><name>INVALID_SOCKET</name></expr></init></decl>;</decl_stmt>
+<function><type><name>void</name></type> <name>winservice_notify_stop</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list> <block>{
+<if>if <condition>(<expr><name>winservice_svnserve_accept_socket</name> != <name>INVALID_SOCKET</name></expr>)</condition><then>
+<expr_stmt><expr><call><name>closesocket</name><argument_list>(<argument><expr><name>winservice_svnserve_accept_socket</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+}</block></function>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SVNSERVE_OPT_LISTEN_PORT</name></cpp:macro> <cpp:value>256</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SVNSERVE_OPT_LISTEN_HOST</name></cpp:macro> <cpp:value>257</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SVNSERVE_OPT_FOREGROUND</name></cpp:macro> <cpp:value>258</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SVNSERVE_OPT_TUNNEL_USER</name></cpp:macro> <cpp:value>259</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SVNSERVE_OPT_VERSION</name></cpp:macro> <cpp:value>260</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SVNSERVE_OPT_PID_FILE</name></cpp:macro> <cpp:value>261</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SVNSERVE_OPT_SERVICE</name></cpp:macro> <cpp:value>262</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SVNSERVE_OPT_CONFIG_FILE</name></cpp:macro> <cpp:value>263</cpp:value></cpp:define>
+<decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>apr_getopt_option_t</name></type> <name><name>svnserve__options</name><index>[]</index></name> <init>= <expr><block>{
+<expr><block>{<expr>"daemon"</expr>, <expr>'d'</expr>, <expr>0</expr>, <macro><name>N_</name><argument_list>(<argument>"daemon mode"</argument>)</argument_list></macro>}</block></expr>,
+<expr><block>{
+<expr>"listen-port"</expr>, <expr><name>SVNSERVE_OPT_LISTEN_PORT</name></expr>, <expr>1</expr>,
+<macro><name>N_</name><argument_list>(<argument>"listen port (for daemon mode)"</argument>)</argument_list></macro>
+}</block></expr>,
+<expr><block>{
+<expr>"listen-host"</expr>, <expr><name>SVNSERVE_OPT_LISTEN_HOST</name></expr>, <expr>1</expr>,
+<macro><name>N_</name><argument_list>(<argument>"listen hostname or IP address (for daemon mode)"</argument>)</argument_list></macro>
+}</block></expr>,
+<expr><block>{
+<expr>"foreground"</expr>, <expr><name>SVNSERVE_OPT_FOREGROUND</name></expr>, <expr>0</expr>,
+<macro><name>N_</name><argument_list>(<argument>"run in foreground (useful for debugging)"</argument>)</argument_list></macro>
+}</block></expr>,
+<expr><block>{<expr>"help"</expr>, <expr>'h'</expr>, <expr>0</expr>, <macro><name>N_</name><argument_list>(<argument>"display this help"</argument>)</argument_list></macro>}</block></expr>,
+<expr><block>{
+<expr>"version"</expr>, <expr><name>SVNSERVE_OPT_VERSION</name></expr>, <expr>0</expr>,
+<macro><name>N_</name><argument_list>(<argument>"show program version information"</argument>)</argument_list></macro>
+}</block></expr>,
+<expr><block>{<expr>"inetd"</expr>, <expr>'i'</expr>, <expr>0</expr>, <macro><name>N_</name><argument_list>(<argument>"inetd mode"</argument>)</argument_list></macro>}</block></expr>,
+<expr><block>{<expr>"root"</expr>, <expr>'r'</expr>, <expr>1</expr>, <macro><name>N_</name><argument_list>(<argument>"root of directory to serve"</argument>)</argument_list></macro>}</block></expr>,
+<expr><block>{
+<expr>"read-only"</expr>, <expr>'R'</expr>, <expr>0</expr>,
+<macro><name>N_</name><argument_list>(<argument>"force read only, overriding repository config file"</argument>)</argument_list></macro>
+}</block></expr>,
+<expr><block>{<expr>"tunnel"</expr>, <expr>'t'</expr>, <expr>0</expr>, <macro><name>N_</name><argument_list>(<argument>"tunnel mode"</argument>)</argument_list></macro>}</block></expr>,
+<expr><block>{
+<expr>"tunnel-user"</expr>, <expr><name>SVNSERVE_OPT_TUNNEL_USER</name></expr>, <expr>1</expr>,
+<macro><name>N_</name><argument_list>(<argument>"tunnel username (default is current uid's name)"</argument>)</argument_list></macro>
+}</block></expr>,
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>CONNECTION_HAVE_THREAD_OPTION</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<expr><block>{<expr>"threads"</expr>, <expr>'T'</expr>, <expr>0</expr>, <macro><name>N_</name><argument_list>(<argument>"use threads instead of fork"</argument>)</argument_list></macro>}</block></expr>,
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<expr><block>{<expr>"listen-once"</expr>, <expr>'X'</expr>, <expr>0</expr>, <macro><name>N_</name><argument_list>(<argument>"listen once (useful for debugging)"</argument>)</argument_list></macro>}</block></expr>,
+<expr><block>{
+<expr>"config-file"</expr>, <expr><name>SVNSERVE_OPT_CONFIG_FILE</name></expr>, <expr>1</expr>,
+<macro><name>N_</name><argument_list>(<argument>"read configuration from file ARG"</argument>)</argument_list></macro>
+}</block></expr>,
+<expr><block>{
+<expr>"pid-file"</expr>, <expr><name>SVNSERVE_OPT_PID_FILE</name></expr>, <expr>1</expr>,
+<macro><name>N_</name><argument_list>(<argument>"write server process ID to file ARG"</argument>)</argument_list></macro>
+}</block></expr>,
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>WIN32</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<expr><block>{
+<expr>"service"</expr>, <expr><name>SVNSERVE_OPT_SERVICE</name></expr>, <expr>0</expr>,
+<macro><name>N_</name><argument_list>(<argument>"run as a windows service (SCM only)"</argument>)</argument_list></macro>
+}</block></expr>,
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<expr><block>{<expr>0</expr>, <expr>0</expr>, <expr>0</expr>, <expr>0</expr>}</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+<function><type><specifier>static</specifier> <name>void</name></type> <name>usage</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>progname</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list> <block>{
+<if>if <condition>(<expr>!<name>progname</name></expr>)</condition><then>
+<expr_stmt><expr><name>progname</name> = "svnserve"</expr>;</expr_stmt></then></if>
+<expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><call><name>svn_cmdline_fprintf</name><argument_list>(<argument><expr><name>stderr</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>,
+<argument><expr><call><name>_</name><argument_list>(<argument><expr>"Type '%s --help' for usage.\n"</expr></argument>)</argument_list></call></expr></argument>,
+<argument><expr><name>progname</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>exit</name><argument_list>(<argument><expr>1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+<function><type><specifier>static</specifier> <name>void</name></type> <name>help</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>apr_size_t</name></type> <name>i</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><call><name>svn_cmdline_fputs</name><argument_list>(<argument><expr><call><name>_</name><argument_list>(<argument><expr>"usage: svnserve [options]\n"
+"\n"
+"Valid options:\n"</expr></argument>)</argument_list></call></expr></argument>,
+<argument><expr><name>stdout</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name><name>svnserve__options</name><index>[<expr><name>i</name></expr>]</index></name>.<name>name</name> &amp;&amp; <name><name>svnserve__options</name><index>[<expr><name>i</name></expr>]</index></name>.<name>optch</name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>) <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>optstr</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>svn_opt_format_option</name><argument_list>(<argument><expr>&amp;<name>optstr</name></expr></argument>, <argument><expr><name>svnserve__options</name> + <name>i</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><call><name>svn_cmdline_fprintf</name><argument_list>(<argument><expr><name>stdout</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>, <argument><expr>" %s\n"</expr></argument>, <argument><expr><name>optstr</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></for>
+<expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><call><name>svn_cmdline_fprintf</name><argument_list>(<argument><expr><name>stdout</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>, <argument><expr>"\n"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>exit</name><argument_list>(<argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type> <name>version</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>fs_desc_start</name>
+<init>= <expr><call><name>_</name><argument_list>(<argument><expr>"The following repository back-end (FS) modules are available:\n\n"</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>svn_stringbuf_t</name> *</type><name>version_footer</name></decl>;</decl_stmt>
+<expr_stmt><expr><name>version_footer</name> = <call><name>svn_stringbuf_create</name><argument_list>(<argument><expr><name>fs_desc_start</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_print_modules</name><argument_list>(<argument><expr><name>version_footer</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>SVN_HAVE_SASL</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<expr_stmt><expr><call><name>svn_stringbuf_appendcstr</name><argument_list>(<argument><expr><name>version_footer</name></expr></argument>,
+<argument><expr><call><name>_</name><argument_list>(<argument><expr>"\nCyrus SASL authentication is available.\n"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<return>return <expr><call><name>svn_opt_print_help</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr>"svnserve"</expr></argument>, <argument><expr><name>TRUE</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name><name>version_footer</name>-&gt;<name>data</name></name></expr></argument>,
+<argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_HAS_FORK</name></expr></cpp:if>
+<function><type><specifier>static</specifier> <name>void</name></type> <name>sigchld_handler</name><parameter_list>(<param><decl><type><name>int</name></type> <name>signo</name></decl></param>)</parameter_list> <block>{
+}</block></function>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>redirect_stdout</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>arg</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name> <init>= <expr><name>arg</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_file_t</name> *</type><name>out_file</name></decl>, *<decl><type ref="prev"/><name>err_file</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_status_t</name></type> <name>apr_err</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>(<name>apr_err</name> = <call><name>apr_file_open_stdout</name><argument_list>(<argument><expr>&amp;<name>out_file</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call>)</expr>)</condition><then>
+<return>return <expr><name>apr_err</name></expr>;</return></then></if>
+<if>if <condition>(<expr>(<name>apr_err</name> = <call><name>apr_file_open_stderr</name><argument_list>(<argument><expr>&amp;<name>err_file</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call>)</expr>)</condition><then>
+<return>return <expr><name>apr_err</name></expr>;</return></then></if>
+<return>return <expr><call><name>apr_file_dup2</name><argument_list>(<argument><expr><name>out_file</name></expr></argument>, <argument><expr><name>err_file</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+<struct>struct <name>serve_thread_t</name> <block>{
+<decl_stmt><decl><type><name>svn_ra_svn_conn_t</name> *</type><name>conn</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>serve_params_t</name> *</type><name>params</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl>;</decl_stmt>
+}</block>;</struct>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_HAS_THREADS</name></expr></cpp:if>
+<function><type><specifier>static</specifier> <name>void</name> * <name>APR_THREAD_FUNC</name></type> <name>serve_thread</name><parameter_list>(<param><decl><type><name>apr_thread_t</name> *</type><name>tid</name></decl></param>, <param><decl><type><name>void</name> *</type><name>data</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type>struct <name>serve_thread_t</name> *</type><name>d</name> <init>= <expr><name>data</name></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><call><name>serve</name><argument_list>(<argument><expr><name><name>d</name>-&gt;<name>conn</name></name></expr></argument>, <argument><expr><name><name>d</name>-&gt;<name>params</name></name></expr></argument>, <argument><expr><name><name>d</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name><name>d</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type><name>write_pid_file</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>filename</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>apr_file_t</name> *</type><name>file</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>contents</name> <init>= <expr><call><name>apr_psprintf</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>"%" <name>APR_PID_T_FMT</name> "\n"</expr></argument>,
+<argument><expr><call><name>getpid</name><argument_list>()</argument_list></call></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_io_file_open</name><argument_list>(<argument><expr>&amp;<name>file</name></expr></argument>, <argument><expr><name>filename</name></expr></argument>,
+<argument><expr><name>APR_WRITE</name> | <name>APR_CREATE</name> | <name>APR_TRUNCATE</name></expr></argument>,
+<argument><expr><name>APR_OS_DEFAULT</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_io_file_write_full</name><argument_list>(<argument><expr><name>file</name></expr></argument>, <argument><expr><name>contents</name></expr></argument>, <argument><expr><call><name>strlen</name><argument_list>(<argument><expr><name>contents</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_io_file_close</name><argument_list>(<argument><expr><name>file</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>check_lib_versions</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>svn_version_checklist_t</name></type> <name><name>checklist</name><index>[]</index></name> <init>= <expr><block>{
+<expr><block>{ <expr>"svn_subr"</expr>, <expr><name>svn_subr_version</name></expr> }</block></expr>,
+<expr><block>{ <expr>"svn_repos"</expr>, <expr><name>svn_repos_version</name></expr> }</block></expr>,
+<expr><block>{ <expr>"svn_fs"</expr>, <expr><name>svn_fs_version</name></expr> }</block></expr>,
+<expr><block>{ <expr>"svn_delta"</expr>, <expr><name>svn_delta_version</name></expr> }</block></expr>,
+<expr><block>{ <expr>"svn_ra_svn"</expr>, <expr><name>svn_ra_svn_version</name></expr> }</block></expr>,
+<expr><block>{ <expr><name>NULL</name></expr>, <expr><name>NULL</name></expr> }</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>SVN_VERSION_DEFINE</name><argument_list>(<argument><expr><name>my_version</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><call><name>svn_ver_check_list</name><argument_list>(<argument><expr>&amp;<name>my_version</name></expr></argument>, <argument><expr><name>checklist</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+<function><type><name>int</name></type> <name>main</name><parameter_list>(<param><decl><type><name>int</name></type> <name>argc</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name><name>argv</name><index>[]</index></name></decl></param>)</parameter_list> <block>{
+<enum>enum <name>run_mode</name> <name>run_mode</name> <expr_stmt><expr>= <name>run_mode_unspecified</name></expr>;</expr_stmt></enum>
+<decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>foreground</name> <init>= <expr><name>FALSE</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_socket_t</name> *</type><name>sock</name></decl>, *<decl><type ref="prev"/><name>usock</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_file_t</name> *</type><name>in_file</name></decl>, *<decl><type ref="prev"/><name>out_file</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_sockaddr_t</name> *</type><name>sa</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>connection_pool</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_getopt_t</name> *</type><name>os</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>opt</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>serve_params_t</name></type> <name>params</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>arg</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_status_t</name></type> <name>status</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>svn_ra_svn_conn_t</name> *</type><name>conn</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_proc_t</name></type> <name>proc</name></decl>;</decl_stmt>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_HAS_THREADS</name></expr></cpp:if>
+<decl_stmt><decl><type><name>apr_threadattr_t</name> *</type><name>tattr</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_thread_t</name> *</type><name>tid</name></decl>;</decl_stmt>
+<decl_stmt><decl><type>struct <name>serve_thread_t</name> *</type><name>thread_data</name></decl>;</decl_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<enum>enum <name>connection_handling_mode</name> <name>handling_mode</name> <expr_stmt><expr>= <name>CONNECTION_DEFAULT</name></expr>;</expr_stmt></enum>
+<decl_stmt><decl><type><name>apr_uint16_t</name></type> <name>port</name> <init>= <expr><name>SVN_RA_SVN_PORT</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>host</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>family</name> <init>= <expr><name>APR_INET</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>mode_opt_count</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>config_filename</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>pid_filename</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>svn_node_kind_t</name></type> <name>kind</name></decl>;</decl_stmt>
+<if>if <condition>(<expr><call><name>svn_cmdline_init</name><argument_list>(<argument><expr>"svnserve"</expr></argument>, <argument><expr><name>stderr</name></expr></argument>)</argument_list></call> != <name>EXIT_SUCCESS</name></expr>)</condition><then>
+<return>return <expr><name>EXIT_FAILURE</name></expr>;</return></then></if>
+<expr_stmt><expr><name>pool</name> = <call><name>svn_pool_create</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>SVN_HAVE_SASL</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<expr_stmt><expr><call><name>SVN_INT_ERR</name><argument_list>(<argument><expr><call><name>cyrus_init</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<expr_stmt><expr><name>err</name> = <call><name>check_lib_versions</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>err</name></expr>)</condition><then>
+<return>return <expr><call><name>svn_cmdline_handle_exit_error</name><argument_list>(<argument><expr><name>err</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>, <argument><expr>"svnserve: "</expr></argument>)</argument_list></call></expr>;</return></then></if>
+<expr_stmt><expr><name>err</name> = <call><name>svn_fs_initialize</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>err</name></expr>)</condition><then>
+<return>return <expr><call><name>svn_cmdline_handle_exit_error</name><argument_list>(<argument><expr><name>err</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>, <argument><expr>"svnserve: "</expr></argument>)</argument_list></call></expr>;</return></then></if>
+<expr_stmt><expr><name>err</name> = <call><name>svn_cmdline__getopt_init</name><argument_list>(<argument><expr>&amp;<name>os</name></expr></argument>, <argument><expr><name>argc</name></expr></argument>, <argument><expr><name>argv</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>err</name></expr>)</condition><then>
+<return>return <expr><call><name>svn_cmdline_handle_exit_error</name><argument_list>(<argument><expr><name>err</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>, <argument><expr>"svnserve: "</expr></argument>)</argument_list></call></expr>;</return></then></if>
+<expr_stmt><expr><name><name>params</name>.<name>root</name></name> = "/"</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>params</name>.<name>tunnel</name></name> = <name>FALSE</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>params</name>.<name>tunnel_user</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>params</name>.<name>read_only</name></name> = <name>FALSE</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>params</name>.<name>cfg</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>params</name>.<name>pwdb</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>params</name>.<name>authzdb</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<while>while <condition>(<expr>1</expr>)</condition> <block>{
+<expr_stmt><expr><name>status</name> = <call><name>apr_getopt_long</name><argument_list>(<argument><expr><name>os</name></expr></argument>, <argument><expr><name>svnserve__options</name></expr></argument>, <argument><expr>&amp;<name>opt</name></expr></argument>, <argument><expr>&amp;<name>arg</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><call><name>APR_STATUS_IS_EOF</name><argument_list>(<argument><expr><name>status</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<break>break;</break></then></if>
+<if>if <condition>(<expr><name>status</name> != <name>APR_SUCCESS</name></expr>)</condition><then>
+<expr_stmt><expr><call><name>usage</name><argument_list>(<argument><expr><name><name>argv</name><index>[<expr>0</expr>]</index></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<switch>switch <condition>(<expr><name>opt</name></expr>)</condition> <block>{
+<case>case <expr>'h'</expr>:
+<expr_stmt><expr><call><name>help</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>SVNSERVE_OPT_VERSION</name></expr>:
+<expr_stmt><expr><call><name>SVN_INT_ERR</name><argument_list>(<argument><expr><call><name>version</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>exit</name><argument_list>(<argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr>'d'</expr>:
+<if>if <condition>(<expr><name>run_mode</name> != <name>run_mode_daemon</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>run_mode</name> = <name>run_mode_daemon</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>mode_opt_count</name>++</expr>;</expr_stmt>
+}</block></then></if>
+<break>break;</break>
+</case><case>case <expr><name>SVNSERVE_OPT_FOREGROUND</name></expr>:
+<expr_stmt><expr><name>foreground</name> = <name>TRUE</name></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr>'i'</expr>:
+<if>if <condition>(<expr><name>run_mode</name> != <name>run_mode_inetd</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>run_mode</name> = <name>run_mode_inetd</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>mode_opt_count</name>++</expr>;</expr_stmt>
+}</block></then></if>
+<break>break;</break>
+</case><case>case <expr><name>SVNSERVE_OPT_LISTEN_PORT</name></expr>:
+<expr_stmt><expr><name>port</name> = <call><name>atoi</name><argument_list>(<argument><expr><name>arg</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>SVNSERVE_OPT_LISTEN_HOST</name></expr>:
+<expr_stmt><expr><name>host</name> = <name>arg</name></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr>'t'</expr>:
+<if>if <condition>(<expr><name>run_mode</name> != <name>run_mode_tunnel</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>run_mode</name> = <name>run_mode_tunnel</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>mode_opt_count</name>++</expr>;</expr_stmt>
+}</block></then></if>
+<break>break;</break>
+</case><case>case <expr><name>SVNSERVE_OPT_TUNNEL_USER</name></expr>:
+<expr_stmt><expr><name><name>params</name>.<name>tunnel_user</name></name> = <name>arg</name></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr>'X'</expr>:
+<if>if <condition>(<expr><name>run_mode</name> != <name>run_mode_listen_once</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>run_mode</name> = <name>run_mode_listen_once</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>mode_opt_count</name>++</expr>;</expr_stmt>
+}</block></then></if>
+<break>break;</break>
+</case><case>case <expr>'r'</expr>:
+<expr_stmt><expr><call><name>SVN_INT_ERR</name><argument_list>(<argument><expr><call><name>svn_utf_cstring_to_utf8</name><argument_list>(<argument><expr>&amp;<name><name>params</name>.<name>root</name></name></expr></argument>, <argument><expr><name>arg</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>err</name> = <call><name>svn_io_check_resolved_path</name><argument_list>(<argument><expr><name><name>params</name>.<name>root</name></name></expr></argument>, <argument><expr>&amp;<name>kind</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>err</name></expr>)</condition><then>
+<return>return <expr><call><name>svn_cmdline_handle_exit_error</name><argument_list>(<argument><expr><name>err</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>, <argument><expr>"svnserve: "</expr></argument>)</argument_list></call></expr>;</return></then></if>
+<if>if <condition>(<expr><name>kind</name> != <name>svn_node_dir</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>svn_error_clear</name>
+<argument_list>(<argument><expr><call><name>svn_cmdline_fprintf</name>
+<argument_list>(<argument><expr><name>stderr</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>,
+<argument><expr><call><name>_</name><argument_list>(<argument><expr>"svnserve: Root path '%s' does not exist "
+"or is not a directory.\n"</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name><name>params</name>.<name>root</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>EXIT_FAILURE</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name><name>params</name>.<name>root</name></name> = <call><name>svn_path_internal_style</name><argument_list>(<argument><expr><name><name>params</name>.<name>root</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>SVN_INT_ERR</name><argument_list>(<argument><expr><call><name>svn_path_get_absolute</name><argument_list>(<argument><expr>&amp;<name><name>params</name>.<name>root</name></name></expr></argument>, <argument><expr><name><name>params</name>.<name>root</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr>'R'</expr>:
+<expr_stmt><expr><name><name>params</name>.<name>read_only</name></name> = <name>TRUE</name></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr>'T'</expr>:
+<expr_stmt><expr><name>handling_mode</name> = <name>connection_mode_thread</name></expr>;</expr_stmt>
+<break>break;</break>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>WIN32</name></expr></argument>)</argument_list></call></expr></cpp:if>
+</case><case>case <expr><name>SVNSERVE_OPT_SERVICE</name></expr>:
+<if>if <condition>(<expr><name>run_mode</name> != <name>run_mode_service</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>run_mode</name> = <name>run_mode_service</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>mode_opt_count</name>++</expr>;</expr_stmt>
+}</block></then></if>
+<break>break;</break>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+</case><case>case <expr><name>SVNSERVE_OPT_CONFIG_FILE</name></expr>:
+<expr_stmt><expr><call><name>SVN_INT_ERR</name><argument_list>(<argument><expr><call><name>svn_utf_cstring_to_utf8</name><argument_list>(<argument><expr>&amp;<name>config_filename</name></expr></argument>, <argument><expr><name>arg</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>config_filename</name> = <call><name>svn_path_internal_style</name><argument_list>(<argument><expr><name>config_filename</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>SVN_INT_ERR</name><argument_list>(<argument><expr><call><name>svn_path_get_absolute</name><argument_list>(<argument><expr>&amp;<name>config_filename</name></expr></argument>, <argument><expr><name>config_filename</name></expr></argument>,
+<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<break>break;</break>
+</case><case>case <expr><name>SVNSERVE_OPT_PID_FILE</name></expr>:
+<expr_stmt><expr><call><name>SVN_INT_ERR</name><argument_list>(<argument><expr><call><name>svn_utf_cstring_to_utf8</name><argument_list>(<argument><expr>&amp;<name>pid_filename</name></expr></argument>, <argument><expr><name>arg</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>pid_filename</name> = <call><name>svn_path_internal_style</name><argument_list>(<argument><expr><name>pid_filename</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>SVN_INT_ERR</name><argument_list>(<argument><expr><call><name>svn_path_get_absolute</name><argument_list>(<argument><expr>&amp;<name>pid_filename</name></expr></argument>, <argument><expr><name>pid_filename</name></expr></argument>,
+<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<break>break;</break>
+</case>}</block></switch>
+}</block></while>
+<if>if <condition>(<expr><name><name>os</name>-&gt;<name>ind</name></name> != <name>argc</name></expr>)</condition><then>
+<expr_stmt><expr><call><name>usage</name><argument_list>(<argument><expr><name><name>argv</name><index>[<expr>0</expr>]</index></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<if>if <condition>(<expr><name>mode_opt_count</name> != 1</expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><call><name>svn_cmdline_fputs</name>
+<argument_list>(<argument><expr><call><name>_</name><argument_list>(<argument><expr>"You must specify exactly one of -d, -i, -t or -X.\n"</expr></argument>)</argument_list></call></expr></argument>,
+<argument><expr><name>stderr</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>usage</name><argument_list>(<argument><expr><name><name>argv</name><index>[<expr>0</expr>]</index></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+<if>if <condition>(<expr><name>config_filename</name></expr>)</condition><then>
+<expr_stmt><expr><call><name>SVN_INT_ERR</name><argument_list>(<argument><expr><call><name>load_configs</name><argument_list>(<argument><expr>&amp;<name><name>params</name>.<name>cfg</name></name></expr></argument>, <argument><expr>&amp;<name><name>params</name>.<name>pwdb</name></name></expr></argument>, <argument><expr>&amp;<name><name>params</name>.<name>authzdb</name></name></expr></argument>,
+<argument><expr><name>config_filename</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>,
+<argument><expr><call><name>svn_path_dirname</name><argument_list>(<argument><expr><name>config_filename</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>,
+<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<if>if <condition>(<expr><name><name>params</name>.<name>tunnel_user</name></name> &amp;&amp; <name>run_mode</name> != <name>run_mode_tunnel</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>svn_error_clear</name>
+<argument_list>(<argument><expr><call><name>svn_cmdline_fprintf</name>
+<argument_list>(<argument><expr><name>stderr</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>,
+<argument><expr><call><name>_</name><argument_list>(<argument><expr>"Option --tunnel-user is only valid in tunnel mode.\n"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>exit</name><argument_list>(<argument><expr>1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+<if>if <condition>(<expr><name>run_mode</name> == <name>run_mode_inetd</name> || <name>run_mode</name> == <name>run_mode_tunnel</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>params</name>.<name>tunnel</name></name> = (<name>run_mode</name> == <name>run_mode_tunnel</name>)</expr>;</expr_stmt>
+<expr_stmt><expr><call><name>apr_pool_cleanup_register</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>, <argument><expr><name>apr_pool_cleanup_null</name></expr></argument>,
+<argument><expr><name>redirect_stdout</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>status</name> = <call><name>apr_file_open_stdin</name><argument_list>(<argument><expr>&amp;<name>in_file</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>status</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>err</name> = <call><name>svn_error_wrap_apr</name><argument_list>(<argument><expr><name>status</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Can't open stdin"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><call><name>svn_cmdline_handle_exit_error</name><argument_list>(<argument><expr><name>err</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>, <argument><expr>"svnserve: "</expr></argument>)</argument_list></call></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>status</name> = <call><name>apr_file_open_stdout</name><argument_list>(<argument><expr>&amp;<name>out_file</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>status</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>err</name> = <call><name>svn_error_wrap_apr</name><argument_list>(<argument><expr><name>status</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Can't open stdout"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><call><name>svn_cmdline_handle_exit_error</name><argument_list>(<argument><expr><name>err</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>, <argument><expr>"svnserve: "</expr></argument>)</argument_list></call></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>conn</name> = <call><name>svn_ra_svn_create_conn</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>in_file</name></expr></argument>, <argument><expr><name>out_file</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><call><name>serve</name><argument_list>(<argument><expr><name>conn</name></expr></argument>, <argument><expr>&amp;<name>params</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>exit</name><argument_list>(<argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>WIN32</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<if>if <condition>(<expr><name>run_mode</name> == <name>run_mode_service</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>err</name> = <call><name>winservice_start</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>err</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>svn_handle_error2</name><argument_list>(<argument><expr><name>err</name></expr></argument>, <argument><expr><name>stderr</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr>"svnserve: "</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>err</name>-&gt;<name>apr_err</name></name> ==
+<call><name>APR_FROM_OS_ERROR</name><argument_list>(<argument><expr><name>ERROR_FAILED_SERVICE_CONTROLLER_CONNECT</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><call><name>svn_cmdline_fprintf</name><argument_list>(<argument><expr><name>stderr</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>,
+<argument><expr><call><name>_</name><argument_list>(<argument><expr>"svnserve: The --service flag is only valid if the"
+" process is started by the Service Control Manager.\n"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+<expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>exit</name><argument_list>(<argument><expr>1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+}</block></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_HAVE_IPV6</name></expr></cpp:if>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>MAX_SECS_TO_LINGER</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<expr_stmt><expr><name>status</name> = <call><name>apr_socket_create</name><argument_list>(<argument><expr>&amp;<name>sock</name></expr></argument>, <argument><expr><name>APR_INET6</name></expr></argument>, <argument><expr><name>SOCK_STREAM</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+<expr_stmt><expr><name>status</name> = <call><name>apr_socket_create</name><argument_list>(<argument><expr>&amp;<name>sock</name></expr></argument>, <argument><expr><name>APR_INET6</name></expr></argument>, <argument><expr><name>SOCK_STREAM</name></expr></argument>, <argument><expr><name>APR_PROTO_TCP</name></expr></argument>,
+<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<if>if <condition>(<expr><name>status</name> == 0</expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>apr_socket_close</name><argument_list>(<argument><expr><name>sock</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>family</name> = <name>APR_UNSPEC</name></expr>;</expr_stmt>
+}</block></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<expr_stmt><expr><name>status</name> = <call><name>apr_sockaddr_info_get</name><argument_list>(<argument><expr>&amp;<name>sa</name></expr></argument>, <argument><expr><name>host</name></expr></argument>, <argument><expr><name>family</name></expr></argument>, <argument><expr><name>port</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>status</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>err</name> = <call><name>svn_error_wrap_apr</name><argument_list>(<argument><expr><name>status</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Can't get address info"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><call><name>svn_cmdline_handle_exit_error</name><argument_list>(<argument><expr><name>err</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>, <argument><expr>"svnserve: "</expr></argument>)</argument_list></call></expr>;</return>
+}</block></then></if>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>MAX_SECS_TO_LINGER</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<expr_stmt><expr><name>status</name> = <call><name>apr_socket_create</name><argument_list>(<argument><expr>&amp;<name>sock</name></expr></argument>, <argument><expr><name><name>sa</name>-&gt;<name>family</name></name></expr></argument>, <argument><expr><name>SOCK_STREAM</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+<expr_stmt><expr><name>status</name> = <call><name>apr_socket_create</name><argument_list>(<argument><expr>&amp;<name>sock</name></expr></argument>, <argument><expr><name><name>sa</name>-&gt;<name>family</name></name></expr></argument>, <argument><expr><name>SOCK_STREAM</name></expr></argument>, <argument><expr><name>APR_PROTO_TCP</name></expr></argument>,
+<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<if>if <condition>(<expr><name>status</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>err</name> = <call><name>svn_error_wrap_apr</name><argument_list>(<argument><expr><name>status</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Can't create server socket"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><call><name>svn_cmdline_handle_exit_error</name><argument_list>(<argument><expr><name>err</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>, <argument><expr>"svnserve: "</expr></argument>)</argument_list></call></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><call><name>apr_socket_opt_set</name><argument_list>(<argument><expr><name>sock</name></expr></argument>, <argument><expr><name>APR_SO_REUSEADDR</name></expr></argument>, <argument><expr>1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>status</name> = <call><name>apr_socket_bind</name><argument_list>(<argument><expr><name>sock</name></expr></argument>, <argument><expr><name>sa</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>status</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>err</name> = <call><name>svn_error_wrap_apr</name><argument_list>(<argument><expr><name>status</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Can't bind server socket"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><call><name>svn_cmdline_handle_exit_error</name><argument_list>(<argument><expr><name>err</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>, <argument><expr>"svnserve: "</expr></argument>)</argument_list></call></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><call><name>apr_socket_listen</name><argument_list>(<argument><expr><name>sock</name></expr></argument>, <argument><expr>7</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_HAS_FORK</name></expr></cpp:if>
+<if>if <condition>(<expr><name>run_mode</name> != <name>run_mode_listen_once</name> &amp;&amp; !<name>foreground</name></expr>)</condition><then>
+<expr_stmt><expr><call><name>apr_proc_detach</name><argument_list>(<argument><expr><name>APR_PROC_DETACH_DAEMONIZE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<expr_stmt><expr><call><name>apr_signal</name><argument_list>(<argument><expr><name>SIGCHLD</name></expr></argument>, <argument><expr><name>sigchld_handler</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>SIGPIPE</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<expr_stmt><expr><call><name>apr_signal</name><argument_list>(<argument><expr><name>SIGPIPE</name></expr></argument>, <argument><expr><name>SIG_IGN</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>SIGXFSZ</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<expr_stmt><expr><call><name>apr_signal</name><argument_list>(<argument><expr><name>SIGXFSZ</name></expr></argument>, <argument><expr><name>SIG_IGN</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<if>if <condition>(<expr><name>pid_filename</name></expr>)</condition><then>
+<expr_stmt><expr><call><name>SVN_INT_ERR</name><argument_list>(<argument><expr><call><name>write_pid_file</name><argument_list>(<argument><expr><name>pid_filename</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>WIN32</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<expr_stmt><expr><name>status</name> = <call><name>apr_os_sock_get</name><argument_list>(<argument><expr>&amp;<name>winservice_svnserve_accept_socket</name></expr></argument>, <argument><expr><name>sock</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>status</name></expr>)</condition><then>
+<expr_stmt><expr><name>winservice_svnserve_accept_socket</name> = <name>INVALID_SOCKET</name></expr>;</expr_stmt></then></if>
+<if>if <condition>(<expr><name>run_mode</name> == <name>run_mode_service</name></expr>)</condition><then>
+<expr_stmt><expr><call><name>winservice_running</name><argument_list>()</argument_list></call></expr>;</expr_stmt></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<while>while <condition>(<expr>1</expr>)</condition> <block>{
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>WIN32</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<if>if <condition>(<expr><call><name>winservice_is_stopping</name><argument_list>()</argument_list></call></expr>)</condition><then>
+<return>return <expr><name>ERROR_SUCCESS</name></expr>;</return></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<expr_stmt><expr><name>connection_pool</name> = <call><name>svn_pool_create</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>status</name> = <call><name>apr_socket_accept</name><argument_list>(<argument><expr>&amp;<name>usock</name></expr></argument>, <argument><expr><name>sock</name></expr></argument>, <argument><expr><name>connection_pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>handling_mode</name> == <name>connection_mode_fork</name></expr>)</condition><then> <block>{
+<while>while <condition>(<expr><call><name>apr_proc_wait_all_procs</name><argument_list>(<argument><expr>&amp;<name>proc</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>APR_NOWAIT</name></expr></argument>,
+<argument><expr><name>connection_pool</name></expr></argument>)</argument_list></call> == <name>APR_CHILD_DONE</name></expr>)</condition>
+<empty_stmt>;</empty_stmt></while>
+}</block></then></if>
+<if>if <condition>(<expr><call><name>APR_STATUS_IS_EINTR</name><argument_list>(<argument><expr><name>status</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name>connection_pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<continue>continue;</continue>
+}</block></then></if>
+<if>if <condition>(<expr><name>status</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>err</name> = <call><name>svn_error_wrap_apr</name>
+<argument_list>(<argument><expr><name>status</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Can't accept client connection"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><call><name>svn_cmdline_handle_exit_error</name><argument_list>(<argument><expr><name>err</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>, <argument><expr>"svnserve: "</expr></argument>)</argument_list></call></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>conn</name> = <call><name>svn_ra_svn_create_conn</name><argument_list>(<argument><expr><name>usock</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>connection_pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>run_mode</name> == <name>run_mode_listen_once</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>err</name> = <call><name>serve</name><argument_list>(<argument><expr><name>conn</name></expr></argument>, <argument><expr>&amp;<name>params</name></expr></argument>, <argument><expr><name>connection_pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>err</name> &amp;&amp; <name><name>err</name>-&gt;<name>apr_err</name></name> != <name>SVN_ERR_RA_SVN_CONNECTION_CLOSED</name></expr>)</condition><then>
+<expr_stmt><expr><call><name>svn_handle_error2</name><argument_list>(<argument><expr><name>err</name></expr></argument>, <argument><expr><name>stdout</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr>"svnserve: "</expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>apr_socket_close</name><argument_list>(<argument><expr><name>usock</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>apr_socket_close</name><argument_list>(<argument><expr><name>sock</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>exit</name><argument_list>(<argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+<switch>switch <condition>(<expr><name>handling_mode</name></expr>)</condition> <block>{
+<case>case <expr><name>connection_mode_fork</name></expr>:
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_HAS_FORK</name></expr></cpp:if>
+<expr_stmt><expr><name>status</name> = <call><name>apr_proc_fork</name><argument_list>(<argument><expr>&amp;<name>proc</name></expr></argument>, <argument><expr><name>connection_pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>status</name> == <name>APR_INCHILD</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>apr_socket_close</name><argument_list>(<argument><expr><name>sock</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><call><name>serve</name><argument_list>(<argument><expr><name>conn</name></expr></argument>, <argument><expr>&amp;<name>params</name></expr></argument>, <argument><expr><name>connection_pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>apr_socket_close</name><argument_list>(<argument><expr><name>usock</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>exit</name><argument_list>(<argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <if>if <condition>(<expr><name>status</name> == <name>APR_INPARENT</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>apr_socket_close</name><argument_list>(<argument><expr><name>usock</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><call><name>apr_socket_close</name><argument_list>(<argument><expr><name>usock</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if></else></if>
+<expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name>connection_pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<break>break;</break>
+</case><case>case <expr><name>connection_mode_thread</name></expr>:
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_HAS_THREADS</name></expr></cpp:if>
+<expr_stmt><expr><name>status</name> = <call><name>apr_threadattr_create</name><argument_list>(<argument><expr>&amp;<name>tattr</name></expr></argument>, <argument><expr><name>connection_pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>status</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>err</name> = <call><name>svn_error_wrap_apr</name><argument_list>(<argument><expr><name>status</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Can't create threadattr"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>svn_handle_error2</name><argument_list>(<argument><expr><name>err</name></expr></argument>, <argument><expr><name>stderr</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr>"svnserve: "</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>exit</name><argument_list>(<argument><expr>1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+<expr_stmt><expr><name>status</name> = <call><name>apr_threadattr_detach_set</name><argument_list>(<argument><expr><name>tattr</name></expr></argument>, <argument><expr>1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>status</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>err</name> = <call><name>svn_error_wrap_apr</name><argument_list>(<argument><expr><name>status</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Can't set detached state"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>svn_handle_error2</name><argument_list>(<argument><expr><name>err</name></expr></argument>, <argument><expr><name>stderr</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr>"svnserve: "</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>exit</name><argument_list>(<argument><expr>1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+<expr_stmt><expr><name>thread_data</name> = <call><name>apr_palloc</name><argument_list>(<argument><expr><name>connection_pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>thread_data</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>thread_data</name>-&gt;<name>conn</name></name> = <name>conn</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>thread_data</name>-&gt;<name>params</name></name> = &amp;<name>params</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>thread_data</name>-&gt;<name>pool</name></name> = <name>connection_pool</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>status</name> = <call><name>apr_thread_create</name><argument_list>(<argument><expr>&amp;<name>tid</name></expr></argument>, <argument><expr><name>tattr</name></expr></argument>, <argument><expr><name>serve_thread</name></expr></argument>, <argument><expr><name>thread_data</name></expr></argument>,
+<argument><expr><name>connection_pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>status</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>err</name> = <call><name>svn_error_wrap_apr</name><argument_list>(<argument><expr><name>status</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Can't create thread"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>svn_handle_error2</name><argument_list>(<argument><expr><name>err</name></expr></argument>, <argument><expr><name>stderr</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr>"svnserve: "</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>exit</name><argument_list>(<argument><expr>1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<break>break;</break>
+</case><case>case <expr><name>connection_mode_single</name></expr>:
+<expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><call><name>serve</name><argument_list>(<argument><expr><name>conn</name></expr></argument>, <argument><expr>&amp;<name>params</name></expr></argument>, <argument><expr><name>connection_pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name>connection_pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+</case>}</block></switch>
+}</block></while>
+}</block></function>
+</unit>

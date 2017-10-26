@@ -1,0 +1,573 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="subversion/libsvn_fs_fs/lock.c"><cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;assert.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_pools.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_error.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_path.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_fs.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_hash.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_time.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_utf.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_md5.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_uuid.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_file_io.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_file_info.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_md5.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"lock.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"tree.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"err.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"fs_fs.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"../libsvn_fs/fs-loader.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"private/svn_fs_util.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_private_config.h"</cpp:file></cpp:include>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PATH_KEY</name></cpp:macro> <cpp:value>"path"</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>TOKEN_KEY</name></cpp:macro> <cpp:value>"token"</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>OWNER_KEY</name></cpp:macro> <cpp:value>"owner"</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>CREATION_DATE_KEY</name></cpp:macro> <cpp:value>"creation_date"</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>EXPIRATION_DATE_KEY</name></cpp:macro> <cpp:value>"expiration_date"</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>COMMENT_KEY</name></cpp:macro> <cpp:value>"comment"</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>IS_DAV_COMMENT_KEY</name></cpp:macro> <cpp:value>"is_dav_comment"</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>CHILDREN_KEY</name></cpp:macro> <cpp:value>"children"</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>DIGEST_SUBDIR_LEN</name></cpp:macro> <cpp:value>3</cpp:value></cpp:define>
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *</type>
+<name>make_digest</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>str</name></decl></param>,
+<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>unsigned</name> <name>char</name></type> <name><name>digest</name><index>[<expr><name>APR_MD5_DIGESTSIZE</name></expr>]</index></name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>apr_md5</name><argument_list>(<argument><expr><name>digest</name></expr></argument>, <argument><expr><name>str</name></expr></argument>, <argument><expr><call><name>strlen</name><argument_list>(<argument><expr><name>str</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><call><name>svn_md5_digest_to_cstring_display</name><argument_list>(<argument><expr><name>digest</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>hash_store</name><parameter_list>(<param><decl><type><name>apr_hash_t</name> *</type><name>hash</name></decl></param>,
+<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>key</name></decl></param>,
+<param><decl><type><name>apr_ssize_t</name></type> <name>key_len</name></decl></param>,
+<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>value</name></decl></param>,
+<param><decl><type><name>apr_ssize_t</name></type> <name>value_len</name></decl></param>,
+<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list> <block>{
+<if>if <condition>(<expr>! (<name>key</name> &amp;&amp; <name>value</name>)</expr>)</condition><then>
+<return>return;</return></then></if>
+<if>if <condition>(<expr><name>value_len</name> == <name>APR_HASH_KEY_STRING</name></expr>)</condition><then>
+<expr_stmt><expr><name>value_len</name> = <call><name>strlen</name><argument_list>(<argument><expr><name>value</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name>hash</name></expr></argument>, <argument><expr><name>key</name></expr></argument>, <argument><expr><name>key_len</name></expr></argument>,
+<argument><expr><call><name>svn_string_ncreate</name><argument_list>(<argument><expr><name>value</name></expr></argument>, <argument><expr><name>value_len</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *</type>
+<name>hash_fetch</name><parameter_list>(<param><decl><type><name>apr_hash_t</name> *</type><name>hash</name></decl></param>,
+<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>key</name></decl></param>,
+<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>svn_string_t</name> *</type><name>str</name> <init>= <expr><call><name>apr_hash_get</name><argument_list>(<argument><expr><name>hash</name></expr></argument>, <argument><expr><name>key</name></expr></argument>, <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<return>return <expr><name>str</name> ? <name><name>str</name>-&gt;<name>data</name></name> : <name>NULL</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *</type>
+<name>digest_path_from_digest</name><parameter_list>(<param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>digest</name></decl></param>,
+<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list> <block>{
+<return>return <expr><call><name>svn_path_join_many</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name><name>fs</name>-&gt;<name>path</name></name></expr></argument>, <argument><expr><name>PATH_LOCKS_DIR</name></expr></argument>,
+<argument><expr><call><name>apr_pstrmemdup</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>digest</name></expr></argument>, <argument><expr><name>DIGEST_SUBDIR_LEN</name></expr></argument>)</argument_list></call></expr></argument>,
+<argument><expr><name>digest</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *</type>
+<name>digest_path_from_path</name><parameter_list>(<param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>digest</name> <init>= <expr><call><name>make_digest</name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<return>return <expr><call><name>svn_path_join_many</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name><name>fs</name>-&gt;<name>path</name></name></expr></argument>, <argument><expr><name>PATH_LOCKS_DIR</name></expr></argument>,
+<argument><expr><call><name>apr_pstrmemdup</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>digest</name></expr></argument>, <argument><expr><name>DIGEST_SUBDIR_LEN</name></expr></argument>)</argument_list></call></expr></argument>,
+<argument><expr><name>digest</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>write_digest_file</name><parameter_list>(<param><decl><type><name>apr_hash_t</name> *</type><name>children</name></decl></param>,
+<param><decl><type><name>svn_lock_t</name> *</type><name>lock</name></decl></param>,
+<param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>digest_path</name></decl></param>,
+<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name> <init>= <expr><name>SVN_NO_ERROR</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_file_t</name> *</type><name>fd</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_hash_index_t</name> *</type><name>hi</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_hash_t</name> *</type><name>hash</name> <init>= <expr><call><name>apr_hash_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>tmp_path</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_fs__ensure_dir_exists</name><argument_list>(<argument><expr><call><name>svn_path_join</name><argument_list>(<argument><expr><name><name>fs</name>-&gt;<name>path</name></name></expr></argument>, <argument><expr><name>PATH_LOCKS_DIR</name></expr></argument>,
+<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>fs</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_fs__ensure_dir_exists</name><argument_list>(<argument><expr><call><name>svn_path_dirname</name><argument_list>(<argument><expr><name>digest_path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>fs</name></expr></argument>,
+<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_io_open_unique_file2</name>
+<argument_list>(<argument><expr>&amp;<name>fd</name></expr></argument>, <argument><expr>&amp;<name>tmp_path</name></expr></argument>, <argument><expr><name>digest_path</name></expr></argument>, <argument><expr>".tmp"</expr></argument>, <argument><expr><name>svn_io_file_del_none</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>lock</name></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>creation_date</name> <init>= <expr><name>NULL</name></expr></init>, *<name>expiration_date</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name><name>lock</name>-&gt;<name>creation_date</name></name></expr>)</condition><then>
+<expr_stmt><expr><name>creation_date</name> = <call><name>svn_time_to_cstring</name><argument_list>(<argument><expr><name><name>lock</name>-&gt;<name>creation_date</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<if>if <condition>(<expr><name><name>lock</name>-&gt;<name>expiration_date</name></name></expr>)</condition><then>
+<expr_stmt><expr><name>expiration_date</name> = <call><name>svn_time_to_cstring</name><argument_list>(<argument><expr><name><name>lock</name>-&gt;<name>expiration_date</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<expr_stmt><expr><call><name>hash_store</name><argument_list>(<argument><expr><name>hash</name></expr></argument>, <argument><expr><name>PATH_KEY</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>PATH_KEY</name></expr></argument>)</argument_list></sizeof>-1</expr></argument>,
+<argument><expr><name><name>lock</name>-&gt;<name>path</name></name></expr></argument>, <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>hash_store</name><argument_list>(<argument><expr><name>hash</name></expr></argument>, <argument><expr><name>TOKEN_KEY</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>TOKEN_KEY</name></expr></argument>)</argument_list></sizeof>-1</expr></argument>,
+<argument><expr><name><name>lock</name>-&gt;<name>token</name></name></expr></argument>, <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>hash_store</name><argument_list>(<argument><expr><name>hash</name></expr></argument>, <argument><expr><name>OWNER_KEY</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>OWNER_KEY</name></expr></argument>)</argument_list></sizeof>-1</expr></argument>,
+<argument><expr><name><name>lock</name>-&gt;<name>owner</name></name></expr></argument>, <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>hash_store</name><argument_list>(<argument><expr><name>hash</name></expr></argument>, <argument><expr><name>COMMENT_KEY</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>COMMENT_KEY</name></expr></argument>)</argument_list></sizeof>-1</expr></argument>,
+<argument><expr><name><name>lock</name>-&gt;<name>comment</name></name></expr></argument>, <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>hash_store</name><argument_list>(<argument><expr><name>hash</name></expr></argument>, <argument><expr><name>IS_DAV_COMMENT_KEY</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>IS_DAV_COMMENT_KEY</name></expr></argument>)</argument_list></sizeof>-1</expr></argument>,
+<argument><expr><name><name>lock</name>-&gt;<name>is_dav_comment</name></name> ? "1" : "0"</expr></argument>, <argument><expr>1</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>hash_store</name><argument_list>(<argument><expr><name>hash</name></expr></argument>, <argument><expr><name>CREATION_DATE_KEY</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>CREATION_DATE_KEY</name></expr></argument>)</argument_list></sizeof>-1</expr></argument>,
+<argument><expr><name>creation_date</name></expr></argument>, <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>hash_store</name><argument_list>(<argument><expr><name>hash</name></expr></argument>, <argument><expr><name>EXPIRATION_DATE_KEY</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>EXPIRATION_DATE_KEY</name></expr></argument>)</argument_list></sizeof>-1</expr></argument>,
+<argument><expr><name>expiration_date</name></expr></argument>, <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+<if>if <condition>(<expr><call><name>apr_hash_count</name><argument_list>(<argument><expr><name>children</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>svn_stringbuf_t</name> *</type><name>children_list</name> <init>= <expr><call><name>svn_stringbuf_create</name><argument_list>(<argument><expr>""</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<for>for (<init><expr><name>hi</name> = <call><name>apr_hash_first</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>children</name></expr></argument>)</argument_list></call></expr>;</init> <condition><expr><name>hi</name></expr>;</condition> <incr><expr><name>hi</name> = <call><name>apr_hash_next</name><argument_list>(<argument><expr><name>hi</name></expr></argument>)</argument_list></call></expr></incr>) <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>void</name> *</type><name>key</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_ssize_t</name></type> <name>klen</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>apr_hash_this</name><argument_list>(<argument><expr><name>hi</name></expr></argument>, <argument><expr>&amp;<name>key</name></expr></argument>, <argument><expr>&amp;<name>klen</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>svn_stringbuf_appendbytes</name><argument_list>(<argument><expr><name>children_list</name></expr></argument>, <argument><expr><name>key</name></expr></argument>, <argument><expr><name>klen</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>svn_stringbuf_appendbytes</name><argument_list>(<argument><expr><name>children_list</name></expr></argument>, <argument><expr>"\n"</expr></argument>, <argument><expr>1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></for>
+<expr_stmt><expr><call><name>hash_store</name><argument_list>(<argument><expr><name>hash</name></expr></argument>, <argument><expr><name>CHILDREN_KEY</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>CHILDREN_KEY</name></expr></argument>)</argument_list></sizeof>-1</expr></argument>,
+<argument><expr><name><name>children_list</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name><name>children_list</name>-&gt;<name>len</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+<if>if <condition>(<expr>(<name>err</name> = <call><name>svn_hash_write2</name><argument_list>(<argument><expr><name>hash</name></expr></argument>,
+<argument><expr><call><name>svn_stream_from_aprfile</name><argument_list>(<argument><expr><name>fd</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>,
+<argument><expr><name>SVN_HASH_TERMINATOR</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call>)</expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><call><name>svn_io_file_close</name><argument_list>(<argument><expr><name>fd</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name><name>err</name>-&gt;<name>apr_err</name></name></expr></argument>,
+<argument><expr><name>err</name></expr></argument>,
+<argument><expr><call><name>_</name><argument_list>(<argument><expr>"Cannot write lock/entries hashfile '%s'"</expr></argument>)</argument_list></call></expr></argument>,
+<argument><expr><call><name>svn_path_local_style</name><argument_list>(<argument><expr><name>tmp_path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_io_file_close</name><argument_list>(<argument><expr><name>fd</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_io_file_rename</name><argument_list>(<argument><expr><name>tmp_path</name></expr></argument>, <argument><expr><name>digest_path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_fs__dup_perms</name>
+<argument_list>(<argument><expr><name>digest_path</name></expr></argument>, <argument><expr><call><name>svn_fs_fs__path_rev</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>read_digest_file</name><parameter_list>(<param><decl><type><name>apr_hash_t</name> **</type><name>children_p</name></decl></param>,
+<param><decl><type><name>svn_lock_t</name> **</type><name>lock_p</name></decl></param>,
+<param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>digest_path</name></decl></param>,
+<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name> <init>= <expr><name>SVN_NO_ERROR</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>svn_lock_t</name> *</type><name>lock</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_hash_t</name> *</type><name>hash</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_file_t</name> *</type><name>fd</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>val</name></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>lock_p</name></expr>)</condition><then>
+<expr_stmt><expr>*<name>lock_p</name> = <name>NULL</name></expr>;</expr_stmt></then></if>
+<if>if <condition>(<expr><name>children_p</name></expr>)</condition><then>
+<expr_stmt><expr>*<name>children_p</name> = <call><name>apr_hash_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<expr_stmt><expr><name>err</name> = <call><name>svn_io_file_open</name><argument_list>(<argument><expr>&amp;<name>fd</name></expr></argument>, <argument><expr><name>digest_path</name></expr></argument>, <argument><expr><name>APR_READ</name></expr></argument>, <argument><expr><name>APR_OS_DEFAULT</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>err</name> &amp;&amp; <call><name>APR_STATUS_IS_ENOENT</name><argument_list>(<argument><expr><name><name>err</name>-&gt;<name>apr_err</name></name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr>! (<name>lock_p</name> || <name>children_p</name>)</expr>)</condition><then>
+<return>return <expr><call><name>svn_io_file_close</name><argument_list>(<argument><expr><name>fd</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<expr_stmt><expr><name>hash</name> = <call><name>apr_hash_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr>(<name>err</name> = <call><name>svn_hash_read2</name><argument_list>(<argument><expr><name>hash</name></expr></argument>,
+<argument><expr><call><name>svn_stream_from_aprfile</name><argument_list>(<argument><expr><name>fd</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>,
+<argument><expr><name>SVN_HASH_TERMINATOR</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call>)</expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><call><name>svn_io_file_close</name><argument_list>(<argument><expr><name>fd</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name><name>err</name>-&gt;<name>apr_err</name></name></expr></argument>,
+<argument><expr><name>err</name></expr></argument>,
+<argument><expr><call><name>_</name><argument_list>(<argument><expr>"Can't parse lock/entries hashfile '%s'"</expr></argument>)</argument_list></call></expr></argument>,
+<argument><expr><call><name>svn_path_local_style</name><argument_list>(<argument><expr><name>digest_path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_io_file_close</name><argument_list>(<argument><expr><name>fd</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>val</name> = <call><name>hash_fetch</name><argument_list>(<argument><expr><name>hash</name></expr></argument>, <argument><expr><name>PATH_KEY</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>val</name> &amp;&amp; <name>lock_p</name></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name> <init>= <expr><name>val</name></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><name>lock</name> = <call><name>svn_lock_create</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>lock</name>-&gt;<name>path</name></name> = <name>path</name></expr>;</expr_stmt>
+<if>if <condition>(<expr>! ((<name><name>lock</name>-&gt;<name>token</name></name> = <call><name>hash_fetch</name><argument_list>(<argument><expr><name>hash</name></expr></argument>, <argument><expr><name>TOKEN_KEY</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call>))</expr>)</condition><then>
+<return>return <expr><call><name>svn_fs_fs__err_corrupt_lockfile</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>path</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<if>if <condition>(<expr>! ((<name><name>lock</name>-&gt;<name>owner</name></name> = <call><name>hash_fetch</name><argument_list>(<argument><expr><name>hash</name></expr></argument>, <argument><expr><name>OWNER_KEY</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call>))</expr>)</condition><then>
+<return>return <expr><call><name>svn_fs_fs__err_corrupt_lockfile</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>path</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<if>if <condition>(<expr>! ((<name>val</name> = <call><name>hash_fetch</name><argument_list>(<argument><expr><name>hash</name></expr></argument>, <argument><expr><name>IS_DAV_COMMENT_KEY</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call>))</expr>)</condition><then>
+<return>return <expr><call><name>svn_fs_fs__err_corrupt_lockfile</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>path</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<expr_stmt><expr><name><name>lock</name>-&gt;<name>is_dav_comment</name></name> = (<name><name>val</name><index>[<expr>0</expr>]</index></name> == '1') ? <name>TRUE</name> : <name>FALSE</name></expr>;</expr_stmt>
+<if>if <condition>(<expr>! ((<name>val</name> = <call><name>hash_fetch</name><argument_list>(<argument><expr><name>hash</name></expr></argument>, <argument><expr><name>CREATION_DATE_KEY</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call>))</expr>)</condition><then>
+<return>return <expr><call><name>svn_fs_fs__err_corrupt_lockfile</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>path</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_time_from_cstring</name><argument_list>(<argument><expr>&amp;(<name><name>lock</name>-&gt;<name>creation_date</name></name>)</expr></argument>, <argument><expr><name>val</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr>(<name>val</name> = <call><name>hash_fetch</name><argument_list>(<argument><expr><name>hash</name></expr></argument>, <argument><expr><name>EXPIRATION_DATE_KEY</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call>)</expr>)</condition><then>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_time_from_cstring</name><argument_list>(<argument><expr>&amp;(<name><name>lock</name>-&gt;<name>expiration_date</name></name>)</expr></argument>, <argument><expr><name>val</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<expr_stmt><expr><name><name>lock</name>-&gt;<name>comment</name></name> = <call><name>hash_fetch</name><argument_list>(<argument><expr><name>hash</name></expr></argument>, <argument><expr><name>COMMENT_KEY</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr>*<name>lock_p</name> = <name>lock</name></expr>;</expr_stmt>
+}</block></then></if>
+<expr_stmt><expr><name>val</name> = <call><name>hash_fetch</name><argument_list>(<argument><expr><name>hash</name></expr></argument>, <argument><expr><name>CHILDREN_KEY</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>val</name> &amp;&amp; <name>children_p</name></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>kiddos</name> <init>= <expr><call><name>svn_cstring_split</name><argument_list>(<argument><expr><name>val</name></expr></argument>, <argument><expr>"\n"</expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+<for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name><name>kiddos</name>-&gt;<name>nelts</name></name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>) <block>{
+<expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr>*<name>children_p</name></expr></argument>, <argument><expr><call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>kiddos</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr>const <name>char</name> *</expr></argument>)</argument_list></call></expr></argument>,
+<argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>, <argument><expr>(<name>void</name> *)1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></for>
+}</block></then></if>
+<return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>set_lock</name><parameter_list>(<param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+<param><decl><type><name>svn_lock_t</name> *</type><name>lock</name></decl></param>,
+<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>svn_stringbuf_t</name> *</type><name>this_path</name> <init>= <expr><call><name>svn_stringbuf_create</name><argument_list>(<argument><expr><name><name>lock</name>-&gt;<name>path</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>svn_stringbuf_t</name> *</type><name>last_child</name> <init>= <expr><call><name>svn_stringbuf_create</name><argument_list>(<argument><expr>""</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>subpool</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>lock</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>subpool</name> = <call><name>svn_pool_create</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<while>while <condition>(<expr>1729</expr>)</condition> <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>digest_path</name></decl>, *<decl><type ref="prev"/><name>parent_dir</name></decl>, *<decl><type ref="prev"/><name>digest_file</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_hash_t</name> *</type><name>this_children</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>svn_lock_t</name> *</type><name>this_lock</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>svn_pool_clear</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>digest_path</name> = <call><name>digest_path_from_path</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name><name>this_path</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>svn_path_split</name><argument_list>(<argument><expr><name>digest_path</name></expr></argument>, <argument><expr>&amp;<name>parent_dir</name></expr></argument>, <argument><expr>&amp;<name>digest_file</name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>read_digest_file</name><argument_list>(<argument><expr>&amp;<name>this_children</name></expr></argument>, <argument><expr>&amp;<name>this_lock</name></expr></argument>, <argument><expr><name>fs</name></expr></argument>,
+<argument><expr><name>digest_path</name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>lock</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>this_lock</name> = <name>lock</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>lock</name> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>svn_stringbuf_set</name><argument_list>(<argument><expr><name>last_child</name></expr></argument>, <argument><expr><name>digest_file</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<if>if <condition>(<expr><call><name>apr_hash_get</name><argument_list>(<argument><expr><name>this_children</name></expr></argument>, <argument><expr><name><name>last_child</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name><name>last_child</name>-&gt;<name>len</name></name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<break>break;</break></then></if>
+<expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name>this_children</name></expr></argument>, <argument><expr><name><name>last_child</name>-&gt;<name>data</name></name></expr></argument>,
+<argument><expr><name><name>last_child</name>-&gt;<name>len</name></name></expr></argument>, <argument><expr>(<name>void</name> *)1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>write_digest_file</name><argument_list>(<argument><expr><name>this_children</name></expr></argument>, <argument><expr><name>this_lock</name></expr></argument>, <argument><expr><name>fs</name></expr></argument>,
+<argument><expr><name>digest_path</name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr>(<name><name>this_path</name>-&gt;<name>len</name></name> == 1) &amp;&amp; (<name><name>this_path</name>-&gt;<name>data</name><index>[<expr>0</expr>]</index></name> == '/')</expr>)</condition><then>
+<break>break;</break></then></if>
+<expr_stmt><expr><call><name>svn_stringbuf_set</name><argument_list>(<argument><expr><name>this_path</name></expr></argument>,
+<argument><expr><call><name>svn_path_dirname</name><argument_list>(<argument><expr><name><name>this_path</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></while>
+<expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>delete_lock</name><parameter_list>(<param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+<param><decl><type><name>svn_lock_t</name> *</type><name>lock</name></decl></param>,
+<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>svn_stringbuf_t</name> *</type><name>this_path</name> <init>= <expr><call><name>svn_stringbuf_create</name><argument_list>(<argument><expr><name><name>lock</name>-&gt;<name>path</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>svn_stringbuf_t</name> *</type><name>child_to_kill</name> <init>= <expr><call><name>svn_stringbuf_create</name><argument_list>(<argument><expr>""</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>subpool</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>lock</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>subpool</name> = <call><name>svn_pool_create</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<while>while <condition>(<expr>1729</expr>)</condition> <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>digest_path</name></decl>, *<decl><type ref="prev"/><name>parent_dir</name></decl>, *<decl><type ref="prev"/><name>digest_file</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_hash_t</name> *</type><name>this_children</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>svn_lock_t</name> *</type><name>this_lock</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>svn_pool_clear</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>digest_path</name> = <call><name>digest_path_from_path</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name><name>this_path</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>svn_path_split</name><argument_list>(<argument><expr><name>digest_path</name></expr></argument>, <argument><expr>&amp;<name>parent_dir</name></expr></argument>, <argument><expr>&amp;<name>digest_file</name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>read_digest_file</name><argument_list>(<argument><expr>&amp;<name>this_children</name></expr></argument>, <argument><expr>&amp;<name>this_lock</name></expr></argument>, <argument><expr><name>fs</name></expr></argument>,
+<argument><expr><name>digest_path</name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>child_to_kill</name>-&gt;<name>len</name></name></expr>)</condition><then>
+<expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name>this_children</name></expr></argument>, <argument><expr><name><name>child_to_kill</name>-&gt;<name>data</name></name></expr></argument>,
+<argument><expr><name><name>child_to_kill</name>-&gt;<name>len</name></name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<if>if <condition>(<expr><name>lock</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>this_lock</name> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>lock</name> = <name>NULL</name></expr>;</expr_stmt>
+}</block></then></if>
+<if>if <condition>(<expr>! (<name>this_lock</name> || <call><name>apr_hash_count</name><argument_list>(<argument><expr><name>this_children</name></expr></argument>)</argument_list></call> != 0)</expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>svn_stringbuf_set</name><argument_list>(<argument><expr><name>child_to_kill</name></expr></argument>,
+<argument><expr><call><name>svn_path_basename</name><argument_list>(<argument><expr><name>digest_path</name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_io_remove_file</name><argument_list>(<argument><expr><name>digest_path</name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>write_digest_file</name><argument_list>(<argument><expr><name>this_children</name></expr></argument>, <argument><expr><name>this_lock</name></expr></argument>, <argument><expr><name>fs</name></expr></argument>,
+<argument><expr><name>digest_path</name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>svn_stringbuf_setempty</name><argument_list>(<argument><expr><name>child_to_kill</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+<if>if <condition>(<expr>(<name><name>this_path</name>-&gt;<name>len</name></name> == 1) &amp;&amp; (<name><name>this_path</name>-&gt;<name>data</name><index>[<expr>0</expr>]</index></name> == '/')</expr>)</condition><then>
+<break>break;</break></then></if>
+<expr_stmt><expr><call><name>svn_stringbuf_set</name><argument_list>(<argument><expr><name>this_path</name></expr></argument>,
+<argument><expr><call><name>svn_path_dirname</name><argument_list>(<argument><expr><name><name>this_path</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></while>
+<expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>get_lock</name><parameter_list>(<param><decl><type><name>svn_lock_t</name> **</type><name>lock_p</name></decl></param>,
+<param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+<param><decl><type><name>svn_boolean_t</name></type> <name>have_write_lock</name></decl></param>,
+<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>svn_lock_t</name> *</type><name>lock</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>digest_path</name> <init>= <expr><call><name>digest_path_from_path</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>read_digest_file</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr>&amp;<name>lock</name></expr></argument>, <argument><expr><name>fs</name></expr></argument>, <argument><expr><name>digest_path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr>! <name>lock</name></expr>)</condition><then>
+<return>return <expr><call><name>SVN_FS__ERR_NO_SUCH_LOCK</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>path</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<if>if <condition>(<expr><name><name>lock</name>-&gt;<name>expiration_date</name></name> &amp;&amp; (<call><name>apr_time_now</name><argument_list>()</argument_list></call> &gt; <name><name>lock</name>-&gt;<name>expiration_date</name></name>)</expr>)</condition><then> <block>{
+<if>if <condition>(<expr><name>have_write_lock</name></expr>)</condition><then>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>delete_lock</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>lock</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<expr_stmt><expr>*<name>lock_p</name> = <name>NULL</name></expr>;</expr_stmt>
+<return>return <expr><call><name>SVN_FS__ERR_LOCK_EXPIRED</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name><name>lock</name>-&gt;<name>token</name></name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr>*<name>lock_p</name> = <name>lock</name></expr>;</expr_stmt>
+<return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>get_lock_helper</name><parameter_list>(<param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+<param><decl><type><name>svn_lock_t</name> **</type><name>lock_p</name></decl></param>,
+<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+<param><decl><type><name>svn_boolean_t</name></type> <name>have_write_lock</name></decl></param>,
+<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>svn_lock_t</name> *</type><name>lock</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name></decl>;</decl_stmt>
+<expr_stmt><expr><name>err</name> = <call><name>get_lock</name><argument_list>(<argument><expr>&amp;<name>lock</name></expr></argument>, <argument><expr><name>fs</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>have_write_lock</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>err</name> &amp;&amp; ((<name><name>err</name>-&gt;<name>apr_err</name></name> == <name>SVN_ERR_FS_NO_SUCH_LOCK</name>)
+|| (<name><name>err</name>-&gt;<name>apr_err</name></name> == <name>SVN_ERR_FS_LOCK_EXPIRED</name>))</expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr>*<name>lock_p</name> = <name>NULL</name></expr>;</expr_stmt>
+<return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></then> <else>else
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+<expr_stmt><expr>*<name>lock_p</name> = <name>lock</name></expr>;</expr_stmt>
+<return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>walk_digest_files</name><parameter_list>(<param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>digest_path</name></decl></param>,
+<param><decl><type><name>svn_fs_get_locks_callback_t</name></type> <name>get_locks_func</name></decl></param>,
+<param><decl><type><name>void</name> *</type><name>get_locks_baton</name></decl></param>,
+<param><decl><type><name>svn_boolean_t</name></type> <name>have_write_lock</name></decl></param>,
+<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>apr_hash_t</name> *</type><name>children</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>svn_lock_t</name> *</type><name>lock</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_hash_index_t</name> *</type><name>hi</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>subpool</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>read_digest_file</name><argument_list>(<argument><expr>&amp;<name>children</name></expr></argument>, <argument><expr>&amp;<name>lock</name></expr></argument>, <argument><expr><name>fs</name></expr></argument>, <argument><expr><name>digest_path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>lock</name></expr>)</condition><then> <block>{
+<if>if <condition>(<expr><name><name>lock</name>-&gt;<name>expiration_date</name></name> == 0
+|| (<call><name>apr_time_now</name><argument_list>()</argument_list></call> &lt;= <name><name>lock</name>-&gt;<name>expiration_date</name></name>)</expr>)</condition><then> <block>{
+<if>if <condition>(<expr><name>get_locks_func</name></expr>)</condition><then>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>get_locks_func</name><argument_list>(<argument><expr><name>get_locks_baton</name></expr></argument>, <argument><expr><name>lock</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+}</block></then> <else>else <block>{
+<if>if <condition>(<expr><name>have_write_lock</name></expr>)</condition><then>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>delete_lock</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>lock</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+}</block></else></if>
+}</block></then></if>
+<if>if <condition>(<expr>! <call><name>apr_hash_count</name><argument_list>(<argument><expr><name>children</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<return>return <expr><name>SVN_NO_ERROR</name></expr>;</return></then></if>
+<expr_stmt><expr><name>subpool</name> = <call><name>svn_pool_create</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<for>for (<init><expr><name>hi</name> = <call><name>apr_hash_first</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>children</name></expr></argument>)</argument_list></call></expr>;</init> <condition><expr><name>hi</name></expr>;</condition> <incr><expr><name>hi</name> = <call><name>apr_hash_next</name><argument_list>(<argument><expr><name>hi</name></expr></argument>)</argument_list></call></expr></incr>) <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>void</name> *</type><name>key</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>svn_pool_clear</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>apr_hash_this</name><argument_list>(<argument><expr><name>hi</name></expr></argument>, <argument><expr>&amp;<name>key</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>walk_digest_files</name>
+<argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><call><name>digest_path_from_digest</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>key</name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>,
+<argument><expr><name>get_locks_func</name></expr></argument>, <argument><expr><name>get_locks_baton</name></expr></argument>, <argument><expr><name>have_write_lock</name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></for>
+<expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>verify_lock</name><parameter_list>(<param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+<param><decl><type><name>svn_lock_t</name> *</type><name>lock</name></decl></param>,
+<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list> <block>{
+<if>if <condition>(<expr>(! <name><name>fs</name>-&gt;<name>access_ctx</name></name>) || (! <name><name>fs</name>-&gt;<name>access_ctx</name>-&gt;<name>username</name></name>)</expr>)</condition><then>
+<return>return <expr><call><name>svn_error_createf</name>
+<argument_list>(<argument><expr><name>SVN_ERR_FS_NO_USER</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+<argument><expr><call><name>_</name><argument_list>(<argument><expr>"Cannot verify lock on path '%s'; no username available"</expr></argument>)</argument_list></call></expr></argument>,
+<argument><expr><name><name>lock</name>-&gt;<name>path</name></name></expr></argument>)</argument_list></call></expr>;</return></then>
+<else>else <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name><name>fs</name>-&gt;<name>access_ctx</name>-&gt;<name>username</name></name></expr></argument>, <argument><expr><name><name>lock</name>-&gt;<name>owner</name></name></expr></argument>)</argument_list></call> != 0</expr>)</condition><then>
+<return>return <expr><call><name>svn_error_createf</name>
+<argument_list>(<argument><expr><name>SVN_ERR_FS_LOCK_OWNER_MISMATCH</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+<argument><expr><call><name>_</name><argument_list>(<argument><expr>"User %s does not own lock on path '%s' (currently locked by %s)"</expr></argument>)</argument_list></call></expr></argument>,
+<argument><expr><name><name>fs</name>-&gt;<name>access_ctx</name>-&gt;<name>username</name></name></expr></argument>, <argument><expr><name><name>lock</name>-&gt;<name>path</name></name></expr></argument>, <argument><expr><name><name>lock</name>-&gt;<name>owner</name></name></expr></argument>)</argument_list></call></expr>;</return></then>
+<else>else <if>if <condition>(<expr><call><name>apr_hash_get</name><argument_list>(<argument><expr><name><name>fs</name>-&gt;<name>access_ctx</name>-&gt;<name>lock_tokens</name></name></expr></argument>, <argument><expr><name><name>lock</name>-&gt;<name>token</name></name></expr></argument>,
+<argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>)</argument_list></call> == <name>NULL</name></expr>)</condition><then>
+<return>return <expr><call><name>svn_error_createf</name>
+<argument_list>(<argument><expr><name>SVN_ERR_FS_BAD_LOCK_TOKEN</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+<argument><expr><call><name>_</name><argument_list>(<argument><expr>"Cannot verify lock on path '%s'; no matching lock-token available"</expr></argument>)</argument_list></call></expr></argument>,
+<argument><expr><name><name>lock</name>-&gt;<name>path</name></name></expr></argument>)</argument_list></call></expr>;</return></then></if></else></if></else></if>
+<return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>get_locks_callback</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>,
+<param><decl><type><name>svn_lock_t</name> *</type><name>lock</name></decl></param>,
+<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list> <block>{
+<return>return <expr><call><name>verify_lock</name><argument_list>(<argument><expr><name>baton</name></expr></argument>, <argument><expr><name>lock</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_fs_fs__allow_locked_operation</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+<param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+<param><decl><type><name>svn_boolean_t</name></type> <name>recurse</name></decl></param>,
+<param><decl><type><name>svn_boolean_t</name></type> <name>have_write_lock</name></decl></param>,
+<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list> <block>{
+<expr_stmt><expr><name>path</name> = <call><name>svn_fs__canonicalize_abspath</name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>recurse</name></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>digest_path</name> <init>= <expr><call><name>digest_path_from_path</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>walk_digest_files</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>digest_path</name></expr></argument>, <argument><expr><name>get_locks_callback</name></expr></argument>,
+<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>have_write_lock</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<decl_stmt><decl><type><name>svn_lock_t</name> *</type><name>lock</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>get_lock_helper</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr>&amp;<name>lock</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>have_write_lock</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>lock</name></expr>)</condition><then>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>verify_lock</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>lock</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+}</block></else></if>
+<return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+<struct>struct <name>lock_baton</name> <block>{
+<decl_stmt><decl><type><name>svn_lock_t</name> **</type><name>lock_p</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>token</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>comment</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>is_dav_comment</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_time_t</name></type> <name>expiration_date</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>svn_revnum_t</name></type> <name>current_rev</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>steal_lock</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl>;</decl_stmt>
+}</block>;</struct>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>lock_body</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type>struct <name>lock_baton</name> *</type><name>lb</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>svn_node_kind_t</name></type> <name>kind</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>svn_lock_t</name> *</type><name>existing_lock</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>svn_lock_t</name> *</type><name>lock</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>svn_fs_root_t</name> *</type><name>root</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>svn_revnum_t</name></type> <name>youngest</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>lb</name>-&gt;<name>fs</name>-&gt;<name>vtable</name>-&gt;<name>youngest_rev</name></name><argument_list>(<argument><expr>&amp;<name>youngest</name></expr></argument>, <argument><expr><name><name>lb</name>-&gt;<name>fs</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>lb</name>-&gt;<name>fs</name>-&gt;<name>vtable</name>-&gt;<name>revision_root</name></name><argument_list>(<argument><expr>&amp;<name>root</name></expr></argument>, <argument><expr><name><name>lb</name>-&gt;<name>fs</name></name></expr></argument>, <argument><expr><name>youngest</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_fs__check_path</name><argument_list>(<argument><expr>&amp;<name>kind</name></expr></argument>, <argument><expr><name>root</name></expr></argument>, <argument><expr><name><name>lb</name>-&gt;<name>path</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>kind</name> == <name>svn_node_dir</name></expr>)</condition><then>
+<return>return <expr><call><name>SVN_FS__ERR_NOT_FILE</name><argument_list>(<argument><expr><name><name>lb</name>-&gt;<name>fs</name></name></expr></argument>, <argument><expr><name><name>lb</name>-&gt;<name>path</name></name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<if>if <condition>(<expr><name>kind</name> == <name>svn_node_none</name></expr>)</condition><then>
+<return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_FS_NOT_FOUND</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+<argument><expr><call><name>_</name><argument_list>(<argument><expr>"Path '%s' doesn't exist in HEAD revision"</expr></argument>)</argument_list></call></expr></argument>,
+<argument><expr><name><name>lb</name>-&gt;<name>path</name></name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<if>if <condition>(<expr>!<name><name>lb</name>-&gt;<name>fs</name>-&gt;<name>access_ctx</name></name> || !<name><name>lb</name>-&gt;<name>fs</name>-&gt;<name>access_ctx</name>-&gt;<name>username</name></name></expr>)</condition><then>
+<return>return <expr><call><name>SVN_FS__ERR_NO_USER</name><argument_list>(<argument><expr><name><name>lb</name>-&gt;<name>fs</name></name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<if>if <condition>(<expr><call><name>SVN_IS_VALID_REVNUM</name><argument_list>(<argument><expr><name><name>lb</name>-&gt;<name>current_rev</name></name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>svn_revnum_t</name></type> <name>created_rev</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_fs__node_created_rev</name><argument_list>(<argument><expr>&amp;<name>created_rev</name></expr></argument>, <argument><expr><name>root</name></expr></argument>, <argument><expr><name><name>lb</name>-&gt;<name>path</name></name></expr></argument>,
+<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr>! <call><name>SVN_IS_VALID_REVNUM</name><argument_list>(<argument><expr><name>created_rev</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+<return>return <expr><call><name>svn_error_createf</name>
+<argument_list>(<argument><expr><name>SVN_ERR_FS_OUT_OF_DATE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+<argument><expr><call><name>_</name><argument_list>(<argument><expr>"Path '%s' doesn't exist in HEAD revision"</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name><name>lb</name>-&gt;<name>path</name></name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<if>if <condition>(<expr><name><name>lb</name>-&gt;<name>current_rev</name></name> &lt; <name>created_rev</name></expr>)</condition><then>
+<return>return <expr><call><name>svn_error_createf</name>
+<argument_list>(<argument><expr><name>SVN_ERR_FS_OUT_OF_DATE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+<argument><expr><call><name>_</name><argument_list>(<argument><expr>"Lock failed: newer version of '%s' exists"</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name><name>lb</name>-&gt;<name>path</name></name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+}</block></then></if>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>get_lock_helper</name><argument_list>(<argument><expr><name><name>lb</name>-&gt;<name>fs</name></name></expr></argument>, <argument><expr>&amp;<name>existing_lock</name></expr></argument>, <argument><expr><name><name>lb</name>-&gt;<name>path</name></name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>existing_lock</name></expr>)</condition><then> <block>{
+<if>if <condition>(<expr>! <name><name>lb</name>-&gt;<name>steal_lock</name></name></expr>)</condition><then> <block>{
+<return>return <expr><call><name>SVN_FS__ERR_PATH_ALREADY_LOCKED</name><argument_list>(<argument><expr><name><name>lb</name>-&gt;<name>fs</name></name></expr></argument>, <argument><expr><name>existing_lock</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>delete_lock</name><argument_list>(<argument><expr><name><name>lb</name>-&gt;<name>fs</name></name></expr></argument>, <argument><expr><name>existing_lock</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+}</block></then></if>
+<expr_stmt><expr><name>lock</name> = <call><name>svn_lock_create</name><argument_list>(<argument><expr><name><name>lb</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>lb</name>-&gt;<name>token</name></name></expr>)</condition><then>
+<expr_stmt><expr><name><name>lock</name>-&gt;<name>token</name></name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name><name>lb</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>lb</name>-&gt;<name>token</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+<else>else
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_fs__generate_lock_token</name><argument_list>(<argument><expr>&amp;(<name><name>lock</name>-&gt;<name>token</name></name>)</expr></argument>, <argument><expr><name><name>lb</name>-&gt;<name>fs</name></name></expr></argument>,
+<argument><expr><name><name>lb</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+<expr_stmt><expr><name><name>lock</name>-&gt;<name>path</name></name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name><name>lb</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>lb</name>-&gt;<name>path</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>lock</name>-&gt;<name>owner</name></name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name><name>lb</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>lb</name>-&gt;<name>fs</name>-&gt;<name>access_ctx</name>-&gt;<name>username</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>lock</name>-&gt;<name>comment</name></name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name><name>lb</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>lb</name>-&gt;<name>comment</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>lock</name>-&gt;<name>is_dav_comment</name></name> = <name><name>lb</name>-&gt;<name>is_dav_comment</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>lock</name>-&gt;<name>creation_date</name></name> = <call><name>apr_time_now</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>lock</name>-&gt;<name>expiration_date</name></name> = <name><name>lb</name>-&gt;<name>expiration_date</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>set_lock</name><argument_list>(<argument><expr><name><name>lb</name>-&gt;<name>fs</name></name></expr></argument>, <argument><expr><name>lock</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr>*<name><name>lb</name>-&gt;<name>lock_p</name></name> = <name>lock</name></expr>;</expr_stmt>
+<return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+<struct>struct <name>unlock_baton</name> <block>{
+<decl_stmt><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>token</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>break_lock</name></decl>;</decl_stmt>
+}</block>;</struct>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>unlock_body</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type>struct <name>unlock_baton</name> *</type><name>ub</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>svn_lock_t</name> *</type><name>lock</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>get_lock</name><argument_list>(<argument><expr>&amp;<name>lock</name></expr></argument>, <argument><expr><name><name>ub</name>-&gt;<name>fs</name></name></expr></argument>, <argument><expr><name><name>ub</name>-&gt;<name>path</name></name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr>! <name><name>ub</name>-&gt;<name>break_lock</name></name></expr>)</condition><then> <block>{
+<if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name><name>ub</name>-&gt;<name>token</name></name></expr></argument>, <argument><expr><name><name>lock</name>-&gt;<name>token</name></name></expr></argument>)</argument_list></call> != 0</expr>)</condition><then>
+<return>return <expr><call><name>SVN_FS__ERR_NO_SUCH_LOCK</name><argument_list>(<argument><expr><name><name>ub</name>-&gt;<name>fs</name></name></expr></argument>, <argument><expr><name><name>lock</name>-&gt;<name>path</name></name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<if>if <condition>(<expr>! (<name><name>ub</name>-&gt;<name>fs</name>-&gt;<name>access_ctx</name></name> &amp;&amp; <name><name>ub</name>-&gt;<name>fs</name>-&gt;<name>access_ctx</name>-&gt;<name>username</name></name>)</expr>)</condition><then>
+<return>return <expr><call><name>SVN_FS__ERR_NO_USER</name><argument_list>(<argument><expr><name><name>ub</name>-&gt;<name>fs</name></name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name><name>ub</name>-&gt;<name>fs</name>-&gt;<name>access_ctx</name>-&gt;<name>username</name></name></expr></argument>, <argument><expr><name><name>lock</name>-&gt;<name>owner</name></name></expr></argument>)</argument_list></call> != 0</expr>)</condition><then>
+<return>return <expr><call><name>SVN_FS__ERR_LOCK_OWNER_MISMATCH</name>
+<argument_list>(<argument><expr><name><name>ub</name>-&gt;<name>fs</name></name></expr></argument>, <argument><expr><name><name>ub</name>-&gt;<name>fs</name>-&gt;<name>access_ctx</name>-&gt;<name>username</name></name></expr></argument>, <argument><expr><name><name>lock</name>-&gt;<name>owner</name></name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+}</block></then></if>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>delete_lock</name><argument_list>(<argument><expr><name><name>ub</name>-&gt;<name>fs</name></name></expr></argument>, <argument><expr><name>lock</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_fs_fs__lock</name><parameter_list>(<param><decl><type><name>svn_lock_t</name> **</type><name>lock_p</name></decl></param>,
+<param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>token</name></decl></param>,
+<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>comment</name></decl></param>,
+<param><decl><type><name>svn_boolean_t</name></type> <name>is_dav_comment</name></decl></param>,
+<param><decl><type><name>apr_time_t</name></type> <name>expiration_date</name></decl></param>,
+<param><decl><type><name>svn_revnum_t</name></type> <name>current_rev</name></decl></param>,
+<param><decl><type><name>svn_boolean_t</name></type> <name>steal_lock</name></decl></param>,
+<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type>struct <name>lock_baton</name></type> <name>lb</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs__check_fs</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>path</name> = <call><name>svn_fs__canonicalize_abspath</name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>lb</name>.<name>lock_p</name></name> = <name>lock_p</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>lb</name>.<name>fs</name></name> = <name>fs</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>lb</name>.<name>path</name></name> = <name>path</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>lb</name>.<name>token</name></name> = <name>token</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>lb</name>.<name>comment</name></name> = <name>comment</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>lb</name>.<name>is_dav_comment</name></name> = <name>is_dav_comment</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>lb</name>.<name>expiration_date</name></name> = <name>expiration_date</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>lb</name>.<name>current_rev</name></name> = <name>current_rev</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>lb</name>.<name>steal_lock</name></name> = <name>steal_lock</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>lb</name>.<name>pool</name></name> = <name>pool</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_fs__with_write_lock</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>lock_body</name></expr></argument>, <argument><expr>&amp;<name>lb</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_fs_fs__generate_lock_token</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>token</name></decl></param>,
+<param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list> <block>{
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs__check_fs</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr>*<name>token</name> = <call><name>apr_pstrcat</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>"opaquelocktoken:"</expr></argument>,
+<argument><expr><call><name>svn_uuid_generate</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_fs_fs__unlock</name><parameter_list>(<param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>token</name></decl></param>,
+<param><decl><type><name>svn_boolean_t</name></type> <name>break_lock</name></decl></param>,
+<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type>struct <name>unlock_baton</name></type> <name>ub</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs__check_fs</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>path</name> = <call><name>svn_fs__canonicalize_abspath</name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>ub</name>.<name>fs</name></name> = <name>fs</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>ub</name>.<name>path</name></name> = <name>path</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>ub</name>.<name>token</name></name> = <name>token</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>ub</name>.<name>break_lock</name></name> = <name>break_lock</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_fs__with_write_lock</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>unlock_body</name></expr></argument>, <argument><expr>&amp;<name>ub</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_fs_fs__get_lock</name><parameter_list>(<param><decl><type><name>svn_lock_t</name> **</type><name>lock_p</name></decl></param>,
+<param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list> <block>{
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs__check_fs</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>path</name> = <call><name>svn_fs__canonicalize_abspath</name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><call><name>get_lock_helper</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>lock_p</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_fs_fs__get_locks</name><parameter_list>(<param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+<param><decl><type><name>svn_fs_get_locks_callback_t</name></type> <name>get_locks_func</name></decl></param>,
+<param><decl><type><name>void</name> *</type><name>get_locks_baton</name></decl></param>,
+<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>digest_path</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs__check_fs</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>path</name> = <call><name>svn_fs__canonicalize_abspath</name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>digest_path</name> = <call><name>digest_path_from_path</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><call><name>walk_digest_files</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>digest_path</name></expr></argument>, <argument><expr><name>get_locks_func</name></expr></argument>,
+<argument><expr><name>get_locks_baton</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+</unit>

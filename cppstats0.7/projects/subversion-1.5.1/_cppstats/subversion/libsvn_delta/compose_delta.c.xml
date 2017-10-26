@@ -1,0 +1,486 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="subversion/libsvn_delta/compose_delta.c"><cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;assert.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_general.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_delta.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_pools.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"delta.h"</cpp:file></cpp:include>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr>!<call><name>defined</name><argument_list>(<argument><expr><name>MIN</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>MIN</name><parameter_list>(<param><type><name>a</name></type></param>, <param><type><name>b</name></type></param>)</parameter_list></cpp:macro> <cpp:value>((a) &lt; (b) ? (a) : (b))</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<typedef>typedef <type>struct <name>range_index_node_t</name></type> <name>range_index_node_t</name>;</typedef>
+<struct>struct <name>range_index_node_t</name> <block>{
+<decl_stmt><decl><type><name>apr_size_t</name></type> <name>offset</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_size_t</name></type> <name>limit</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_size_t</name></type> <name>target_offset</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>range_index_node_t</name> *</type><name>left</name></decl>, *<decl><type ref="prev"/><name>right</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>range_index_node_t</name> *</type><name>prev</name></decl>, *<decl><type ref="prev"/><name>next</name></decl>;</decl_stmt>
+}</block>;</struct>
+<enum>enum <name>range_kind</name> <block>{
+<decl><name>range_from_source</name></decl>,
+<decl><name>range_from_target</name></decl>
+}</block>;</enum>
+<typedef>typedef <type>struct <name>range_list_node_t</name></type> <name>range_list_node_t</name>;</typedef>
+<struct>struct <name>range_list_node_t</name> <block>{
+<enum>enum <name>range_kind</name> <name>kind</name>;</enum>
+<decl_stmt><decl><type><name>apr_size_t</name></type> <name>offset</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_size_t</name></type> <name>limit</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_size_t</name></type> <name>target_offset</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>range_list_node_t</name> *</type><name>prev</name></decl>, *<decl><type ref="prev"/><name>next</name></decl>;</decl_stmt>
+}</block>;</struct>
+<typedef>typedef <type>union <name>alloc_block_t</name></type> <name>alloc_block_t</name>;</typedef>
+<union>union <name>alloc_block_t</name> <block>{
+<decl_stmt><decl><type><name>range_index_node_t</name></type> <name>index_node</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>range_list_node_t</name></type> <name>list_node</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>alloc_block_t</name> *</type><name>next_free</name></decl>;</decl_stmt>
+}</block>;</union>
+<function><type><specifier>static</specifier> <name>APR_INLINE</name> <name>void</name> *</type>
+<name>alloc_block</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>, <param><decl><type><name>alloc_block_t</name> **</type><name>free_list</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>alloc_block_t</name> *</type><name>block</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>*<name>free_list</name> == <name>NULL</name></expr>)</condition><then>
+<expr_stmt><expr><name>block</name> = <call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>block</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+<else>else <block>{
+<expr_stmt><expr><name>block</name> = *<name>free_list</name></expr>;</expr_stmt>
+<expr_stmt><expr>*<name>free_list</name> = <name><name>block</name>-&gt;<name>next_free</name></name></expr>;</expr_stmt>
+}</block></else></if>
+<return>return <expr><name>block</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>APR_INLINE</name> <name>void</name></type>
+<name>free_block</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>ptr</name></decl></param>, <param><decl><type><name>alloc_block_t</name> **</type><name>free_list</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>alloc_block_t</name> *<specifier>const</specifier></type> <name>block</name> <init>= <expr><name>ptr</name></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><name><name>block</name>-&gt;<name>next_free</name></name> = *<name>free_list</name></expr>;</expr_stmt>
+<expr_stmt><expr>*<name>free_list</name> = <name>block</name></expr>;</expr_stmt>
+}</block></function>
+<typedef>typedef <type><struct>struct <name>offset_index_t</name> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>length</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_size_t</name> *</type><name>offs</name></decl>;</decl_stmt>
+}</block></struct></type> <name>offset_index_t</name>;</typedef>
+<function><type><specifier>static</specifier> <name>offset_index_t</name> *</type>
+<name>create_offset_index</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>svn_txdelta_window_t</name> *</type><name>window</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>offset_index_t</name> *</type><name>ndx</name> <init>= <expr><call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>ndx</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_size_t</name></type> <name>offset</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+<expr_stmt><expr><name><name>ndx</name>-&gt;<name>length</name></name> = <name><name>window</name>-&gt;<name>num_ops</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>ndx</name>-&gt;<name>offs</name></name> = <call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>(<name><name>ndx</name>-&gt;<name>length</name></name> + 1) * <sizeof>sizeof<argument_list>(<argument><expr>*<name><name>ndx</name>-&gt;<name>offs</name></name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name><name>ndx</name>-&gt;<name>length</name></name></expr>;</condition> <incr><expr>++<name>i</name></expr></incr>) <block>{
+<expr_stmt><expr><name><name>ndx</name>-&gt;<name>offs</name><index>[<expr><name>i</name></expr>]</index></name> = <name>offset</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>offset</name> += <name><name>window</name>-&gt;<name>ops</name><index>[<expr><name>i</name></expr>]</index></name>.<name>length</name></expr>;</expr_stmt>
+}</block></for>
+<expr_stmt><expr><name><name>ndx</name>-&gt;<name>offs</name><index>[<expr><name><name>ndx</name>-&gt;<name>length</name></name></expr>]</index></name> = <name>offset</name></expr>;</expr_stmt>
+<return>return <expr><name>ndx</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>search_offset_index</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>offset_index_t</name> *</type><name>ndx</name></decl></param>, <param><decl><type><name>apr_size_t</name></type> <name>offset</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>lo</name></decl>, <decl><type ref="prev"/><name>hi</name></decl>, <decl><type ref="prev"/><name>op</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>offset</name> &lt; <name><name>ndx</name>-&gt;<name>offs</name><index>[<expr><name><name>ndx</name>-&gt;<name>length</name></name></expr>]</index></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<for>for (<init><expr><name>lo</name> = 0</expr>, <expr><name>hi</name> = <name><name>ndx</name>-&gt;<name>length</name></name></expr>, <expr><name>op</name> = (<name>lo</name> + <name>hi</name>)/2</expr>;</init>
+<condition><expr><name>lo</name> &lt; <name>hi</name></expr>;</condition>
+<incr><expr><name>op</name> = (<name>lo</name> + <name>hi</name>)/2</expr></incr>) <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>apr_size_t</name></type> <name>this_offset</name> <init>= <expr><name><name>ndx</name>-&gt;<name>offs</name><index>[<expr><name>op</name></expr>]</index></name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>apr_size_t</name></type> <name>next_offset</name> <init>= <expr><name><name>ndx</name>-&gt;<name>offs</name><index>[<expr><name>op</name> + 1</expr>]</index></name></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>offset</name> &lt; <name>this_offset</name></expr>)</condition><then>
+<expr_stmt><expr><name>hi</name> = <name>op</name></expr>;</expr_stmt></then>
+<else>else <if>if <condition>(<expr><name>offset</name> &gt; <name>next_offset</name></expr>)</condition><then>
+<expr_stmt><expr><name>lo</name> = <name>op</name></expr>;</expr_stmt></then>
+<else>else <block>{
+<if>if <condition>(<expr><name>offset</name> == <name>next_offset</name></expr>)</condition><then>
+<expr_stmt><expr>++<name>op</name></expr>;</expr_stmt></then></if>
+<break>break;</break>
+}</block></else></if></else></if>
+}</block></for>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>ndx</name>-&gt;<name>offs</name><index>[<expr><name>op</name></expr>]</index></name> &lt;= <name>offset</name> &amp;&amp; <name>offset</name> &lt; <name><name>ndx</name>-&gt;<name>offs</name><index>[<expr><name>op</name> + 1</expr>]</index></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>op</name></expr>;</return>
+}</block></function>
+<typedef>typedef <type><struct>struct <name>range_index_t</name> <block>{
+<decl_stmt><decl><type><name>range_index_node_t</name> *</type><name>tree</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>alloc_block_t</name> *</type><name>free_list</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl>;</decl_stmt>
+}</block></struct></type> <name>range_index_t</name>;</typedef>
+<function><type><specifier>static</specifier> <name>range_index_t</name> *</type>
+<name>create_range_index</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>range_index_t</name> *</type><name>ndx</name> <init>= <expr><call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>ndx</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><name><name>ndx</name>-&gt;<name>tree</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>ndx</name>-&gt;<name>pool</name></name> = <name>pool</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>ndx</name>-&gt;<name>free_list</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<return>return <expr><name>ndx</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>range_index_node_t</name> *</type>
+<name>alloc_range_index_node</name><parameter_list>(<param><decl><type><name>range_index_t</name> *</type><name>ndx</name></decl></param>,
+<param><decl><type><name>apr_size_t</name></type> <name>offset</name></decl></param>,
+<param><decl><type><name>apr_size_t</name></type> <name>limit</name></decl></param>,
+<param><decl><type><name>apr_size_t</name></type> <name>target_offset</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>range_index_node_t</name> *<specifier>const</specifier></type> <name>node</name> <init>= <expr><call><name>alloc_block</name><argument_list>(<argument><expr><name><name>ndx</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>&amp;<name><name>ndx</name>-&gt;<name>free_list</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><name><name>node</name>-&gt;<name>offset</name></name> = <name>offset</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>node</name>-&gt;<name>limit</name></name> = <name>limit</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>node</name>-&gt;<name>target_offset</name></name> = <name>target_offset</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>node</name>-&gt;<name>left</name></name> = <name><name>node</name>-&gt;<name>right</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>node</name>-&gt;<name>prev</name></name> = <name><name>node</name>-&gt;<name>next</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<return>return <expr><name>node</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>free_range_index_node</name><parameter_list>(<param><decl><type><name>range_index_t</name> *</type><name>ndx</name></decl></param>, <param><decl><type><name>range_index_node_t</name> *</type><name>node</name></decl></param>)</parameter_list> <block>{
+<if>if <condition>(<expr><name><name>node</name>-&gt;<name>next</name></name></expr>)</condition><then>
+<expr_stmt><expr><name><name>node</name>-&gt;<name>next</name>-&gt;<name>prev</name></name> = <name><name>node</name>-&gt;<name>prev</name></name></expr>;</expr_stmt></then></if>
+<if>if <condition>(<expr><name><name>node</name>-&gt;<name>prev</name></name></expr>)</condition><then>
+<expr_stmt><expr><name><name>node</name>-&gt;<name>prev</name>-&gt;<name>next</name></name> = <name><name>node</name>-&gt;<name>next</name></name></expr>;</expr_stmt></then></if>
+<expr_stmt><expr><call><name>free_block</name><argument_list>(<argument><expr><name>node</name></expr></argument>, <argument><expr>&amp;<name><name>ndx</name>-&gt;<name>free_list</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>splay_range_index</name><parameter_list>(<param><decl><type><name>apr_size_t</name></type> <name>offset</name></decl></param>, <param><decl><type><name>range_index_t</name> *</type><name>ndx</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>range_index_node_t</name> *</type><name>tree</name> <init>= <expr><name><name>ndx</name>-&gt;<name>tree</name></name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>range_index_node_t</name></type> <name>scratch_node</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>range_index_node_t</name> *</type><name>left</name></decl>, *<decl><type ref="prev"/><name>right</name></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>tree</name> == <name>NULL</name></expr>)</condition><then>
+<return>return;</return></then></if>
+<expr_stmt><expr><name><name>scratch_node</name>.<name>left</name></name> = <name><name>scratch_node</name>.<name>right</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>left</name> = <name>right</name> = &amp;<name>scratch_node</name></expr>;</expr_stmt>
+<for>for (<init>;</init><condition>;</condition><incr/>) <block>{
+<if>if <condition>(<expr><name>offset</name> &lt; <name><name>tree</name>-&gt;<name>offset</name></name></expr>)</condition><then> <block>{
+<if>if <condition>(<expr><name><name>tree</name>-&gt;<name>left</name></name> != <name>NULL</name>
+&amp;&amp; <name>offset</name> &lt; <name><name>tree</name>-&gt;<name>left</name>-&gt;<name>offset</name></name></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>range_index_node_t</name> *<specifier>const</specifier></type> <name>node</name> <init>= <expr><name><name>tree</name>-&gt;<name>left</name></name></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><name><name>tree</name>-&gt;<name>left</name></name> = <name><name>node</name>-&gt;<name>right</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>node</name>-&gt;<name>right</name></name> = <name>tree</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>tree</name> = <name>node</name></expr>;</expr_stmt>
+}</block></then></if>
+<if>if <condition>(<expr><name><name>tree</name>-&gt;<name>left</name></name> == <name>NULL</name></expr>)</condition><then>
+<break>break;</break></then></if>
+<expr_stmt><expr><name><name>right</name>-&gt;<name>left</name></name> = <name>tree</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>right</name> = <name>tree</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>tree</name> = <name><name>tree</name>-&gt;<name>left</name></name></expr>;</expr_stmt>
+}</block></then> <else>else <if>if <condition>(<expr><name>offset</name> &gt; <name><name>tree</name>-&gt;<name>offset</name></name></expr>)</condition><then> <block>{
+<if>if <condition>(<expr><name><name>tree</name>-&gt;<name>right</name></name> != <name>NULL</name>
+&amp;&amp; <name>offset</name> &gt; <name><name>tree</name>-&gt;<name>right</name>-&gt;<name>offset</name></name></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>range_index_node_t</name> *<specifier>const</specifier></type> <name>node</name> <init>= <expr><name><name>tree</name>-&gt;<name>right</name></name></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><name><name>tree</name>-&gt;<name>right</name></name> = <name><name>node</name>-&gt;<name>left</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>node</name>-&gt;<name>left</name></name> = <name>tree</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>tree</name> = <name>node</name></expr>;</expr_stmt>
+}</block></then></if>
+<if>if <condition>(<expr><name><name>tree</name>-&gt;<name>right</name></name> == <name>NULL</name></expr>)</condition><then>
+<break>break;</break></then></if>
+<expr_stmt><expr><name><name>left</name>-&gt;<name>right</name></name> = <name>tree</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>left</name> = <name>tree</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>tree</name> = <name><name>tree</name>-&gt;<name>right</name></name></expr>;</expr_stmt>
+}</block></then> <else>else
+<break>break;</break></else></if></else></if>
+}</block></for>
+<expr_stmt><expr><name><name>left</name>-&gt;<name>right</name></name> = <name><name>tree</name>-&gt;<name>left</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>right</name>-&gt;<name>left</name></name> = <name><name>tree</name>-&gt;<name>right</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>tree</name>-&gt;<name>left</name></name> = <name><name>scratch_node</name>.<name>right</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>tree</name>-&gt;<name>right</name></name> = <name><name>scratch_node</name>.<name>left</name></name></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>offset</name> &lt; <name><name>tree</name>-&gt;<name>offset</name></name> &amp;&amp; <name><name>tree</name>-&gt;<name>left</name></name> != <name>NULL</name></expr>)</condition><then> <block>{
+<if>if <condition>(<expr><name><name>tree</name>-&gt;<name>left</name>-&gt;<name>right</name></name> == <name>NULL</name></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>range_index_node_t</name> *<specifier>const</specifier></type> <name>node</name> <init>= <expr><name><name>tree</name>-&gt;<name>left</name></name></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><name><name>tree</name>-&gt;<name>left</name></name> = <name><name>node</name>-&gt;<name>right</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>node</name>-&gt;<name>right</name></name> = <name>tree</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>tree</name> = <name>node</name></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<decl_stmt><decl><type><name>range_index_node_t</name> **</type><name>nodep</name> <init>= <expr>&amp;<name><name>tree</name>-&gt;<name>left</name></name></expr></init></decl>;</decl_stmt>
+<while>while <condition>(<expr><name>(*<name>nodep</name>)-&gt;<name>right</name></name> != <name>NULL</name></expr>)</condition>
+<expr_stmt><expr><name>nodep</name> = &amp;<name>(*<name>nodep</name>)-&gt;<name>right</name></name></expr>;</expr_stmt></while>
+<expr_stmt><expr><name>right</name> = <name>tree</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>left</name> = <name><name>tree</name>-&gt;<name>left</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name>tree</name> = *<name>nodep</name></expr>;</expr_stmt>
+<expr_stmt><expr>*<name>nodep</name> = <name><name>tree</name>-&gt;<name>left</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>right</name>-&gt;<name>left</name></name> = <name><name>tree</name>-&gt;<name>right</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>tree</name>-&gt;<name>left</name></name> = <name>left</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>tree</name>-&gt;<name>right</name></name> = <name>right</name></expr>;</expr_stmt>
+}</block></else></if>
+}</block></then></if>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr>(<name>offset</name> &gt;= <name><name>tree</name>-&gt;<name>offset</name></name>)
+|| ((<name><name>tree</name>-&gt;<name>left</name></name> == <name>NULL</name>)
+&amp;&amp; (<name><name>tree</name>-&gt;<name>prev</name></name> == <name>NULL</name>))</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>ndx</name>-&gt;<name>tree</name></name> = <name>tree</name></expr>;</expr_stmt>
+}</block></function>
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>delete_subtree</name><parameter_list>(<param><decl><type><name>range_index_t</name> *</type><name>ndx</name></decl></param>, <param><decl><type><name>range_index_node_t</name> *</type><name>node</name></decl></param>)</parameter_list> <block>{
+<if>if <condition>(<expr><name>node</name> != <name>NULL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>delete_subtree</name><argument_list>(<argument><expr><name>ndx</name></expr></argument>, <argument><expr><name><name>node</name>-&gt;<name>left</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>delete_subtree</name><argument_list>(<argument><expr><name>ndx</name></expr></argument>, <argument><expr><name><name>node</name>-&gt;<name>right</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>free_range_index_node</name><argument_list>(<argument><expr><name>ndx</name></expr></argument>, <argument><expr><name>node</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+}</block></function>
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>clean_tree</name><parameter_list>(<param><decl><type><name>range_index_t</name> *</type><name>ndx</name></decl></param>, <param><decl><type><name>apr_size_t</name></type> <name>limit</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>apr_size_t</name></type> <name>top_offset</name> <init>= <expr><name>limit</name> + 1</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>range_index_node_t</name> **</type><name>nodep</name> <init>= <expr>&amp;<name><name>ndx</name>-&gt;<name>tree</name>-&gt;<name>right</name></name></expr></init></decl>;</decl_stmt>
+<while>while <condition>(<expr>*<name>nodep</name> != <name>NULL</name></expr>)</condition> <block>{
+<decl_stmt><decl><type><name>range_index_node_t</name> *<specifier>const</specifier></type> <name>node</name> <init>= <expr>*<name>nodep</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_size_t</name> <specifier>const</specifier></type> <name>offset</name> <init>=
+<expr>(<name><name>node</name>-&gt;<name>right</name></name> != <name>NULL</name> &amp;&amp; <name><name>node</name>-&gt;<name>right</name>-&gt;<name>offset</name></name> &lt; <name>top_offset</name>
+? <name><name>node</name>-&gt;<name>right</name>-&gt;<name>offset</name></name>
+: <name>top_offset</name>)</expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name><name>node</name>-&gt;<name>limit</name></name> &lt;= <name>limit</name>
+|| (<name><name>node</name>-&gt;<name>offset</name></name> &lt; <name>limit</name> &amp;&amp; <name>offset</name> &lt; <name>limit</name>)</expr>)</condition><then> <block>{
+<expr_stmt><expr>*<name>nodep</name> = <name><name>node</name>-&gt;<name>right</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>node</name>-&gt;<name>right</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>delete_subtree</name><argument_list>(<argument><expr><name>ndx</name></expr></argument>, <argument><expr><name>node</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name>top_offset</name> = <name><name>node</name>-&gt;<name>offset</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name>nodep</name> = &amp;<name><name>node</name>-&gt;<name>left</name></name></expr>;</expr_stmt>
+}</block></else></if>
+}</block></while>
+}</block></function>
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>insert_range</name><parameter_list>(<param><decl><type><name>apr_size_t</name></type> <name>offset</name></decl></param>, <param><decl><type><name>apr_size_t</name></type> <name>limit</name></decl></param>, <param><decl><type><name>apr_size_t</name></type> <name>target_offset</name></decl></param>,
+<param><decl><type><name>range_index_t</name> *</type><name>ndx</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>range_index_node_t</name> *</type><name>node</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name><name>ndx</name>-&gt;<name>tree</name></name> == <name>NULL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>node</name> = <call><name>alloc_range_index_node</name><argument_list>(<argument><expr><name>ndx</name></expr></argument>, <argument><expr><name>offset</name></expr></argument>, <argument><expr><name>limit</name></expr></argument>, <argument><expr><name>target_offset</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>ndx</name>-&gt;<name>tree</name></name> = <name>node</name></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<if>if <condition>(<expr><name>offset</name> == <name><name>ndx</name>-&gt;<name>tree</name>-&gt;<name>offset</name></name>
+&amp;&amp; <name>limit</name> &gt; <name><name>ndx</name>-&gt;<name>tree</name>-&gt;<name>limit</name></name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>ndx</name>-&gt;<name>tree</name>-&gt;<name>limit</name></name> = <name>limit</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>ndx</name>-&gt;<name>tree</name>-&gt;<name>target_offset</name></name> = <name>target_offset</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>clean_tree</name><argument_list>(<argument><expr><name>ndx</name></expr></argument>, <argument><expr><name>limit</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <if>if <condition>(<expr><name>offset</name> &gt; <name><name>ndx</name>-&gt;<name>tree</name>-&gt;<name>offset</name></name>
+&amp;&amp; <name>limit</name> &gt; <name><name>ndx</name>-&gt;<name>tree</name>-&gt;<name>limit</name></name></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>svn_boolean_t</name></type> <name>insert_range_p</name> <init>=
+<expr>(!<name><name>ndx</name>-&gt;<name>tree</name>-&gt;<name>next</name></name>
+|| <name><name>ndx</name>-&gt;<name>tree</name>-&gt;<name>limit</name></name> &lt; <name><name>ndx</name>-&gt;<name>tree</name>-&gt;<name>next</name>-&gt;<name>offset</name></name>
+|| <name>limit</name> &gt; <name><name>ndx</name>-&gt;<name>tree</name>-&gt;<name>next</name>-&gt;<name>limit</name></name>)</expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>insert_range_p</name></expr>)</condition><then> <block>{
+<if>if <condition>(<expr><name><name>ndx</name>-&gt;<name>tree</name>-&gt;<name>prev</name></name> &amp;&amp; <name><name>ndx</name>-&gt;<name>tree</name>-&gt;<name>prev</name>-&gt;<name>limit</name></name> &gt; <name>offset</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>ndx</name>-&gt;<name>tree</name>-&gt;<name>offset</name></name> = <name>offset</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>ndx</name>-&gt;<name>tree</name>-&gt;<name>limit</name></name> = <name>limit</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>ndx</name>-&gt;<name>tree</name>-&gt;<name>target_offset</name></name> = <name>target_offset</name></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name>node</name> = <call><name>alloc_range_index_node</name><argument_list>(<argument><expr><name>ndx</name></expr></argument>, <argument><expr><name>offset</name></expr></argument>, <argument><expr><name>limit</name></expr></argument>,
+<argument><expr><name>target_offset</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr>(<name><name>node</name>-&gt;<name>next</name></name> = <name><name>ndx</name>-&gt;<name>tree</name>-&gt;<name>next</name></name>) != <name>NULL</name></expr>)</condition><then>
+<expr_stmt><expr><name><name>node</name>-&gt;<name>next</name>-&gt;<name>prev</name></name> = <name>node</name></expr>;</expr_stmt></then></if>
+<expr_stmt><expr><name><name>ndx</name>-&gt;<name>tree</name>-&gt;<name>next</name></name> = <name>node</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>node</name>-&gt;<name>prev</name></name> = <name><name>ndx</name>-&gt;<name>tree</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>node</name>-&gt;<name>right</name></name> = <name><name>ndx</name>-&gt;<name>tree</name>-&gt;<name>right</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>ndx</name>-&gt;<name>tree</name>-&gt;<name>right</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>node</name>-&gt;<name>left</name></name> = <name><name>ndx</name>-&gt;<name>tree</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>ndx</name>-&gt;<name>tree</name></name> = <name>node</name></expr>;</expr_stmt>
+}</block></else></if>
+<expr_stmt><expr><call><name>clean_tree</name><argument_list>(<argument><expr><name>ndx</name></expr></argument>, <argument><expr><name>limit</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else
+<empty_stmt>;</empty_stmt></else></if>
+}</block></then> <else>else <if>if <condition>(<expr><name>offset</name> &lt; <name><name>ndx</name>-&gt;<name>tree</name>-&gt;<name>offset</name></name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>ndx</name>-&gt;<name>tree</name>-&gt;<name>left</name></name> == <name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>node</name> = <call><name>alloc_range_index_node</name><argument_list>(<argument><expr><name>ndx</name></expr></argument>, <argument><expr><name>offset</name></expr></argument>, <argument><expr><name>limit</name></expr></argument>, <argument><expr><name>target_offset</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>node</name>-&gt;<name>left</name></name> = <name><name>node</name>-&gt;<name>prev</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>node</name>-&gt;<name>right</name></name> = <name><name>node</name>-&gt;<name>next</name></name> = <name><name>ndx</name>-&gt;<name>tree</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>ndx</name>-&gt;<name>tree</name></name> = <name><name>node</name>-&gt;<name>next</name>-&gt;<name>prev</name></name> = <name>node</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>clean_tree</name><argument_list>(<argument><expr><name>ndx</name></expr></argument>, <argument><expr><name>limit</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else
+<empty_stmt>;</empty_stmt></else></if></else></if></else></if>
+}</block></else></if>
+}</block></function>
+<decl_stmt><decl><type><specifier>static</specifier> <name>range_list_node_t</name> *</type>
+<name>alloc_range_list</name><argument_list>(<argument><expr><name>range_list_node_t</name> **<name>list</name></expr></argument>,
+<argument><expr><name>range_list_node_t</name> **<name>tail</name></expr></argument>,
+<argument><expr><name>range_index_t</name> *<name>ndx</name></expr></argument>,
+<argument>enum <expr><name>range_kind</name> <name>kind</name></expr></argument>,
+<argument><expr><name>apr_size_t</name> <name>offset</name></expr></argument>,
+<argument><expr><name>apr_size_t</name> <name>limit</name></expr></argument>,
+<argument><expr><name>apr_size_t</name> <name>target_offset</name></expr></argument>)</argument_list> <block>{
+<decl_stmt><decl><type><name>range_list_node_t</name> *<specifier>const</specifier></type> <name>node</name> <init>= <expr><call><name>alloc_block</name><argument_list>(<argument><expr><name><name>ndx</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>&amp;<name><name>ndx</name>-&gt;<name>free_list</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><name><name>node</name>-&gt;<name>kind</name></name> = <name>kind</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>node</name>-&gt;<name>offset</name></name> = <name>offset</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>node</name>-&gt;<name>limit</name></name> = <name>limit</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>node</name>-&gt;<name>target_offset</name></name> = <name>target_offset</name></expr>;</expr_stmt>
+<if>if <condition>(<expr>*<name>list</name> == <name>NULL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>node</name>-&gt;<name>prev</name></name> = <name><name>node</name>-&gt;<name>next</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr>*<name>list</name> = *<name>tail</name> = <name>node</name></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name><name>node</name>-&gt;<name>prev</name></name> = *<name>tail</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>node</name>-&gt;<name>next</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>(*<name>tail</name>)-&gt;<name>next</name></name> = <name>node</name></expr>;</expr_stmt>
+<expr_stmt><expr>*<name>tail</name> = <name>node</name></expr>;</expr_stmt>
+}</block></else></if>
+<return>return <expr>*<name>list</name></expr>;</return>
+}</block></decl></decl_stmt>
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>free_range_list</name><parameter_list>(<param><decl><type><name>range_list_node_t</name> *</type><name>list</name></decl></param>, <param><decl><type><name>range_index_t</name> *</type><name>ndx</name></decl></param>)</parameter_list> <block>{
+<while>while <condition>(<expr><name>list</name></expr>)</condition> <block>{
+<decl_stmt><decl><type><name>range_list_node_t</name> *<specifier>const</specifier></type> <name>node</name> <init>= <expr><name>list</name></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><name>list</name> = <name><name>node</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>free_block</name><argument_list>(<argument><expr><name>node</name></expr></argument>, <argument><expr>&amp;<name><name>ndx</name>-&gt;<name>free_list</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></while>
+}</block></function>
+<function><type><specifier>static</specifier> <name>range_list_node_t</name> *</type>
+<name>build_range_list</name><parameter_list>(<param><decl><type><name>apr_size_t</name></type> <name>offset</name></decl></param>, <param><decl><type><name>apr_size_t</name></type> <name>limit</name></decl></param>, <param><decl><type><name>range_index_t</name> *</type><name>ndx</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>range_list_node_t</name> *</type><name>range_list</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>range_list_node_t</name> *</type><name>last_range</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>range_index_node_t</name> *</type><name>node</name> <init>= <expr><name><name>ndx</name>-&gt;<name>tree</name></name></expr></init></decl>;</decl_stmt>
+<while>while <condition>(<expr><name>offset</name> &lt; <name>limit</name></expr>)</condition> <block>{
+<if>if <condition>(<expr><name>node</name> == <name>NULL</name></expr>)</condition><then>
+<return>return <expr><call><name>alloc_range_list</name><argument_list>(<argument><expr>&amp;<name>range_list</name></expr></argument>, <argument><expr>&amp;<name>last_range</name></expr></argument>, <argument><expr><name>ndx</name></expr></argument>,
+<argument><expr><name>range_from_source</name></expr></argument>,
+<argument><expr><name>offset</name></expr></argument>, <argument><expr><name>limit</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>;</return></then></if>
+<if>if <condition>(<expr><name>offset</name> &lt; <name><name>node</name>-&gt;<name>offset</name></name></expr>)</condition><then> <block>{
+<if>if <condition>(<expr><name>limit</name> &lt;= <name><name>node</name>-&gt;<name>offset</name></name></expr>)</condition><then>
+<return>return <expr><call><name>alloc_range_list</name><argument_list>(<argument><expr>&amp;<name>range_list</name></expr></argument>, <argument><expr>&amp;<name>last_range</name></expr></argument>, <argument><expr><name>ndx</name></expr></argument>,
+<argument><expr><name>range_from_source</name></expr></argument>,
+<argument><expr><name>offset</name></expr></argument>, <argument><expr><name>limit</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>;</return></then>
+<else>else <block>{
+<expr_stmt><expr><call><name>alloc_range_list</name><argument_list>(<argument><expr>&amp;<name>range_list</name></expr></argument>, <argument><expr>&amp;<name>last_range</name></expr></argument>, <argument><expr><name>ndx</name></expr></argument>,
+<argument><expr><name>range_from_source</name></expr></argument>,
+<argument><expr><name>offset</name></expr></argument>, <argument><expr><name><name>node</name>-&gt;<name>offset</name></name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>offset</name> = <name><name>node</name>-&gt;<name>offset</name></name></expr>;</expr_stmt>
+}</block></else></if>
+}</block></then> <else>else <block>{
+<if>if <condition>(<expr><name>offset</name> &gt;= <name><name>node</name>-&gt;<name>limit</name></name></expr>)</condition><then>
+<expr_stmt><expr><name>node</name> = <name><name>node</name>-&gt;<name>next</name></name></expr>;</expr_stmt></then>
+<else>else <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>apr_size_t</name></type> <name>target_offset</name> <init>=
+<expr><name>offset</name> - <name><name>node</name>-&gt;<name>offset</name></name> + <name><name>node</name>-&gt;<name>target_offset</name></name></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>limit</name> &lt;= <name><name>node</name>-&gt;<name>limit</name></name></expr>)</condition><then>
+<return>return <expr><call><name>alloc_range_list</name><argument_list>(<argument><expr>&amp;<name>range_list</name></expr></argument>, <argument><expr>&amp;<name>last_range</name></expr></argument>, <argument><expr><name>ndx</name></expr></argument>,
+<argument><expr><name>range_from_target</name></expr></argument>,
+<argument><expr><name>offset</name></expr></argument>, <argument><expr><name>limit</name></expr></argument>, <argument><expr><name>target_offset</name></expr></argument>)</argument_list></call></expr>;</return></then>
+<else>else <block>{
+<expr_stmt><expr><call><name>alloc_range_list</name><argument_list>(<argument><expr>&amp;<name>range_list</name></expr></argument>, <argument><expr>&amp;<name>last_range</name></expr></argument>, <argument><expr><name>ndx</name></expr></argument>,
+<argument><expr><name>range_from_target</name></expr></argument>,
+<argument><expr><name>offset</name></expr></argument>, <argument><expr><name><name>node</name>-&gt;<name>limit</name></name></expr></argument>, <argument><expr><name>target_offset</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>offset</name> = <name><name>node</name>-&gt;<name>limit</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name>node</name> = <name><name>node</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+}</block></else></if>
+}</block></else></if>
+}</block></else></if>
+}</block></while>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr>!"A range's offset isn't smaller than its limit? Impossible!"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>range_list</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>copy_source_ops</name><parameter_list>(<param><decl><type><name>apr_size_t</name></type> <name>offset</name></decl></param>, <param><decl><type><name>apr_size_t</name></type> <name>limit</name></decl></param>,
+<param><decl><type><name>apr_size_t</name></type> <name>target_offset</name></decl></param>,
+<param><decl><type><name>svn_txdelta__ops_baton_t</name> *</type><name>build_baton</name></decl></param>,
+<param><decl><type><specifier>const</specifier> <name>svn_txdelta_window_t</name> *</type><name>window</name></decl></param>,
+<param><decl><type><specifier>const</specifier> <name>offset_index_t</name> *</type><name>ndx</name></decl></param>,
+<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>int</name></type> <name>first_op</name> <init>= <expr><call><name>search_offset_index</name><argument_list>(<argument><expr><name>ndx</name></expr></argument>, <argument><expr><name>offset</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>int</name></type> <name>last_op</name> <init>= <expr><call><name>search_offset_index</name><argument_list>(<argument><expr><name>ndx</name></expr></argument>, <argument><expr><name>limit</name> - 1</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>op_ndx</name></decl>;</decl_stmt>
+<for>for (<init><expr><name>op_ndx</name> = <name>first_op</name></expr>;</init> <condition><expr><name>op_ndx</name> &lt;= <name>last_op</name></expr>;</condition> <incr><expr>++<name>op_ndx</name></expr></incr>) <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>svn_txdelta_op_t</name> *<specifier>const</specifier></type> <name>op</name> <init>= <expr>&amp;<name><name>window</name>-&gt;<name>ops</name><index>[<expr><name>op_ndx</name></expr>]</index></name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>apr_size_t</name> *<specifier>const</specifier></type> <name>off</name> <init>= <expr>&amp;<name><name>ndx</name>-&gt;<name>offs</name><index>[<expr><name>op_ndx</name></expr>]</index></name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>apr_size_t</name></type> <name>fix_offset</name> <init>= <expr>(<name>offset</name> &gt; <name><name>off</name><index>[<expr>0</expr>]</index></name> ? <name>offset</name> - <name><name>off</name><index>[<expr>0</expr>]</index></name> : 0)</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>apr_size_t</name></type> <name>fix_limit</name> <init>= <expr>(<name><name>off</name><index>[<expr>1</expr>]</index></name> &gt; <name>limit</name> ? <name><name>off</name><index>[<expr>1</expr>]</index></name> - <name>limit</name> : 0)</expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>fix_offset</name> + <name>fix_limit</name> &lt; <name><name>op</name>-&gt;<name>length</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>op</name>-&gt;<name>action_code</name></name> != <name>svn_txdelta_target</name></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *<specifier>const</specifier></type> <name>new_data</name> <init>= <expr>(<name><name>op</name>-&gt;<name>action_code</name></name> == <name>svn_txdelta_new</name>
+? (<name><name>window</name>-&gt;<name>new_data</name>-&gt;<name>data</name></name>
++ <name><name>op</name>-&gt;<name>offset</name></name> + <name>fix_offset</name>)
+: <name>NULL</name>)</expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>svn_txdelta__insert_op</name><argument_list>(<argument><expr><name>build_baton</name></expr></argument>, <argument><expr><name><name>op</name>-&gt;<name>action_code</name></name></expr></argument>,
+<argument><expr><name><name>op</name>-&gt;<name>offset</name></name> + <name>fix_offset</name></expr></argument>,
+<argument><expr><name><name>op</name>-&gt;<name>length</name></name> - <name>fix_offset</name> - <name>fix_limit</name></expr></argument>,
+<argument><expr><name>new_data</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>op</name>-&gt;<name>offset</name></name> &lt; <name><name>off</name><index>[<expr>0</expr>]</index></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>op</name>-&gt;<name>offset</name></name> + <name><name>op</name>-&gt;<name>length</name></name> - <name>fix_limit</name> &lt;= <name><name>off</name><index>[<expr>0</expr>]</index></name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>copy_source_ops</name><argument_list>(<argument><expr><name><name>op</name>-&gt;<name>offset</name></name> + <name>fix_offset</name></expr></argument>,
+<argument><expr><name><name>op</name>-&gt;<name>offset</name></name> + <name><name>op</name>-&gt;<name>length</name></name> - <name>fix_limit</name></expr></argument>,
+<argument><expr><name>target_offset</name></expr></argument>,
+<argument><expr><name>build_baton</name></expr></argument>, <argument><expr><name>window</name></expr></argument>, <argument><expr><name>ndx</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>apr_size_t</name></type> <name>ptn_length</name> <init>= <expr><name><name>off</name><index>[<expr>0</expr>]</index></name> - <name><name>op</name>-&gt;<name>offset</name></name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>apr_size_t</name></type> <name>ptn_overlap</name> <init>= <expr><name>fix_offset</name> % <name>ptn_length</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_size_t</name></type> <name>fix_off</name> <init>= <expr><name>fix_offset</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_size_t</name></type> <name>tgt_off</name> <init>= <expr><name>target_offset</name></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>ptn_length</name> &gt; <name>ptn_overlap</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>ptn_overlap</name> &gt;= 0</expr>)</condition><then> <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>apr_size_t</name></type> <name>length</name> <init>=
+<expr><call><name>MIN</name><argument_list>(<argument><expr><name><name>op</name>-&gt;<name>length</name></name> - <name>fix_off</name> - <name>fix_limit</name></expr></argument>,
+<argument><expr><name>ptn_length</name> - <name>ptn_overlap</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>copy_source_ops</name><argument_list>(<argument><expr><name><name>op</name>-&gt;<name>offset</name></name> + <name>ptn_overlap</name></expr></argument>,
+<argument><expr><name><name>op</name>-&gt;<name>offset</name></name> + <name>ptn_overlap</name> + <name>length</name></expr></argument>,
+<argument><expr><name>tgt_off</name></expr></argument>,
+<argument><expr><name>build_baton</name></expr></argument>, <argument><expr><name>window</name></expr></argument>, <argument><expr><name>ndx</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>fix_off</name> += <name>length</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>tgt_off</name> += <name>length</name></expr>;</expr_stmt>
+}</block></then></if>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>fix_off</name> + <name>fix_limit</name> &lt;= <name><name>op</name>-&gt;<name>length</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>ptn_overlap</name> &gt; 0
+&amp;&amp; <name>fix_off</name> + <name>fix_limit</name> &lt; <name><name>op</name>-&gt;<name>length</name></name></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>apr_size_t</name></type> <name>length</name> <init>=
+<expr><call><name>MIN</name><argument_list>(<argument><expr><name><name>op</name>-&gt;<name>length</name></name> - <name>fix_off</name> - <name>fix_limit</name></expr></argument>, <argument><expr><name>ptn_overlap</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>copy_source_ops</name><argument_list>(<argument><expr><name><name>op</name>-&gt;<name>offset</name></name></expr></argument>,
+<argument><expr><name><name>op</name>-&gt;<name>offset</name></name> + <name>length</name></expr></argument>,
+<argument><expr><name>tgt_off</name></expr></argument>,
+<argument><expr><name>build_baton</name></expr></argument>, <argument><expr><name>window</name></expr></argument>, <argument><expr><name>ndx</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>fix_off</name> += <name>length</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>tgt_off</name> += <name>length</name></expr>;</expr_stmt>
+}</block></then></if>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>fix_off</name> + <name>fix_limit</name> &lt;= <name><name>op</name>-&gt;<name>length</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>fix_off</name> + <name>fix_limit</name> &lt; <name><name>op</name>-&gt;<name>length</name></name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>svn_txdelta__insert_op</name><argument_list>(<argument><expr><name>build_baton</name></expr></argument>, <argument><expr><name>svn_txdelta_target</name></expr></argument>,
+<argument><expr><name>tgt_off</name> - <name>ptn_length</name></expr></argument>,
+<argument><expr><name><name>op</name>-&gt;<name>length</name></name> - <name>fix_off</name> - <name>fix_limit</name></expr></argument>,
+<argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+}</block></else></if>
+}</block></else></if>
+<expr_stmt><expr><name>target_offset</name> += <name><name>op</name>-&gt;<name>length</name></name> - <name>fix_offset</name> - <name>fix_limit</name></expr>;</expr_stmt>
+}</block></for>
+}</block></function>
+<function><type><name>svn_txdelta_window_t</name> *</type>
+<name>svn_txdelta_compose_windows</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>svn_txdelta_window_t</name> *</type><name>window_A</name></decl></param>,
+<param><decl><type><specifier>const</specifier> <name>svn_txdelta_window_t</name> *</type><name>window_B</name></decl></param>,
+<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>svn_txdelta__ops_baton_t</name></type> <name>build_baton</name> <init>= <expr><block>{ <expr>0</expr> }</block></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>svn_txdelta_window_t</name> *</type><name>composite</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>subpool</name> <init>= <expr><call><name>svn_pool_create</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>offset_index_t</name> *</type><name>offset_index</name> <init>= <expr><call><name>create_offset_index</name><argument_list>(<argument><expr><name>window_A</name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>range_index_t</name> *</type><name>range_index</name> <init>= <expr><call><name>create_range_index</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_size_t</name></type> <name>target_offset</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+<expr_stmt><expr><name><name>build_baton</name>.<name>new_data</name></name> = <call><name>svn_stringbuf_create</name><argument_list>(<argument><expr>""</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name><name>window_B</name>-&gt;<name>num_ops</name></name></expr>;</condition> <incr><expr>++<name>i</name></expr></incr>) <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>svn_txdelta_op_t</name> *<specifier>const</specifier></type> <name>op</name> <init>= <expr>&amp;<name><name>window_B</name>-&gt;<name>ops</name><index>[<expr><name>i</name></expr>]</index></name></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name><name>op</name>-&gt;<name>action_code</name></name> != <name>svn_txdelta_source</name></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *<specifier>const</specifier></type> <name>new_data</name> <init>=
+<expr>(<name><name>op</name>-&gt;<name>action_code</name></name> == <name>svn_txdelta_new</name>
+? <name><name>window_B</name>-&gt;<name>new_data</name>-&gt;<name>data</name></name> + <name><name>op</name>-&gt;<name>offset</name></name>
+: <name>NULL</name>)</expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>svn_txdelta__insert_op</name><argument_list>(<argument><expr>&amp;<name>build_baton</name></expr></argument>, <argument><expr><name><name>op</name>-&gt;<name>action_code</name></name></expr></argument>,
+<argument><expr><name><name>op</name>-&gt;<name>offset</name></name></expr></argument>, <argument><expr><name><name>op</name>-&gt;<name>length</name></name></expr></argument>,
+<argument><expr><name>new_data</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>apr_size_t</name></type> <name>offset</name> <init>= <expr><name><name>op</name>-&gt;<name>offset</name></name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>apr_size_t</name></type> <name>limit</name> <init>= <expr><name><name>op</name>-&gt;<name>offset</name></name> + <name><name>op</name>-&gt;<name>length</name></name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>range_list_node_t</name> *</type><name>range_list</name></decl>, *<decl><type ref="prev"/><name>range</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_size_t</name></type> <name>tgt_off</name> <init>= <expr><name>target_offset</name></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>splay_range_index</name><argument_list>(<argument><expr><name>offset</name></expr></argument>, <argument><expr><name>range_index</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>range_list</name> = <call><name>build_range_list</name><argument_list>(<argument><expr><name>offset</name></expr></argument>, <argument><expr><name>limit</name></expr></argument>, <argument><expr><name>range_index</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<for>for (<init><expr><name>range</name> = <name>range_list</name></expr>;</init> <condition><expr><name>range</name></expr>;</condition> <incr><expr><name>range</name> = <name><name>range</name>-&gt;<name>next</name></name></expr></incr>) <block>{
+<if>if <condition>(<expr><name><name>range</name>-&gt;<name>kind</name></name> == <name>range_from_target</name></expr>)</condition><then>
+<expr_stmt><expr><call><name>svn_txdelta__insert_op</name><argument_list>(<argument><expr>&amp;<name>build_baton</name></expr></argument>, <argument><expr><name>svn_txdelta_target</name></expr></argument>,
+<argument><expr><name><name>range</name>-&gt;<name>target_offset</name></name></expr></argument>,
+<argument><expr><name><name>range</name>-&gt;<name>limit</name></name> - <name><name>range</name>-&gt;<name>offset</name></name></expr></argument>,
+<argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+<else>else
+<expr_stmt><expr><call><name>copy_source_ops</name><argument_list>(<argument><expr><name><name>range</name>-&gt;<name>offset</name></name></expr></argument>, <argument><expr><name><name>range</name>-&gt;<name>limit</name></name></expr></argument>, <argument><expr><name>tgt_off</name></expr></argument>,
+<argument><expr>&amp;<name>build_baton</name></expr></argument>, <argument><expr><name>window_A</name></expr></argument>, <argument><expr><name>offset_index</name></expr></argument>,
+<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+<expr_stmt><expr><name>tgt_off</name> += <name><name>range</name>-&gt;<name>limit</name></name> - <name><name>range</name>-&gt;<name>offset</name></name></expr>;</expr_stmt>
+}</block></for>
+<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>tgt_off</name> == <name>target_offset</name> + <name><name>op</name>-&gt;<name>length</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>free_range_list</name><argument_list>(<argument><expr><name>range_list</name></expr></argument>, <argument><expr><name>range_index</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>insert_range</name><argument_list>(<argument><expr><name>offset</name></expr></argument>, <argument><expr><name>limit</name></expr></argument>, <argument><expr><name>target_offset</name></expr></argument>, <argument><expr><name>range_index</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+<expr_stmt><expr><name>target_offset</name> += <name><name>op</name>-&gt;<name>length</name></name></expr>;</expr_stmt>
+}</block></for>
+<expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>composite</name> = <call><name>svn_txdelta__make_window</name><argument_list>(<argument><expr>&amp;<name>build_baton</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>composite</name>-&gt;<name>sview_offset</name></name> = <name><name>window_A</name>-&gt;<name>sview_offset</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>composite</name>-&gt;<name>sview_len</name></name> = <name><name>window_A</name>-&gt;<name>sview_len</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>composite</name>-&gt;<name>tview_len</name></name> = <name><name>window_B</name>-&gt;<name>tview_len</name></name></expr>;</expr_stmt>
+<return>return <expr><name>composite</name></expr>;</return>
+}</block></function>
+<function_decl><type><name>svn_txdelta_window_t</name> *</type>
+<name>svn_txdelta__compose_windows</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>svn_txdelta_window_t</name> *</type><name>window_A</name></decl></param>,
+<param><decl><type><specifier>const</specifier> <name>svn_txdelta_window_t</name> *</type><name>window_B</name></decl></param>,
+<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>;</function_decl>
+<function><type><name>svn_txdelta_window_t</name> *</type>
+<name>svn_txdelta__compose_windows</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>svn_txdelta_window_t</name> *</type><name>window_A</name></decl></param>,
+<param><decl><type><specifier>const</specifier> <name>svn_txdelta_window_t</name> *</type><name>window_B</name></decl></param>,
+<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list> <block>{
+<return>return <expr><call><name>svn_txdelta_compose_windows</name><argument_list>(<argument><expr><name>window_A</name></expr></argument>, <argument><expr><name>window_B</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+</unit>
