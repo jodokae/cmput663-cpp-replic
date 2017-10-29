@@ -46,6 +46,7 @@ https://github.com/clhunsen/cppstats
 1. Download the proper *Apachi project (2.2.x)* by:
 ```
 svn checkout http://svn.apache.org/repos/asf/httpd/httpd/branches/2.2.x httpd-2.2.x
+https://github.com/apache/httpd/archive/2.2.11.tar.gz
 ```
 2. Create *./project/httpd/source* directory inside the *cppstats* folder and copy the cloned *httpd-2.2.x* inside *source*. Also, add *./projects/httpd-2.2.x* to *cppstats_input.txt*.
 3. run *cppstats* by:
