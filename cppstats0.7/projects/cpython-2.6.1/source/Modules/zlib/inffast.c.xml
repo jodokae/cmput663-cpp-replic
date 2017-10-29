@@ -1,0 +1,320 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/cpython-2.6.1/source/Modules/zlib/inffast.c"><comment type="block">/* inffast.c -- fast decoding
+ * Copyright (C) 1995-2004 Mark Adler
+ * For conditions of distribution and use, see copyright notice in zlib.h
+ */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"zutil.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"inftrees.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"inflate.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"inffast.h"</cpp:file></cpp:include>
+
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>ASMINF</name></cpp:ifndef>
+
+<comment type="block">/* Allow machine dependent optimization for post-increment or pre-increment.
+   Based on testing to date,
+   Pre-increment preferred for:
+   - PowerPC G3 (Adler)
+   - MIPS R5000 (Randers-Pehrson)
+   Post-increment preferred for:
+   - none
+   No measurable difference:
+   - Pentium III (Anderson)
+   - M68060 (Nikl)
+ */</comment>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>POSTINC</name></cpp:ifdef>
+<cpp:define>#  <cpp:directive>define</cpp:directive> <cpp:macro><name>OFF</name></cpp:macro> <cpp:value>0</cpp:value></cpp:define>
+<cpp:define>#  <cpp:directive>define</cpp:directive> <cpp:macro><name>PUP</name><parameter_list>(<param><type><name>a</name></type></param>)</parameter_list></cpp:macro> <cpp:value>*(a)++</cpp:value></cpp:define>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+<cpp:define>#  <cpp:directive>define</cpp:directive> <cpp:macro><name>OFF</name></cpp:macro> <cpp:value>1</cpp:value></cpp:define>
+<cpp:define>#  <cpp:directive>define</cpp:directive> <cpp:macro><name>PUP</name><parameter_list>(<param><type><name>a</name></type></param>)</parameter_list></cpp:macro> <cpp:value>*++(a)</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<comment type="block">/*
+   Decode literal, length, and distance codes and write out the resulting
+   literal and match bytes until either not enough input or output is
+   available, an end-of-block is encountered, or a data error is encountered.
+   When large enough input and output buffers are supplied to inflate(), for
+   example, a 16K input buffer and a 64K output buffer, more than 95% of the
+   inflate execution time is spent in this routine.
+
+   Entry assumptions:
+
+        state-&gt;mode == LEN
+        strm-&gt;avail_in &gt;= 6
+        strm-&gt;avail_out &gt;= 258
+        start &gt;= strm-&gt;avail_out
+        state-&gt;bits &lt; 8
+
+   On return, state-&gt;mode is one of:
+
+        LEN -- ran out of enough output space or enough available input
+        TYPE -- reached end of block code, inflate() to interpret next block
+        BAD -- error in block data
+
+   Notes:
+
+    - The maximum input bits used by a length/distance pair is 15 bits for the
+      length code, 5 bits for the length extra, 15 bits for the distance code,
+      and 13 bits for the distance extra.  This totals 48 bits, or six bytes.
+      Therefore if strm-&gt;avail_in &gt;= 6, then there is enough input to avoid
+      checking for available input while decoding.
+
+    - The maximum bytes that a single length/distance pair can output is 258
+      bytes, which is the maximum length that can be coded.  inflate_fast()
+      requires strm-&gt;avail_out &gt;= 258 for each loop to avoid checking for
+      output space.
+ */</comment>
+<function><type><name>void</name></type> <name>inflate_fast</name><parameter_list>(<param><decl><type><name>strm</name></type></decl></param>, <param><decl><type><name>start</name></type></decl></param>)</parameter_list>
+<decl_stmt><decl><type><name>z_streamp</name></type> <name>strm</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>unsigned</name></type> <name>start</name></decl>;</decl_stmt>         <comment type="block">/* inflate()'s starting value for strm-&gt;avail_out */</comment>
+<block>{
+    <decl_stmt><decl><type>struct <name>inflate_state</name> <name>FAR</name> *</type><name>state</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>unsigned</name> <name>char</name> <name>FAR</name> *</type><name>in</name></decl>;</decl_stmt>      <comment type="block">/* local strm-&gt;next_in */</comment>
+    <decl_stmt><decl><type><name>unsigned</name> <name>char</name> <name>FAR</name> *</type><name>last</name></decl>;</decl_stmt>    <comment type="block">/* while in &lt; last, enough input available */</comment>
+    <decl_stmt><decl><type><name>unsigned</name> <name>char</name> <name>FAR</name> *</type><name>out</name></decl>;</decl_stmt>     <comment type="block">/* local strm-&gt;next_out */</comment>
+    <decl_stmt><decl><type><name>unsigned</name> <name>char</name> <name>FAR</name> *</type><name>beg</name></decl>;</decl_stmt>     <comment type="block">/* inflate()'s initial strm-&gt;next_out */</comment>
+    <decl_stmt><decl><type><name>unsigned</name> <name>char</name> <name>FAR</name> *</type><name>end</name></decl>;</decl_stmt>     <comment type="block">/* while out &lt; end, enough space available */</comment>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>INFLATE_STRICT</name></cpp:ifdef>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>dmax</name></decl>;</decl_stmt>              <comment type="block">/* maximum distance from zlib header */</comment>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>wsize</name></decl>;</decl_stmt>             <comment type="block">/* window size or zero if not using window */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>whave</name></decl>;</decl_stmt>             <comment type="block">/* valid bytes in the window */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>write</name></decl>;</decl_stmt>             <comment type="block">/* window write index */</comment>
+    <decl_stmt><decl><type><name>unsigned</name> <name>char</name> <name>FAR</name> *</type><name>window</name></decl>;</decl_stmt>  <comment type="block">/* allocated sliding window, if wsize != 0 */</comment>
+    <decl_stmt><decl><type><name>unsigned</name> <name>long</name></type> <name>hold</name></decl>;</decl_stmt>         <comment type="block">/* local strm-&gt;hold */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>bits</name></decl>;</decl_stmt>              <comment type="block">/* local strm-&gt;bits */</comment>
+    <decl_stmt><decl><type><name>code</name> <specifier>const</specifier> <name>FAR</name> *</type><name>lcode</name></decl>;</decl_stmt>      <comment type="block">/* local strm-&gt;lencode */</comment>
+    <decl_stmt><decl><type><name>code</name> <specifier>const</specifier> <name>FAR</name> *</type><name>dcode</name></decl>;</decl_stmt>      <comment type="block">/* local strm-&gt;distcode */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>lmask</name></decl>;</decl_stmt>             <comment type="block">/* mask for first level of length codes */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>dmask</name></decl>;</decl_stmt>             <comment type="block">/* mask for first level of distance codes */</comment>
+    <decl_stmt><decl><type><name>code</name></type> <name>this</name></decl>;</decl_stmt>                  <comment type="block">/* retrieved table entry */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>op</name></decl>;</decl_stmt>                <comment type="block">/* code bits, operation, extra bits, or */</comment>
+                                <comment type="block">/*  window position, window bytes to copy */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>len</name></decl>;</decl_stmt>               <comment type="block">/* match length, unused bytes */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>dist</name></decl>;</decl_stmt>              <comment type="block">/* match distance */</comment>
+    <decl_stmt><decl><type><name>unsigned</name> <name>char</name> <name>FAR</name> *</type><name>from</name></decl>;</decl_stmt>    <comment type="block">/* where to copy match from */</comment>
+
+    <comment type="block">/* copy state to local variables */</comment>
+    <expr_stmt><expr><name>state</name> = (struct <name>inflate_state</name> <name>FAR</name> *)<name><name>strm</name>-&gt;<name>state</name></name></expr>;</expr_stmt>
+    <expr_stmt><expr><name>in</name> = <name><name>strm</name>-&gt;<name>next_in</name></name> - <name>OFF</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name>last</name> = <name>in</name> + (<name><name>strm</name>-&gt;<name>avail_in</name></name> - 5)</expr>;</expr_stmt>
+    <expr_stmt><expr><name>out</name> = <name><name>strm</name>-&gt;<name>next_out</name></name> - <name>OFF</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name>beg</name> = <name>out</name> - (<name>start</name> - <name><name>strm</name>-&gt;<name>avail_out</name></name>)</expr>;</expr_stmt>
+    <expr_stmt><expr><name>end</name> = <name>out</name> + (<name><name>strm</name>-&gt;<name>avail_out</name></name> - 257)</expr>;</expr_stmt>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>INFLATE_STRICT</name></cpp:ifdef>
+    <expr_stmt><expr><name>dmax</name> = <name><name>state</name>-&gt;<name>dmax</name></name></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+    <expr_stmt><expr><name>wsize</name> = <name><name>state</name>-&gt;<name>wsize</name></name></expr>;</expr_stmt>
+    <expr_stmt><expr><name>whave</name> = <name><name>state</name>-&gt;<name>whave</name></name></expr>;</expr_stmt>
+    <expr_stmt><expr><name>write</name> = <name><name>state</name>-&gt;<name>write</name></name></expr>;</expr_stmt>
+    <expr_stmt><expr><name>window</name> = <name><name>state</name>-&gt;<name>window</name></name></expr>;</expr_stmt>
+    <expr_stmt><expr><name>hold</name> = <name><name>state</name>-&gt;<name>hold</name></name></expr>;</expr_stmt>
+    <expr_stmt><expr><name>bits</name> = <name><name>state</name>-&gt;<name>bits</name></name></expr>;</expr_stmt>
+    <expr_stmt><expr><name>lcode</name> = <name><name>state</name>-&gt;<name>lencode</name></name></expr>;</expr_stmt>
+    <expr_stmt><expr><name>dcode</name> = <name><name>state</name>-&gt;<name>distcode</name></name></expr>;</expr_stmt>
+    <expr_stmt><expr><name>lmask</name> = (1U &lt;&lt; <name><name>state</name>-&gt;<name>lenbits</name></name>) - 1</expr>;</expr_stmt>
+    <expr_stmt><expr><name>dmask</name> = (1U &lt;&lt; <name><name>state</name>-&gt;<name>distbits</name></name>) - 1</expr>;</expr_stmt>
+
+    <comment type="block">/* decode literals and length/distances until end-of-block or not enough
+       input data or output space */</comment>
+    <do>do <block>{
+        <if>if <condition>(<expr><name>bits</name> &lt; 15</expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>hold</name> += <call>(<name>unsigned</name> <name>long</name>)<argument_list>(<argument><expr><call><name>PUP</name><argument_list>(<argument><expr><name>in</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call> &lt;&lt; <name>bits</name></expr>;</expr_stmt>
+            <expr_stmt><expr><name>bits</name> += 8</expr>;</expr_stmt>
+            <expr_stmt><expr><name>hold</name> += <call>(<name>unsigned</name> <name>long</name>)<argument_list>(<argument><expr><call><name>PUP</name><argument_list>(<argument><expr><name>in</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call> &lt;&lt; <name>bits</name></expr>;</expr_stmt>
+            <expr_stmt><expr><name>bits</name> += 8</expr>;</expr_stmt>
+        }</block></then></if>
+        <expr_stmt><expr><name>this</name> = <name><name>lcode</name><index>[<expr><name>hold</name> &amp; <name>lmask</name></expr>]</index></name></expr>;</expr_stmt>
+      <label><name>dolen</name>:</label>
+        <expr_stmt><expr><name>op</name> = <call>(<name>unsigned</name>)<argument_list>(<argument><expr><name><name>this</name>.<name>bits</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><name>hold</name> &gt;&gt;= <name>op</name></expr>;</expr_stmt>
+        <expr_stmt><expr><name>bits</name> -= <name>op</name></expr>;</expr_stmt>
+        <expr_stmt><expr><name>op</name> = <call>(<name>unsigned</name>)<argument_list>(<argument><expr><name><name>this</name>.<name>op</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>op</name> == 0</expr>)</condition><then> <block>{                          <comment type="block">/* literal */</comment>
+            <expr_stmt><expr><call><name>Tracevv</name><argument_list>(<argument><expr>(<name>stderr</name>, <name><name>this</name>.<name>val</name></name> &gt;= 0x20 &amp;&amp; <name><name>this</name>.<name>val</name></name> &lt; 0x7f ?
+                    "inflate:         literal '%c'\n" :
+                    "inflate:         literal 0x%02x\n", <name><name>this</name>.<name>val</name></name>)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>PUP</name><argument_list>(<argument><expr><name>out</name></expr></argument>)</argument_list></call> = <call>(<name>unsigned</name> <name>char</name>)<argument_list>(<argument><expr><name><name>this</name>.<name>val</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+        <else>else <if>if <condition>(<expr><name>op</name> &amp; 16</expr>)</condition><then> <block>{                     <comment type="block">/* length base */</comment>
+            <expr_stmt><expr><name>len</name> = <call>(<name>unsigned</name>)<argument_list>(<argument><expr><name><name>this</name>.<name>val</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name>op</name> &amp;= 15</expr>;</expr_stmt>                           <comment type="block">/* number of extra bits */</comment>
+            <if>if <condition>(<expr><name>op</name></expr>)</condition><then> <block>{
+                <if>if <condition>(<expr><name>bits</name> &lt; <name>op</name></expr>)</condition><then> <block>{
+                    <expr_stmt><expr><name>hold</name> += <call>(<name>unsigned</name> <name>long</name>)<argument_list>(<argument><expr><call><name>PUP</name><argument_list>(<argument><expr><name>in</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call> &lt;&lt; <name>bits</name></expr>;</expr_stmt>
+                    <expr_stmt><expr><name>bits</name> += 8</expr>;</expr_stmt>
+                }</block></then></if>
+                <expr_stmt><expr><name>len</name> += (<name>unsigned</name>)<name>hold</name> &amp; ((1U &lt;&lt; <name>op</name>) - 1)</expr>;</expr_stmt>
+                <expr_stmt><expr><name>hold</name> &gt;&gt;= <name>op</name></expr>;</expr_stmt>
+                <expr_stmt><expr><name>bits</name> -= <name>op</name></expr>;</expr_stmt>
+            }</block></then></if>
+            <expr_stmt><expr><call><name>Tracevv</name><argument_list>(<argument><expr>(<name>stderr</name>, "inflate:         length %u\n", <name>len</name>)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <if>if <condition>(<expr><name>bits</name> &lt; 15</expr>)</condition><then> <block>{
+                <expr_stmt><expr><name>hold</name> += <call>(<name>unsigned</name> <name>long</name>)<argument_list>(<argument><expr><call><name>PUP</name><argument_list>(<argument><expr><name>in</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call> &lt;&lt; <name>bits</name></expr>;</expr_stmt>
+                <expr_stmt><expr><name>bits</name> += 8</expr>;</expr_stmt>
+                <expr_stmt><expr><name>hold</name> += <call>(<name>unsigned</name> <name>long</name>)<argument_list>(<argument><expr><call><name>PUP</name><argument_list>(<argument><expr><name>in</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call> &lt;&lt; <name>bits</name></expr>;</expr_stmt>
+                <expr_stmt><expr><name>bits</name> += 8</expr>;</expr_stmt>
+            }</block></then></if>
+            <expr_stmt><expr><name>this</name> = <name><name>dcode</name><index>[<expr><name>hold</name> &amp; <name>dmask</name></expr>]</index></name></expr>;</expr_stmt>
+          <label><name>dodist</name>:</label>
+            <expr_stmt><expr><name>op</name> = <call>(<name>unsigned</name>)<argument_list>(<argument><expr><name><name>this</name>.<name>bits</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name>hold</name> &gt;&gt;= <name>op</name></expr>;</expr_stmt>
+            <expr_stmt><expr><name>bits</name> -= <name>op</name></expr>;</expr_stmt>
+            <expr_stmt><expr><name>op</name> = <call>(<name>unsigned</name>)<argument_list>(<argument><expr><name><name>this</name>.<name>op</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <if>if <condition>(<expr><name>op</name> &amp; 16</expr>)</condition><then> <block>{                      <comment type="block">/* distance base */</comment>
+                <expr_stmt><expr><name>dist</name> = <call>(<name>unsigned</name>)<argument_list>(<argument><expr><name><name>this</name>.<name>val</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><name>op</name> &amp;= 15</expr>;</expr_stmt>                       <comment type="block">/* number of extra bits */</comment>
+                <if>if <condition>(<expr><name>bits</name> &lt; <name>op</name></expr>)</condition><then> <block>{
+                    <expr_stmt><expr><name>hold</name> += <call>(<name>unsigned</name> <name>long</name>)<argument_list>(<argument><expr><call><name>PUP</name><argument_list>(<argument><expr><name>in</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call> &lt;&lt; <name>bits</name></expr>;</expr_stmt>
+                    <expr_stmt><expr><name>bits</name> += 8</expr>;</expr_stmt>
+                    <if>if <condition>(<expr><name>bits</name> &lt; <name>op</name></expr>)</condition><then> <block>{
+                        <expr_stmt><expr><name>hold</name> += <call>(<name>unsigned</name> <name>long</name>)<argument_list>(<argument><expr><call><name>PUP</name><argument_list>(<argument><expr><name>in</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call> &lt;&lt; <name>bits</name></expr>;</expr_stmt>
+                        <expr_stmt><expr><name>bits</name> += 8</expr>;</expr_stmt>
+                    }</block></then></if>
+                }</block></then></if>
+                <expr_stmt><expr><name>dist</name> += (<name>unsigned</name>)<name>hold</name> &amp; ((1U &lt;&lt; <name>op</name>) - 1)</expr>;</expr_stmt>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>INFLATE_STRICT</name></cpp:ifdef>
+                <if>if <condition>(<expr><name>dist</name> &gt; <name>dmax</name></expr>)</condition><then> <block>{
+                    <expr_stmt><expr><name><name>strm</name>-&gt;<name>msg</name></name> = (<name>char</name> *)"invalid distance too far back"</expr>;</expr_stmt>
+                    <expr_stmt><expr><name><name>state</name>-&gt;<name>mode</name></name> = <name>BAD</name></expr>;</expr_stmt>
+                    <break>break;</break>
+                }</block></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+                <expr_stmt><expr><name>hold</name> &gt;&gt;= <name>op</name></expr>;</expr_stmt>
+                <expr_stmt><expr><name>bits</name> -= <name>op</name></expr>;</expr_stmt>
+                <expr_stmt><expr><call><name>Tracevv</name><argument_list>(<argument><expr>(<name>stderr</name>, "inflate:         distance %u\n", <name>dist</name>)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><name>op</name> = <call>(<name>unsigned</name>)<argument_list>(<argument><expr><name>out</name> - <name>beg</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>     <comment type="block">/* max distance in output */</comment>
+                <if>if <condition>(<expr><name>dist</name> &gt; <name>op</name></expr>)</condition><then> <block>{                <comment type="block">/* see if copy from window */</comment>
+                    <expr_stmt><expr><name>op</name> = <name>dist</name> - <name>op</name></expr>;</expr_stmt>             <comment type="block">/* distance back in window */</comment>
+                    <if>if <condition>(<expr><name>op</name> &gt; <name>whave</name></expr>)</condition><then> <block>{
+                        <expr_stmt><expr><name><name>strm</name>-&gt;<name>msg</name></name> = (<name>char</name> *)"invalid distance too far back"</expr>;</expr_stmt>
+                        <expr_stmt><expr><name><name>state</name>-&gt;<name>mode</name></name> = <name>BAD</name></expr>;</expr_stmt>
+                        <break>break;</break>
+                    }</block></then></if>
+                    <expr_stmt><expr><name>from</name> = <name>window</name> - <name>OFF</name></expr>;</expr_stmt>
+                    <if>if <condition>(<expr><name>write</name> == 0</expr>)</condition><then> <block>{           <comment type="block">/* very common case */</comment>
+                        <expr_stmt><expr><name>from</name> += <name>wsize</name> - <name>op</name></expr>;</expr_stmt>
+                        <if>if <condition>(<expr><name>op</name> &lt; <name>len</name></expr>)</condition><then> <block>{         <comment type="block">/* some from window */</comment>
+                            <expr_stmt><expr><name>len</name> -= <name>op</name></expr>;</expr_stmt>
+                            <do>do <block>{
+                                <expr_stmt><expr><call><name>PUP</name><argument_list>(<argument><expr><name>out</name></expr></argument>)</argument_list></call> = <call><name>PUP</name><argument_list>(<argument><expr><name>from</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                            }</block> while <condition>(<expr>--<name>op</name></expr>)</condition>;</do>
+                            <expr_stmt><expr><name>from</name> = <name>out</name> - <name>dist</name></expr>;</expr_stmt>  <comment type="block">/* rest from output */</comment>
+                        }</block></then></if>
+                    }</block></then>
+                    <else>else <if>if <condition>(<expr><name>write</name> &lt; <name>op</name></expr>)</condition><then> <block>{      <comment type="block">/* wrap around window */</comment>
+                        <expr_stmt><expr><name>from</name> += <name>wsize</name> + <name>write</name> - <name>op</name></expr>;</expr_stmt>
+                        <expr_stmt><expr><name>op</name> -= <name>write</name></expr>;</expr_stmt>
+                        <if>if <condition>(<expr><name>op</name> &lt; <name>len</name></expr>)</condition><then> <block>{         <comment type="block">/* some from end of window */</comment>
+                            <expr_stmt><expr><name>len</name> -= <name>op</name></expr>;</expr_stmt>
+                            <do>do <block>{
+                                <expr_stmt><expr><call><name>PUP</name><argument_list>(<argument><expr><name>out</name></expr></argument>)</argument_list></call> = <call><name>PUP</name><argument_list>(<argument><expr><name>from</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                            }</block> while <condition>(<expr>--<name>op</name></expr>)</condition>;</do>
+                            <expr_stmt><expr><name>from</name> = <name>window</name> - <name>OFF</name></expr>;</expr_stmt>
+                            <if>if <condition>(<expr><name>write</name> &lt; <name>len</name></expr>)</condition><then> <block>{  <comment type="block">/* some from start of window */</comment>
+                                <expr_stmt><expr><name>op</name> = <name>write</name></expr>;</expr_stmt>
+                                <expr_stmt><expr><name>len</name> -= <name>op</name></expr>;</expr_stmt>
+                                <do>do <block>{
+                                    <expr_stmt><expr><call><name>PUP</name><argument_list>(<argument><expr><name>out</name></expr></argument>)</argument_list></call> = <call><name>PUP</name><argument_list>(<argument><expr><name>from</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                                }</block> while <condition>(<expr>--<name>op</name></expr>)</condition>;</do>
+                                <expr_stmt><expr><name>from</name> = <name>out</name> - <name>dist</name></expr>;</expr_stmt>      <comment type="block">/* rest from output */</comment>
+                            }</block></then></if>
+                        }</block></then></if>
+                    }</block></then>
+                    <else>else <block>{                      <comment type="block">/* contiguous in window */</comment>
+                        <expr_stmt><expr><name>from</name> += <name>write</name> - <name>op</name></expr>;</expr_stmt>
+                        <if>if <condition>(<expr><name>op</name> &lt; <name>len</name></expr>)</condition><then> <block>{         <comment type="block">/* some from window */</comment>
+                            <expr_stmt><expr><name>len</name> -= <name>op</name></expr>;</expr_stmt>
+                            <do>do <block>{
+                                <expr_stmt><expr><call><name>PUP</name><argument_list>(<argument><expr><name>out</name></expr></argument>)</argument_list></call> = <call><name>PUP</name><argument_list>(<argument><expr><name>from</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                            }</block> while <condition>(<expr>--<name>op</name></expr>)</condition>;</do>
+                            <expr_stmt><expr><name>from</name> = <name>out</name> - <name>dist</name></expr>;</expr_stmt>  <comment type="block">/* rest from output */</comment>
+                        }</block></then></if>
+                    }</block></else></if></else></if>
+                    <while>while <condition>(<expr><name>len</name> &gt; 2</expr>)</condition> <block>{
+                        <expr_stmt><expr><call><name>PUP</name><argument_list>(<argument><expr><name>out</name></expr></argument>)</argument_list></call> = <call><name>PUP</name><argument_list>(<argument><expr><name>from</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                        <expr_stmt><expr><call><name>PUP</name><argument_list>(<argument><expr><name>out</name></expr></argument>)</argument_list></call> = <call><name>PUP</name><argument_list>(<argument><expr><name>from</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                        <expr_stmt><expr><call><name>PUP</name><argument_list>(<argument><expr><name>out</name></expr></argument>)</argument_list></call> = <call><name>PUP</name><argument_list>(<argument><expr><name>from</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                        <expr_stmt><expr><name>len</name> -= 3</expr>;</expr_stmt>
+                    }</block></while>
+                    <if>if <condition>(<expr><name>len</name></expr>)</condition><then> <block>{
+                        <expr_stmt><expr><call><name>PUP</name><argument_list>(<argument><expr><name>out</name></expr></argument>)</argument_list></call> = <call><name>PUP</name><argument_list>(<argument><expr><name>from</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                        <if>if <condition>(<expr><name>len</name> &gt; 1</expr>)</condition><then>
+                            <expr_stmt><expr><call><name>PUP</name><argument_list>(<argument><expr><name>out</name></expr></argument>)</argument_list></call> = <call><name>PUP</name><argument_list>(<argument><expr><name>from</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+                    }</block></then></if>
+                }</block></then>
+                <else>else <block>{
+                    <expr_stmt><expr><name>from</name> = <name>out</name> - <name>dist</name></expr>;</expr_stmt>          <comment type="block">/* copy direct from output */</comment>
+                    <do>do <block>{                        <comment type="block">/* minimum length is three */</comment>
+                        <expr_stmt><expr><call><name>PUP</name><argument_list>(<argument><expr><name>out</name></expr></argument>)</argument_list></call> = <call><name>PUP</name><argument_list>(<argument><expr><name>from</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                        <expr_stmt><expr><call><name>PUP</name><argument_list>(<argument><expr><name>out</name></expr></argument>)</argument_list></call> = <call><name>PUP</name><argument_list>(<argument><expr><name>from</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                        <expr_stmt><expr><call><name>PUP</name><argument_list>(<argument><expr><name>out</name></expr></argument>)</argument_list></call> = <call><name>PUP</name><argument_list>(<argument><expr><name>from</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                        <expr_stmt><expr><name>len</name> -= 3</expr>;</expr_stmt>
+                    }</block> while <condition>(<expr><name>len</name> &gt; 2</expr>)</condition>;</do>
+                    <if>if <condition>(<expr><name>len</name></expr>)</condition><then> <block>{
+                        <expr_stmt><expr><call><name>PUP</name><argument_list>(<argument><expr><name>out</name></expr></argument>)</argument_list></call> = <call><name>PUP</name><argument_list>(<argument><expr><name>from</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                        <if>if <condition>(<expr><name>len</name> &gt; 1</expr>)</condition><then>
+                            <expr_stmt><expr><call><name>PUP</name><argument_list>(<argument><expr><name>out</name></expr></argument>)</argument_list></call> = <call><name>PUP</name><argument_list>(<argument><expr><name>from</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+                    }</block></then></if>
+                }</block></else></if>
+            }</block></then>
+            <else>else <if>if <condition>(<expr>(<name>op</name> &amp; 64) == 0</expr>)</condition><then> <block>{          <comment type="block">/* 2nd level distance code */</comment>
+                <expr_stmt><expr><name>this</name> = <name><name>dcode</name><index>[<expr><name><name>this</name>.<name>val</name></name> + (<name>hold</name> &amp; ((1U &lt;&lt; <name>op</name>) - 1))</expr>]</index></name></expr>;</expr_stmt>
+                <goto>goto <name>dodist</name>;</goto>
+            }</block></then>
+            <else>else <block>{
+                <expr_stmt><expr><name><name>strm</name>-&gt;<name>msg</name></name> = (<name>char</name> *)"invalid distance code"</expr>;</expr_stmt>
+                <expr_stmt><expr><name><name>state</name>-&gt;<name>mode</name></name> = <name>BAD</name></expr>;</expr_stmt>
+                <break>break;</break>
+            }</block></else></if></else></if>
+        }</block></then>
+        <else>else <if>if <condition>(<expr>(<name>op</name> &amp; 64) == 0</expr>)</condition><then> <block>{              <comment type="block">/* 2nd level length code */</comment>
+            <expr_stmt><expr><name>this</name> = <name><name>lcode</name><index>[<expr><name><name>this</name>.<name>val</name></name> + (<name>hold</name> &amp; ((1U &lt;&lt; <name>op</name>) - 1))</expr>]</index></name></expr>;</expr_stmt>
+            <goto>goto <name>dolen</name>;</goto>
+        }</block></then>
+        <else>else <if>if <condition>(<expr><name>op</name> &amp; 32</expr>)</condition><then> <block>{                     <comment type="block">/* end-of-block */</comment>
+            <expr_stmt><expr><call><name>Tracevv</name><argument_list>(<argument><expr>(<name>stderr</name>, "inflate:         end of block\n")</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>state</name>-&gt;<name>mode</name></name> = <name>TYPE</name></expr>;</expr_stmt>
+            <break>break;</break>
+        }</block></then>
+        <else>else <block>{
+            <expr_stmt><expr><name><name>strm</name>-&gt;<name>msg</name></name> = (<name>char</name> *)"invalid literal/length code"</expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>state</name>-&gt;<name>mode</name></name> = <name>BAD</name></expr>;</expr_stmt>
+            <break>break;</break>
+        }</block></else></if></else></if></else></if></else></if>
+    }</block> while <condition>(<expr><name>in</name> &lt; <name>last</name> &amp;&amp; <name>out</name> &lt; <name>end</name></expr>)</condition>;</do>
+
+    <comment type="block">/* return unused bytes (on entry, bits &lt; 8, so in won't go too far back) */</comment>
+    <expr_stmt><expr><name>len</name> = <name>bits</name> &gt;&gt; 3</expr>;</expr_stmt>
+    <expr_stmt><expr><name>in</name> -= <name>len</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name>bits</name> -= <name>len</name> &lt;&lt; 3</expr>;</expr_stmt>
+    <expr_stmt><expr><name>hold</name> &amp;= (1U &lt;&lt; <name>bits</name>) - 1</expr>;</expr_stmt>
+
+    <comment type="block">/* update state and return */</comment>
+    <expr_stmt><expr><name><name>strm</name>-&gt;<name>next_in</name></name> = <name>in</name> + <name>OFF</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>strm</name>-&gt;<name>next_out</name></name> = <name>out</name> + <name>OFF</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>strm</name>-&gt;<name>avail_in</name></name> = <call>(<name>unsigned</name>)<argument_list>(<argument><expr><name>in</name> &lt; <name>last</name> ? 5 + (<name>last</name> - <name>in</name>) : 5 - (<name>in</name> - <name>last</name>)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>strm</name>-&gt;<name>avail_out</name></name> = <call>(<name>unsigned</name>)<argument_list>(<argument><expr><name>out</name> &lt; <name>end</name> ?
+                                 257 + (<name>end</name> - <name>out</name>) : 257 - (<name>out</name> - <name>end</name>)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>state</name>-&gt;<name>hold</name></name> = <name>hold</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>state</name>-&gt;<name>bits</name></name> = <name>bits</name></expr>;</expr_stmt>
+    <return>return;</return>
+}</block></function>
+
+<comment type="block">/*
+   inflate_fast() speedups that turned out slower (on a PowerPC G3 750CXe):
+   - Using bit fields for code structure
+   - Different op definition to avoid &amp; for extra bits (do &amp; for table bits)
+   - Three separate decoding do-loops for direct, window, and write == 0
+   - Special case for distance &gt; 1 copies to do overlapped load and store copy
+   - Explicit branch predictions (based on measured branch probabilities)
+   - Deferring match copy and interspersed it with decoding subsequent codes
+   - Swapping literal/length else
+   - Swapping window/direct else
+   - Larger unrolled copy loops (three is about right)
+   - Moving len -= 3 statement into middle of loop
+ */</comment>
+
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* !ASMINF */</comment>
+</unit>

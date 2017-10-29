@@ -1,0 +1,1487 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/subversion-1.5.1/source/subversion/libsvn_subr/mergeinfo.c"><comment type="block">/*
+ * mergeinfo.c:  Mergeinfo parsing and handling
+ *
+ * ====================================================================
+ * Copyright (c) 2006-2007 CollabNet.  All rights reserved.
+ *
+ * This software is licensed as described in the file COPYING, which
+ * you should have received as part of this distribution.  The terms
+ * are also available at http://subversion.tigris.org/license-1.html.
+ * If newer versions of this license are posted there, you may use a
+ * newer version instead, at your option.
+ *
+ * This software consists of voluntary contributions made by many
+ * individuals.  For exact contribution history, see the revision
+ * history and logs, available at http://subversion.tigris.org/.
+ * ====================================================================
+ */</comment>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;assert.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;ctype.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_path.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_types.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_ctype.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_pools.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_sorts.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_error.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_error_codes.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_string.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_mergeinfo.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"private/svn_mergeinfo_private.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_private_config.h"</cpp:file></cpp:include>
+
+<comment type="block">/* Attempt to combine two adjacent or overlapping ranges, IN1 and IN2, and put
+   the result in OUTPUT.  Return whether they could be combined.
+
+   CONSIDER_INHERITANCE determines how to account for the inheritability
+   of IN1 and IN2 when trying to combine ranges.  If ranges with different
+   inheritability are combined (CONSIDER_INHERITANCE must be FALSE for this
+   to happen) the result is inheritable.  If both ranges are inheritable the
+   result is inheritable.  Only and if both ranges are non-inheritable is
+   the result is non-inheritable.
+
+   Range overlapping detection algorithm from
+   http://c2.com/cgi-bin/wiki/fullSearch?TestIfDateRangesOverlap
+*/</comment>
+<function><type><specifier>static</specifier> <name>svn_boolean_t</name></type>
+<name>combine_ranges</name><parameter_list>(<param><decl><type><name>svn_merge_range_t</name> **</type><name>output</name></decl></param>, <param><decl><type><name>svn_merge_range_t</name> *</type><name>in1</name></decl></param>,
+               <param><decl><type><name>svn_merge_range_t</name> *</type><name>in2</name></decl></param>,
+               <param><decl><type><name>svn_boolean_t</name></type> <name>consider_inheritance</name></decl></param>)</parameter_list>
+<block>{
+  <if>if <condition>(<expr><name><name>in1</name>-&gt;<name>start</name></name> &lt;= <name><name>in2</name>-&gt;<name>end</name></name> &amp;&amp; <name><name>in2</name>-&gt;<name>start</name></name> &lt;= <name><name>in1</name>-&gt;<name>end</name></name></expr>)</condition><then>
+    <block>{
+      <if>if <condition>(<expr>!<name>consider_inheritance</name>
+          || (<name>consider_inheritance</name>
+              &amp;&amp; ((<name><name>in1</name>-&gt;<name>inheritable</name></name> ? <name>TRUE</name> : <name>FALSE</name>)
+                   == (<name><name>in2</name>-&gt;<name>inheritable</name></name> ? <name>TRUE</name> : <name>FALSE</name>)))</expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><name>(*<name>output</name>)-&gt;<name>start</name></name> = <call><name>MIN</name><argument_list>(<argument><expr><name><name>in1</name>-&gt;<name>start</name></name></expr></argument>, <argument><expr><name><name>in2</name>-&gt;<name>start</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><name>(*<name>output</name>)-&gt;<name>end</name></name> = <call><name>MAX</name><argument_list>(<argument><expr><name><name>in1</name>-&gt;<name>end</name></name></expr></argument>, <argument><expr><name><name>in2</name>-&gt;<name>end</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><name>(*<name>output</name>)-&gt;<name>inheritable</name></name> =
+            (<name><name>in1</name>-&gt;<name>inheritable</name></name> || <name><name>in2</name>-&gt;<name>inheritable</name></name>) ? <name>TRUE</name> : <name>FALSE</name></expr>;</expr_stmt>
+          <return>return <expr><name>TRUE</name></expr>;</return>
+        }</block></then></if>
+    }</block></then></if>
+  <return>return <expr><name>FALSE</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* pathname -&gt; PATHNAME */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>parse_pathname</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>input</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>end</name></decl></param>,
+               <param><decl><type><name>svn_stringbuf_t</name> **</type><name>pathname</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>curr</name> <init>= <expr>*<name>input</name></expr></init></decl>;</decl_stmt>
+  <expr_stmt><expr>*<name>pathname</name> = <call><name>svn_stringbuf_create</name><argument_list>(<argument><expr>""</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <while>while <condition>(<expr><name>curr</name> &lt; <name>end</name> &amp;&amp; *<name>curr</name> != ':'</expr>)</condition>
+    <block>{
+      <expr_stmt><expr><call><name>svn_stringbuf_appendbytes</name><argument_list>(<argument><expr>*<name>pathname</name></expr></argument>, <argument><expr><name>curr</name></expr></argument>, <argument><expr>1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name>curr</name>++</expr>;</expr_stmt>
+    }</block></while>
+
+  <if>if <condition>(<expr><name>(*<name>pathname</name>)-&gt;<name>len</name></name> == 0</expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_MERGEINFO_PARSE_ERROR</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                            <argument><expr><call><name>_</name><argument_list>(<argument><expr>"No pathname preceeding ':'"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+  <expr_stmt><expr>*<name>input</name> = <name>curr</name></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* Helper for svn_rangelist_merge() and rangelist_intersect_or_remove().
+
+   If *LASTRANGE is not NULL it should point to the last element in REVLIST.
+   REVLIST must be sorted from lowest to highest revision and contain no
+   overlapping revision ranges.  Any changes made to REVLIST will maintain
+   this guarantee.
+
+   If *LASTRANGE is NULL then push MRANGE to REVLIST.
+
+   If *LASTRANGE and MRANGE don't intersect then push MRANGE to REVLIST.
+   If they do intersect and have the same inheritability then combine the
+   ranges, updating *LASTRANGE to reflect the new combined range.  If the
+   ranges intersect but differ in inheritability, then merge the ranges - see
+   the doc string for svn_mergeinfo_merge.  This may result in a change to
+   *LASTRANGE's end field and the pushing of up to two new ranges on REVLIST.
+
+     e.g.  *LASTRANGE: '4-10*' merged with MRANGE: '6'________
+                  |                           |               |
+             Update end field               Push       Account for trimmed 
+                  |                           |        range from *LASTRANGE.
+                  |                           |        Push it last to
+                  |                           |        maintain sort order.
+                  |                           |               |
+                  V                           V               V
+           *LASTRANGE: '4-5*'              MRANGE: '6'   NEWRANGE: '6-10*'
+
+   Upon return, if any new ranges were pushed onto REVLIST, then set
+   *LASTRANGE to the last range pushed.
+
+   CONSIDER_INHERITANCE determines how to account for the inheritability of
+   MRANGE and *LASTRANGE when determining if they intersect.  If
+   CONSIDER_INHERITANCE is TRUE, then only ranges with the same
+   inheritability can intersect and therefore be combined.
+
+   If DUP_MRANGE is TRUE then allocate a copy of MRANGE before pushing it
+   onto REVLIST.
+*/</comment>
+<function><type><specifier>static</specifier> <name>APR_INLINE</name> <name>void</name></type>
+<name>combine_with_lastrange</name><parameter_list>(<param><decl><type><name>svn_merge_range_t</name>**</type> <name>lastrange</name></decl></param>,
+                       <param><decl><type><name>svn_merge_range_t</name> *</type><name>mrange</name></decl></param>, <param><decl><type><name>svn_boolean_t</name></type> <name>dup_mrange</name></decl></param>,
+                       <param><decl><type><name>apr_array_header_t</name> *</type><name>revlist</name></decl></param>,
+                       <param><decl><type><name>svn_boolean_t</name></type> <name>consider_inheritance</name></decl></param>,
+                       <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_merge_range_t</name> *</type><name>pushed_mrange_1</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_merge_range_t</name> *</type><name>pushed_mrange_2</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>ranges_intersect</name> <init>= <expr><name>FALSE</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>ranges_have_same_inheritance</name> <init>= <expr><name>FALSE</name></expr></init></decl>;</decl_stmt>
+  
+  <if>if <condition>(<expr>*<name>lastrange</name></expr>)</condition><then>
+    <block>{
+      <if>if <condition>(<expr><name>(*<name>lastrange</name>)-&gt;<name>start</name></name> &lt;= <name><name>mrange</name>-&gt;<name>end</name></name>
+          &amp;&amp; <name><name>mrange</name>-&gt;<name>start</name></name> &lt;= <name>(*<name>lastrange</name>)-&gt;<name>end</name></name></expr>)</condition><then>
+        <expr_stmt><expr><name>ranges_intersect</name> = <name>TRUE</name></expr>;</expr_stmt></then></if>
+      <if>if <condition>(<expr><name>(*<name>lastrange</name>)-&gt;<name>inheritable</name></name> == <name><name>mrange</name>-&gt;<name>inheritable</name></name></expr>)</condition><then>
+        <expr_stmt><expr><name>ranges_have_same_inheritance</name> = <name>TRUE</name></expr>;</expr_stmt></then></if>
+    }</block></then></if>
+
+  <if>if <condition>(<expr>!(*<name>lastrange</name>)
+      || (!<name>ranges_intersect</name> || (!<name>ranges_have_same_inheritance</name>
+                                &amp;&amp; <name>consider_inheritance</name>))</expr>)</condition><then>
+
+    <block>{
+      <comment type="block">/* No *LASTRANGE
+           or
+         LASTRANGE and MRANGE don't intersect
+           or
+         LASTRANGE and MRANGE "intersect" but have different
+         inheritability and we are considering inheritance so
+         can't combined them...
+         
+         ...In all these cases just push MRANGE onto *LASTRANGE. */</comment>
+      <if>if <condition>(<expr><name>dup_mrange</name></expr>)</condition><then>
+        <expr_stmt><expr><name>pushed_mrange_1</name> = <call><name>svn_merge_range_dup</name><argument_list>(<argument><expr><name>mrange</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+      <else>else
+        <expr_stmt><expr><name>pushed_mrange_1</name> = <name>mrange</name></expr>;</expr_stmt></else></if>
+    }</block></then>
+  <else>else <comment type="block">/* MRANGE and *LASTRANGE intersect */</comment>
+    <block>{
+      <if>if <condition>(<expr><name>ranges_have_same_inheritance</name></expr>)</condition><then>
+        <block>{
+          <comment type="block">/* Intersecting ranges have the same inheritability
+             so just combine them. */</comment>
+          <expr_stmt><expr><name>(*<name>lastrange</name>)-&gt;<name>start</name></name> = <call><name>MIN</name><argument_list>(<argument><expr><name>(*<name>lastrange</name>)-&gt;<name>start</name></name></expr></argument>, <argument><expr><name><name>mrange</name>-&gt;<name>start</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><name>(*<name>lastrange</name>)-&gt;<name>end</name></name> = <call><name>MAX</name><argument_list>(<argument><expr><name>(*<name>lastrange</name>)-&gt;<name>end</name></name></expr></argument>, <argument><expr><name><name>mrange</name>-&gt;<name>end</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><name>(*<name>lastrange</name>)-&gt;<name>inheritable</name></name> =
+            (<name>(*<name>lastrange</name>)-&gt;<name>inheritable</name></name> || <name><name>mrange</name>-&gt;<name>inheritable</name></name>) ? <name>TRUE</name> : <name>FALSE</name></expr>;</expr_stmt>
+        }</block></then>
+      <else>else <comment type="block">/* Ranges intersect but have different
+              inheritability so merge the ranges. */</comment>
+        <block>{
+          <decl_stmt><decl><type><name>svn_revnum_t</name></type> <name>tmp_revnum</name></decl>;</decl_stmt>
+
+          <comment type="block">/* Ranges have same starting revision. */</comment>
+          <if>if <condition>(<expr><name>(*<name>lastrange</name>)-&gt;<name>start</name></name> == <name><name>mrange</name>-&gt;<name>start</name></name></expr>)</condition><then>
+            <block>{
+              <if>if <condition>(<expr><name>(*<name>lastrange</name>)-&gt;<name>end</name></name> == <name><name>mrange</name>-&gt;<name>end</name></name></expr>)</condition><then>
+                <block>{
+                  <expr_stmt><expr><name>(*<name>lastrange</name>)-&gt;<name>inheritable</name></name> = <name>TRUE</name></expr>;</expr_stmt>
+                }</block></then>
+              <else>else <if>if <condition>(<expr><name>(*<name>lastrange</name>)-&gt;<name>end</name></name> &gt; <name><name>mrange</name>-&gt;<name>end</name></name></expr>)</condition><then>
+                <block>{
+                  <if>if <condition>(<expr>!<name>(*<name>lastrange</name>)-&gt;<name>inheritable</name></name></expr>)</condition><then>
+                    <block>{
+                      <expr_stmt><expr><name>tmp_revnum</name> = <name>(*<name>lastrange</name>)-&gt;<name>end</name></name></expr>;</expr_stmt>
+                      <expr_stmt><expr><name>(*<name>lastrange</name>)-&gt;<name>end</name></name> = <name><name>mrange</name>-&gt;<name>end</name></name></expr>;</expr_stmt>
+                      <expr_stmt><expr><name>(*<name>lastrange</name>)-&gt;<name>inheritable</name></name> = <name>TRUE</name></expr>;</expr_stmt>
+                      <if>if <condition>(<expr><name>dup_mrange</name></expr>)</condition><then>
+                        <expr_stmt><expr><name>pushed_mrange_1</name> = <call><name>svn_merge_range_dup</name><argument_list>(<argument><expr><name>mrange</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+                      <else>else
+                        <expr_stmt><expr><name>pushed_mrange_1</name> = <name>mrange</name></expr>;</expr_stmt></else></if>
+                      <expr_stmt><expr><name><name>pushed_mrange_1</name>-&gt;<name>start</name></name> = <name><name>pushed_mrange_1</name>-&gt;<name>start</name></name></expr>;</expr_stmt>
+                      <expr_stmt><expr><name><name>pushed_mrange_1</name>-&gt;<name>end</name></name> = <name>tmp_revnum</name></expr>;</expr_stmt>
+                      <expr_stmt><expr>*<name>lastrange</name> = <name>pushed_mrange_1</name></expr>;</expr_stmt>
+                    }</block></then></if> 
+                }</block></then>
+              <else>else <comment type="block">/* (*lastrange)-&gt;end &lt; mrange-&gt;end) */</comment>
+                <block>{
+                  <if>if <condition>(<expr><name><name>mrange</name>-&gt;<name>inheritable</name></name></expr>)</condition><then>
+                    <block>{
+                      <expr_stmt><expr><name>(*<name>lastrange</name>)-&gt;<name>inheritable</name></name> = <name>TRUE</name></expr>;</expr_stmt>
+                      <expr_stmt><expr><name>(*<name>lastrange</name>)-&gt;<name>end</name></name> = <name><name>mrange</name>-&gt;<name>end</name></name></expr>;</expr_stmt>
+                    }</block></then>
+                  <else>else
+                    <block>{
+                      <if>if <condition>(<expr><name>dup_mrange</name></expr>)</condition><then>
+                        <expr_stmt><expr><name>pushed_mrange_1</name> = <call><name>svn_merge_range_dup</name><argument_list>(<argument><expr><name>mrange</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+                      <else>else
+                        <expr_stmt><expr><name>pushed_mrange_1</name> = <name>mrange</name></expr>;</expr_stmt></else></if>
+                      <expr_stmt><expr><name><name>pushed_mrange_1</name>-&gt;<name>start</name></name> = <name>(*<name>lastrange</name>)-&gt;<name>end</name></name></expr>;</expr_stmt>
+                    }</block></else></if>
+                }</block></else></if></else></if>
+            }</block></then>
+          <comment type="block">/* Ranges have same ending revision. (Same starting
+             and ending revisions already handled above.) */</comment>
+          <else>else <if>if <condition>(<expr><name>(*<name>lastrange</name>)-&gt;<name>end</name></name> == <name><name>mrange</name>-&gt;<name>end</name></name></expr>)</condition><then>
+            <block>{
+              <if>if <condition>(<expr><name>(*<name>lastrange</name>)-&gt;<name>start</name></name> &lt; <name><name>mrange</name>-&gt;<name>start</name></name></expr>)</condition><then>
+                <block>{
+                  <if>if <condition>(<expr>!<name>(*<name>lastrange</name>)-&gt;<name>inheritable</name></name></expr>)</condition><then>
+                    <block>{
+                      <expr_stmt><expr><name>(*<name>lastrange</name>)-&gt;<name>end</name></name> = <name><name>mrange</name>-&gt;<name>start</name></name></expr>;</expr_stmt>
+                      <if>if <condition>(<expr><name>dup_mrange</name></expr>)</condition><then>
+                        <expr_stmt><expr><name>pushed_mrange_1</name> = <call><name>svn_merge_range_dup</name><argument_list>(<argument><expr><name>mrange</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+                      <else>else
+                        <expr_stmt><expr><name>pushed_mrange_1</name> = <name>mrange</name></expr>;</expr_stmt></else></if>
+                      <expr_stmt><expr>*<name>lastrange</name> = <name>pushed_mrange_1</name></expr>;</expr_stmt>
+                    }</block></then></if>
+                }</block></then>
+              <else>else <comment type="block">/* (*lastrange)-&gt;start &gt; mrange-&gt;start */</comment>
+                <block>{
+                  <expr_stmt><expr><name>(*<name>lastrange</name>)-&gt;<name>start</name></name> = <name><name>mrange</name>-&gt;<name>start</name></name></expr>;</expr_stmt>
+                  <expr_stmt><expr><name>(*<name>lastrange</name>)-&gt;<name>end</name></name> = <name><name>mrange</name>-&gt;<name>end</name></name></expr>;</expr_stmt>
+                  <expr_stmt><expr><name>(*<name>lastrange</name>)-&gt;<name>inheritable</name></name> = <name><name>mrange</name>-&gt;<name>inheritable</name></name></expr>;</expr_stmt>
+                  <if>if <condition>(<expr><name>dup_mrange</name></expr>)</condition><then>
+                    <expr_stmt><expr><name>pushed_mrange_1</name> = <call><name>svn_merge_range_dup</name><argument_list>(<argument><expr><name>mrange</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+                  <else>else
+                    <expr_stmt><expr><name>pushed_mrange_1</name> = <name>mrange</name></expr>;</expr_stmt></else></if>
+                  <expr_stmt><expr><name><name>pushed_mrange_1</name>-&gt;<name>start</name></name> = <name>(*<name>lastrange</name>)-&gt;<name>end</name></name></expr>;</expr_stmt>
+                  <expr_stmt><expr><name><name>pushed_mrange_1</name>-&gt;<name>inheritable</name></name> = <name>TRUE</name></expr>;</expr_stmt>
+
+                }</block></else></if>
+            }</block></then>
+          <else>else <comment type="block">/* Ranges have different starting and ending revisions. */</comment>
+            <block>{
+              <if>if <condition>(<expr><name>(*<name>lastrange</name>)-&gt;<name>start</name></name> &lt; <name><name>mrange</name>-&gt;<name>start</name></name></expr>)</condition><then>
+                <block>{
+                  <comment type="block">/* If MRANGE is a proper subset of *LASTRANGE and
+                     *LASTRANGE is inheritable there is nothing more
+                     to do. */</comment>
+                  <if>if <condition>(<expr>!(<name>(*<name>lastrange</name>)-&gt;<name>end</name></name> &gt; <name><name>mrange</name>-&gt;<name>end</name></name>
+                        &amp;&amp; <name>(*<name>lastrange</name>)-&gt;<name>inheritable</name></name>)</expr>)</condition><then>
+                    <block>{
+                      <expr_stmt><expr><name>tmp_revnum</name> = <name>(*<name>lastrange</name>)-&gt;<name>end</name></name></expr>;</expr_stmt>
+                      <if>if <condition>(<expr>!<name>(*<name>lastrange</name>)-&gt;<name>inheritable</name></name></expr>)</condition><then>
+                        <expr_stmt><expr><name>(*<name>lastrange</name>)-&gt;<name>end</name></name> = <name><name>mrange</name>-&gt;<name>start</name></name></expr>;</expr_stmt></then>
+                      <else>else
+                        <expr_stmt><expr><name><name>mrange</name>-&gt;<name>start</name></name> = <name>(*<name>lastrange</name>)-&gt;<name>end</name></name></expr>;</expr_stmt></else></if>
+                      <if>if <condition>(<expr><name>dup_mrange</name></expr>)</condition><then>
+                        <expr_stmt><expr><name>pushed_mrange_1</name> = <call><name>svn_merge_range_dup</name><argument_list>(<argument><expr><name>mrange</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+                      <else>else
+                        <expr_stmt><expr><name>pushed_mrange_1</name> = <name>mrange</name></expr>;</expr_stmt></else></if>
+
+                      <if>if <condition>(<expr><name>tmp_revnum</name> &gt; <name><name>mrange</name>-&gt;<name>end</name></name></expr>)</condition><then>
+                        <block>{
+                          <expr_stmt><expr><name>pushed_mrange_2</name> =
+                            <call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>pushed_mrange_2</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                          <expr_stmt><expr><name><name>pushed_mrange_2</name>-&gt;<name>start</name></name> = <name><name>mrange</name>-&gt;<name>end</name></name></expr>;</expr_stmt>
+                          <expr_stmt><expr><name><name>pushed_mrange_2</name>-&gt;<name>end</name></name> = <name>tmp_revnum</name></expr>;</expr_stmt>
+                          <expr_stmt><expr><name><name>pushed_mrange_2</name>-&gt;<name>inheritable</name></name> =
+                            <name>(*<name>lastrange</name>)-&gt;<name>inheritable</name></name></expr>;</expr_stmt>
+                        }</block></then></if>
+                      <expr_stmt><expr><name><name>mrange</name>-&gt;<name>inheritable</name></name> = <name>TRUE</name></expr>;</expr_stmt>
+                    }</block></then></if>
+                }</block></then>
+              <else>else <comment type="block">/* ((*lastrange)-&gt;start &gt; mrange-&gt;start) */</comment>
+                <block>{
+                  <if>if <condition>(<expr><name>(*<name>lastrange</name>)-&gt;<name>end</name></name> &lt; <name><name>mrange</name>-&gt;<name>end</name></name></expr>)</condition><then>
+                    <block>{
+                      <expr_stmt><expr><name><name>pushed_mrange_2</name>-&gt;<name>start</name></name> = <name>(*<name>lastrange</name>)-&gt;<name>end</name></name></expr>;</expr_stmt>
+                      <expr_stmt><expr><name><name>pushed_mrange_2</name>-&gt;<name>end</name></name> = <name><name>mrange</name>-&gt;<name>end</name></name></expr>;</expr_stmt>
+                      <expr_stmt><expr><name><name>pushed_mrange_2</name>-&gt;<name>inheritable</name></name> = <name><name>mrange</name>-&gt;<name>inheritable</name></name></expr>;</expr_stmt>
+
+                      <expr_stmt><expr><name>tmp_revnum</name> = <name>(*<name>lastrange</name>)-&gt;<name>start</name></name></expr>;</expr_stmt>
+                      <expr_stmt><expr><name>(*<name>lastrange</name>)-&gt;<name>start</name></name> = <name><name>mrange</name>-&gt;<name>start</name></name></expr>;</expr_stmt>
+                      <expr_stmt><expr><name>(*<name>lastrange</name>)-&gt;<name>end</name></name> = <name>tmp_revnum</name></expr>;</expr_stmt>
+                      <expr_stmt><expr><name>(*<name>lastrange</name>)-&gt;<name>inheritable</name></name> = <name><name>mrange</name>-&gt;<name>inheritable</name></name></expr>;</expr_stmt>
+
+                      <expr_stmt><expr><name><name>mrange</name>-&gt;<name>start</name></name> = <name>tmp_revnum</name></expr>;</expr_stmt>
+                      <expr_stmt><expr><name><name>mrange</name>-&gt;<name>end</name></name> = <name><name>pushed_mrange_2</name>-&gt;<name>start</name></name></expr>;</expr_stmt>
+                      <expr_stmt><expr><name><name>mrange</name>-&gt;<name>inheritable</name></name> = <name>TRUE</name></expr>;</expr_stmt>
+                    }</block></then>
+                  <else>else <comment type="block">/* (*lastrange)-&gt;end &gt; mrange-&gt;end */</comment>
+                    <block>{
+                      <expr_stmt><expr><name><name>pushed_mrange_2</name>-&gt;<name>start</name></name> = <name><name>mrange</name>-&gt;<name>end</name></name></expr>;</expr_stmt>
+                      <expr_stmt><expr><name><name>pushed_mrange_2</name>-&gt;<name>end</name></name> = <name>(*<name>lastrange</name>)-&gt;<name>end</name></name></expr>;</expr_stmt>
+                      <expr_stmt><expr><name><name>pushed_mrange_2</name>-&gt;<name>inheritable</name></name> =
+                        <name>(*<name>lastrange</name>)-&gt;<name>inheritable</name></name></expr>;</expr_stmt>
+
+                      <expr_stmt><expr><name>tmp_revnum</name> = <name>(*<name>lastrange</name>)-&gt;<name>start</name></name></expr>;</expr_stmt>
+                      <expr_stmt><expr><name>(*<name>lastrange</name>)-&gt;<name>start</name></name> = <name><name>mrange</name>-&gt;<name>start</name></name></expr>;</expr_stmt>
+                      <expr_stmt><expr><name>(*<name>lastrange</name>)-&gt;<name>end</name></name> = <name>tmp_revnum</name></expr>;</expr_stmt>
+                      <expr_stmt><expr><name>(*<name>lastrange</name>)-&gt;<name>inheritable</name></name> = <name><name>mrange</name>-&gt;<name>inheritable</name></name></expr>;</expr_stmt>
+
+                      <expr_stmt><expr><name><name>mrange</name>-&gt;<name>start</name></name> = <name>tmp_revnum</name></expr>;</expr_stmt>
+                      <expr_stmt><expr><name><name>mrange</name>-&gt;<name>end</name></name> = <name><name>pushed_mrange_2</name>-&gt;<name>start</name></name></expr>;</expr_stmt>
+                      <expr_stmt><expr><name><name>mrange</name>-&gt;<name>inheritable</name></name> = <name>TRUE</name></expr>;</expr_stmt>
+                    }</block></else></if>
+                }</block></else></if>
+            }</block></else></if></else></if>
+        }</block></else></if>
+    }</block></else></if>
+  <if>if <condition>(<expr><name>pushed_mrange_1</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>APR_ARRAY_PUSH</name><argument_list>(<argument><expr><name>revlist</name></expr></argument>, <argument><expr><name>svn_merge_range_t</name> *</expr></argument>)</argument_list></call> = <name>pushed_mrange_1</name></expr>;</expr_stmt>
+      <expr_stmt><expr>*<name>lastrange</name> = <name>pushed_mrange_1</name></expr>;</expr_stmt>
+    }</block></then></if>
+  <if>if <condition>(<expr><name>pushed_mrange_2</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>APR_ARRAY_PUSH</name><argument_list>(<argument><expr><name>revlist</name></expr></argument>, <argument><expr><name>svn_merge_range_t</name> *</expr></argument>)</argument_list></call> = <name>pushed_mrange_2</name></expr>;</expr_stmt>
+      <expr_stmt><expr>*<name>lastrange</name> = <name>pushed_mrange_2</name></expr>;</expr_stmt>
+    }</block></then></if>
+}</block></function>
+
+<comment type="block">/* Convert a single svn_merge_range_t * back into an svn_string_t *.  */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>range_to_string</name><parameter_list>(<param><decl><type><name>svn_string_t</name> **</type><name>result</name></decl></param>, <param><decl><type><name>svn_merge_range_t</name> *</type><name>range</name></decl></param>,
+                <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <if>if <condition>(<expr><name><name>range</name>-&gt;<name>start</name></name> == <name><name>range</name>-&gt;<name>end</name></name> - 1</expr>)</condition><then>
+    <expr_stmt><expr>*<name>result</name> = <call><name>svn_string_createf</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>"%ld%s"</expr></argument>, <argument><expr><name><name>range</name>-&gt;<name>end</name></name></expr></argument>,
+                                 <argument><expr><name><name>range</name>-&gt;<name>inheritable</name></name>
+                                 ? "" : <name>SVN_MERGEINFO_NONINHERITABLE_STR</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+  <else>else
+    <expr_stmt><expr>*<name>result</name> = <call><name>svn_string_createf</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>"%ld-%ld%s"</expr></argument>, <argument><expr><name><name>range</name>-&gt;<name>start</name></name> + 1</expr></argument>,
+                                 <argument><expr><name><name>range</name>-&gt;<name>end</name></name></expr></argument>, <argument><expr><name><name>range</name>-&gt;<name>inheritable</name></name>
+                                 ? "" : <name>SVN_MERGEINFO_NONINHERITABLE_STR</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* Helper for svn_mergeinfo_parse() via parse_revlist().
+
+  Similar to combine_with_lastrange() but enforces the some of the
+  restrictions noted in svn_mergeinfo_parse() on otherwise grammatically
+  correct rangelists, specifically the prohibitions on:
+
+    1) Overlapping revision ranges
+
+    2) Unordered revision ranges
+
+  Returns an SVN_ERR_MERGEINFO_PARSE_ERROR error if any of these rules
+  are violated.  The restriction on revision ranges with a start revision
+  greater than or equal to its end revision is handled in parse_revlist().
+
+  Unlike combine_with_lastrange() this function *always* considers
+  inheritance, so only adjacent revision ranges with the same
+  inheritability are ever combined. */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>combine_with_adjacent_lastrange</name><parameter_list>(<param><decl><type><name>svn_merge_range_t</name> **</type><name>lastrange</name></decl></param>,
+                                <param><decl><type><name>svn_merge_range_t</name> *</type><name>mrange</name></decl></param>,
+                                <param><decl><type><name>svn_boolean_t</name></type> <name>dup_mrange</name></decl></param>,
+                                <param><decl><type><name>apr_array_header_t</name> *</type><name>revlist</name></decl></param>,
+                                <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_merge_range_t</name> *</type><name>pushed_mrange</name> <init>= <expr><name>mrange</name></expr></init></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr>*<name>lastrange</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>svn_string_t</name> *</type><name>r1</name></decl>, *<decl><type ref="prev"/><name>r2</name></decl>;</decl_stmt>
+
+      <if>if <condition>(<expr><name>(*<name>lastrange</name>)-&gt;<name>start</name></name> &lt;= <name><name>mrange</name>-&gt;<name>end</name></name>
+          &amp;&amp; <name><name>mrange</name>-&gt;<name>start</name></name> &lt;= <name>(*<name>lastrange</name>)-&gt;<name>end</name></name></expr>)</condition><then>
+        <block>{
+          <comment type="block">/* The ranges intersect. */</comment>
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>range_to_string</name><argument_list>(<argument><expr>&amp;<name>r1</name></expr></argument>, <argument><expr>*<name>lastrange</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>range_to_string</name><argument_list>(<argument><expr>&amp;<name>r2</name></expr></argument>, <argument><expr><name>mrange</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+          <comment type="block">/* svn_mergeinfo_parse promises to combine adjacent
+             ranges, but not overlapping ranges. */</comment>
+          <if>if <condition>(<expr><name><name>mrange</name>-&gt;<name>start</name></name> &lt; <name>(*<name>lastrange</name>)-&gt;<name>end</name></name></expr>)</condition><then>
+            <block>{
+              <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_MERGEINFO_PARSE_ERROR</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                       <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Parsing of overlapping revision "
+                                         "ranges '%s' and '%s' is not "
+                                         "supported"</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name><name>r1</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name><name>r2</name>-&gt;<name>data</name></name></expr></argument>)</argument_list></call></expr>;</return>
+            }</block></then>
+          <else>else <if>if <condition>(<expr><name>(*<name>lastrange</name>)-&gt;<name>inheritable</name></name> == <name><name>mrange</name>-&gt;<name>inheritable</name></name></expr>)</condition><then>
+            <block>{
+              <comment type="block">/* Combine adjacent ranges with the same inheritability. */</comment>
+              <expr_stmt><expr><name>(*<name>lastrange</name>)-&gt;<name>end</name></name> = <name><name>mrange</name>-&gt;<name>end</name></name></expr>;</expr_stmt>
+              <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+            }</block></then></if></else></if>
+        }</block></then>
+      <else>else <if>if <condition>(<expr><name>(*<name>lastrange</name>)-&gt;<name>start</name></name> &gt; <name><name>mrange</name>-&gt;<name>start</name></name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>range_to_string</name><argument_list>(<argument><expr>&amp;<name>r1</name></expr></argument>, <argument><expr>*<name>lastrange</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>range_to_string</name><argument_list>(<argument><expr>&amp;<name>r2</name></expr></argument>, <argument><expr><name>mrange</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_MERGEINFO_PARSE_ERROR</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                   <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Unable to parse unordered revision "
+                                     "ranges '%s' and '%s'"</expr></argument>)</argument_list></call></expr></argument>,
+                                     <argument><expr><name><name>r1</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name><name>r2</name>-&gt;<name>data</name></name></expr></argument>)</argument_list></call></expr>;</return>
+        }</block></then></if></else></if>
+    }</block></then></if>
+
+  <if>if <condition>(<expr><name>dup_mrange</name></expr>)</condition><then>
+    <expr_stmt><expr><name>pushed_mrange</name> = <call><name>svn_merge_range_dup</name><argument_list>(<argument><expr><name>mrange</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+  <expr_stmt><expr><call><name>APR_ARRAY_PUSH</name><argument_list>(<argument><expr><name>revlist</name></expr></argument>, <argument><expr><name>svn_merge_range_t</name> *</expr></argument>)</argument_list></call> = <name>pushed_mrange</name></expr>;</expr_stmt>
+  <expr_stmt><expr>*<name>lastrange</name> = <name>pushed_mrange</name></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* Helper for svn_mergeinfo_parse()
+
+   revisionlist -&gt; (revisionelement)(COMMA revisionelement)*
+   revisionrange -&gt; REVISION "-" REVISION("*")
+   revisionelement -&gt; revisionrange | REVISION("*")
+
+   PATHNAME is the path this revisionlist is mapped to.  It is
+   used only for producing a more descriptive error message.
+*/</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>parse_revlist</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>input</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>end</name></decl></param>,
+              <param><decl><type><name>apr_array_header_t</name> *</type><name>revlist</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>pathname</name></decl></param>,
+              <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>curr</name> <init>= <expr>*<name>input</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_merge_range_t</name> *</type><name>lastrange</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+
+  <comment type="block">/* Eat any leading horizontal white-space before the rangelist. */</comment>
+  <while>while <condition>(<expr><name>curr</name> &lt; <name>end</name> &amp;&amp; *<name>curr</name> != '\n' &amp;&amp; <call><name>isspace</name><argument_list>(<argument><expr>*<name>curr</name></expr></argument>)</argument_list></call></expr>)</condition>
+    <expr_stmt><expr><name>curr</name>++</expr>;</expr_stmt></while>
+
+  <if>if <condition>(<expr>*<name>curr</name> == '\n' || <name>curr</name> == <name>end</name></expr>)</condition><then>
+    <block>{
+      <comment type="block">/* Empty range list. */</comment>
+      <expr_stmt><expr>*<name>input</name> = <name>curr</name></expr>;</expr_stmt>
+      <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_MERGEINFO_PARSE_ERROR</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                               <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Mergeinfo for '%s' maps to an "
+                                 "empty revision range"</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>pathname</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+
+  <while>while <condition>(<expr><name>curr</name> &lt; <name>end</name> &amp;&amp; *<name>curr</name> != '\n'</expr>)</condition>
+    <block>{
+      <comment type="block">/* Parse individual revisions or revision ranges. */</comment>
+      <decl_stmt><decl><type><name>svn_merge_range_t</name> *</type><name>mrange</name> <init>= <expr><call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>mrange</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>svn_revnum_t</name></type> <name>firstrev</name></decl>;</decl_stmt>
+
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_revnum_parse</name><argument_list>(<argument><expr>&amp;<name>firstrev</name></expr></argument>, <argument><expr><name>curr</name></expr></argument>, <argument><expr>&amp;<name>curr</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr>*<name>curr</name> != '-' &amp;&amp; *<name>curr</name> != '\n' &amp;&amp; *<name>curr</name> != ',' &amp;&amp; *<name>curr</name> != '*'
+          &amp;&amp; <name>curr</name> != <name>end</name></expr>)</condition><then>
+        <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_MERGEINFO_PARSE_ERROR</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                 <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Invalid character '%c' found in revision "
+                                   "list"</expr></argument>)</argument_list></call></expr></argument>, <argument><expr>*<name>curr</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+      <expr_stmt><expr><name><name>mrange</name>-&gt;<name>start</name></name> = <name>firstrev</name> - 1</expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>mrange</name>-&gt;<name>end</name></name> = <name>firstrev</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>mrange</name>-&gt;<name>inheritable</name></name> = <name>TRUE</name></expr>;</expr_stmt>
+
+      <if>if <condition>(<expr>*<name>curr</name> == '-'</expr>)</condition><then>
+        <block>{
+          <decl_stmt><decl><type><name>svn_revnum_t</name></type> <name>secondrev</name></decl>;</decl_stmt>
+
+          <expr_stmt><expr><name>curr</name>++</expr>;</expr_stmt>
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_revnum_parse</name><argument_list>(<argument><expr>&amp;<name>secondrev</name></expr></argument>, <argument><expr><name>curr</name></expr></argument>, <argument><expr>&amp;<name>curr</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <if>if <condition>(<expr><name>firstrev</name> &gt; <name>secondrev</name></expr>)</condition><then>
+            <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_MERGEINFO_PARSE_ERROR</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                     <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Unable to parse reversed revision "
+                                       "range '%ld-%ld'"</expr></argument>)</argument_list></call></expr></argument>,
+                                       <argument><expr><name>firstrev</name></expr></argument>, <argument><expr><name>secondrev</name></expr></argument>)</argument_list></call></expr>;</return></then>
+          <else>else <if>if <condition>(<expr><name>firstrev</name> == <name>secondrev</name></expr>)</condition><then>
+            <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_MERGEINFO_PARSE_ERROR</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                     <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Unable to parse revision range "
+                                       "'%ld-%ld' with same start and end "
+                                       "revisions"</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>firstrev</name></expr></argument>, <argument><expr><name>secondrev</name></expr></argument>)</argument_list></call></expr>;</return></then></if></else></if>
+          <expr_stmt><expr><name><name>mrange</name>-&gt;<name>end</name></name> = <name>secondrev</name></expr>;</expr_stmt>
+        }</block></then></if>
+
+      <if>if <condition>(<expr>*<name>curr</name> == '\n' || <name>curr</name> == <name>end</name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>combine_with_adjacent_lastrange</name><argument_list>(<argument><expr>&amp;<name>lastrange</name></expr></argument>, <argument><expr><name>mrange</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>,
+                                                  <argument><expr><name>revlist</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr>*<name>input</name> = <name>curr</name></expr>;</expr_stmt>
+          <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+        }</block></then>
+      <else>else <if>if <condition>(<expr>*<name>curr</name> == ','</expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>combine_with_adjacent_lastrange</name><argument_list>(<argument><expr>&amp;<name>lastrange</name></expr></argument>, <argument><expr><name>mrange</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>,
+                                                  <argument><expr><name>revlist</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><name>curr</name>++</expr>;</expr_stmt>
+        }</block></then>
+      <else>else <if>if <condition>(<expr>*<name>curr</name> == '*'</expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><name><name>mrange</name>-&gt;<name>inheritable</name></name> = <name>FALSE</name></expr>;</expr_stmt>
+          <expr_stmt><expr><name>curr</name>++</expr>;</expr_stmt>
+          <if>if <condition>(<expr>*<name>curr</name> == ',' || *<name>curr</name> == '\n' || <name>curr</name> == <name>end</name></expr>)</condition><then>
+            <block>{
+              <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>combine_with_adjacent_lastrange</name><argument_list>(<argument><expr>&amp;<name>lastrange</name></expr></argument>, <argument><expr><name>mrange</name></expr></argument>,
+                                                      <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>revlist</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+              <if>if <condition>(<expr>*<name>curr</name> == ','</expr>)</condition><then>
+                <block>{
+                  <expr_stmt><expr><name>curr</name>++</expr>;</expr_stmt>
+                }</block></then>
+              <else>else
+                <block>{
+                  <expr_stmt><expr>*<name>input</name> = <name>curr</name></expr>;</expr_stmt>
+                  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+                }</block></else></if>
+            }</block></then>
+          <else>else
+            <block>{
+              <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_MERGEINFO_PARSE_ERROR</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                       <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Invalid character '%c' found in "
+                                         "range list"</expr></argument>)</argument_list></call></expr></argument>, <argument><expr>*<name>curr</name></expr></argument>)</argument_list></call></expr>;</return>
+            }</block></else></if>
+        }</block></then>
+      <else>else
+        <block>{
+          <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_MERGEINFO_PARSE_ERROR</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                   <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Invalid character '%c' found in "
+                                     "range list"</expr></argument>)</argument_list></call></expr></argument>, <argument><expr>*<name>curr</name></expr></argument>)</argument_list></call></expr>;</return>
+        }</block></else></if></else></if></else></if>
+
+    }</block></while>
+  <if>if <condition>(<expr>*<name>curr</name> != '\n'</expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_MERGEINFO_PARSE_ERROR</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                            <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Range list parsing ended before hitting "
+                              "newline"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+  <expr_stmt><expr>*<name>input</name> = <name>curr</name></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* revisionline -&gt; PATHNAME COLON revisionlist */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>parse_revision_line</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>input</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>end</name></decl></param>, <param><decl><type><name>svn_mergeinfo_t</name></type> <name>hash</name></decl></param>,
+                    <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_stringbuf_t</name> *</type><name>pathname</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>revlist</name> <init>= <expr><call><name>apr_array_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>1</expr></argument>,
+                                               <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>svn_merge_range_t</name> *</expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>parse_pathname</name><argument_list>(<argument><expr><name>input</name></expr></argument>, <argument><expr><name>end</name></expr></argument>, <argument><expr>&amp;<name>pathname</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr>*(*<name>input</name>) != ':'</expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_MERGEINFO_PARSE_ERROR</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                            <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Pathname not terminated by ':'"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <expr_stmt><expr>*<name>input</name> = *<name>input</name> + 1</expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>parse_revlist</name><argument_list>(<argument><expr><name>input</name></expr></argument>, <argument><expr><name>end</name></expr></argument>, <argument><expr><name>revlist</name></expr></argument>, <argument><expr><name><name>pathname</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr>*<name>input</name> != <name>end</name> &amp;&amp; *(*<name>input</name>) != '\n'</expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_MERGEINFO_PARSE_ERROR</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                             <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Could not find end of line in range list line "
+                               "in '%s'"</expr></argument>)</argument_list></call></expr></argument>, <argument><expr>*<name>input</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <if>if <condition>(<expr>*<name>input</name> != <name>end</name></expr>)</condition><then>
+    <expr_stmt><expr>*<name>input</name> = *<name>input</name> + 1</expr>;</expr_stmt></then></if>
+
+  <expr_stmt><expr><call><name>qsort</name><argument_list>(<argument><expr><name><name>revlist</name>-&gt;<name>elts</name></name></expr></argument>, <argument><expr><name><name>revlist</name>-&gt;<name>nelts</name></name></expr></argument>, <argument><expr><name><name>revlist</name>-&gt;<name>elt_size</name></name></expr></argument>,
+        <argument><expr><name>svn_sort_compare_ranges</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name>hash</name></expr></argument>, <argument><expr><name><name>pathname</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>, <argument><expr><name>revlist</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* top -&gt; revisionline (NEWLINE revisionline)*  */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>parse_top</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>input</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>end</name></decl></param>, <param><decl><type><name>svn_mergeinfo_t</name></type> <name>hash</name></decl></param>,
+          <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <while>while <condition>(<expr>*<name>input</name> &lt; <name>end</name></expr>)</condition>
+    <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>parse_revision_line</name><argument_list>(<argument><expr><name>input</name></expr></argument>, <argument><expr><name>end</name></expr></argument>, <argument><expr><name>hash</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></while>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* Parse mergeinfo.  */</comment>
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_mergeinfo_parse</name><parameter_list>(<param><decl><type><name>svn_mergeinfo_t</name> *</type><name>mergeinfo</name></decl></param>,
+                    <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>input</name></decl></param>,
+                    <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr>*<name>mergeinfo</name> = <call><name>apr_hash_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>err</name> = <call><name>parse_top</name><argument_list>(<argument><expr>&amp;<name>input</name></expr></argument>, <argument><expr><name>input</name> + <call><name>strlen</name><argument_list>(<argument><expr><name>input</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr>*<name>mergeinfo</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Always return SVN_ERR_MERGEINFO_PARSE_ERROR as the topmost error. */</comment>
+  <if>if <condition>(<expr><name>err</name> &amp;&amp; <name><name>err</name>-&gt;<name>apr_err</name></name> != <name>SVN_ERR_MERGEINFO_PARSE_ERROR</name></expr>)</condition><then>
+    <expr_stmt><expr><name>err</name> = <call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_MERGEINFO_PARSE_ERROR</name></expr></argument>, <argument><expr><name>err</name></expr></argument>,
+                            <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Could not parse mergeinfo string '%s'"</expr></argument>)</argument_list></call></expr></argument>,
+                            <argument><expr><name>input</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+  <return>return <expr><name>err</name></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* Merge revision list RANGELIST into *MERGEINFO, doing some trivial
+   attempts to combine ranges as we go. */</comment>
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_rangelist_merge</name><parameter_list>(<param><decl><type><name>apr_array_header_t</name> **</type><name>rangelist</name></decl></param>,
+                    <param><decl><type><name>apr_array_header_t</name> *</type><name>changes</name></decl></param>,
+                    <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>, <decl><type ref="prev"/><name>j</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_merge_range_t</name> *</type><name>lastrange</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>output</name> <init>= <expr><call><name>apr_array_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>1</expr></argument>,
+                                              <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>svn_merge_range_t</name> *</expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <expr_stmt><expr><name>i</name> = 0</expr>;</expr_stmt>
+  <expr_stmt><expr><name>j</name> = 0</expr>;</expr_stmt>
+  <while>while <condition>(<expr><name>i</name> &lt; <name>(*<name>rangelist</name>)-&gt;<name>nelts</name></name> &amp;&amp; <name>j</name> &lt; <name><name>changes</name>-&gt;<name>nelts</name></name></expr>)</condition>
+    <block>{
+      <decl_stmt><decl><type><name>svn_merge_range_t</name> *</type><name>elt1</name></decl>, *<decl><type ref="prev"/><name>elt2</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>int</name></type> <name>res</name></decl>;</decl_stmt>
+
+      <expr_stmt><expr><name>elt1</name> = <call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr>*<name>rangelist</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr><name>svn_merge_range_t</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name>elt2</name> = <call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>changes</name></expr></argument>, <argument><expr><name>j</name></expr></argument>, <argument><expr><name>svn_merge_range_t</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name>res</name> = <call><name>svn_sort_compare_ranges</name><argument_list>(<argument><expr>&amp;<name>elt1</name></expr></argument>, <argument><expr>&amp;<name>elt2</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>res</name> == 0</expr>)</condition><then>
+        <block>{
+          <comment type="block">/* Only when merging two non-inheritable ranges is the result also
+             non-inheritable.  In all other cases ensure an inheritiable
+             result. */</comment>
+          <if>if <condition>(<expr><name><name>elt1</name>-&gt;<name>inheritable</name></name> || <name><name>elt2</name>-&gt;<name>inheritable</name></name></expr>)</condition><then>
+            <expr_stmt><expr><name><name>elt1</name>-&gt;<name>inheritable</name></name> = <name>TRUE</name></expr>;</expr_stmt></then></if>
+          <expr_stmt><expr><call><name>combine_with_lastrange</name><argument_list>(<argument><expr>&amp;<name>lastrange</name></expr></argument>, <argument><expr><name>elt1</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>, <argument><expr><name>output</name></expr></argument>,
+                                 <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><name>i</name>++</expr>;</expr_stmt>
+          <expr_stmt><expr><name>j</name>++</expr>;</expr_stmt>
+        }</block></then>
+      <else>else <if>if <condition>(<expr><name>res</name> &lt; 0</expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>combine_with_lastrange</name><argument_list>(<argument><expr>&amp;<name>lastrange</name></expr></argument>, <argument><expr><name>elt1</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>, <argument><expr><name>output</name></expr></argument>,
+                                 <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><name>i</name>++</expr>;</expr_stmt>
+        }</block></then>
+      <else>else
+        <block>{
+          <expr_stmt><expr><call><name>combine_with_lastrange</name><argument_list>(<argument><expr>&amp;<name>lastrange</name></expr></argument>, <argument><expr><name>elt2</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>, <argument><expr><name>output</name></expr></argument>,
+                                 <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><name>j</name>++</expr>;</expr_stmt>
+        }</block></else></if></else></if>
+    }</block></while>
+  <comment type="block">/* Copy back any remaining elements.
+     Only one of these loops should end up running, if anything. */</comment>
+
+  <expr_stmt><expr><call><name>assert</name> <argument_list>(<argument><expr>!(<name>i</name> &lt; <name>(*<name>rangelist</name>)-&gt;<name>nelts</name></name> &amp;&amp; <name>j</name> &lt; <name><name>changes</name>-&gt;<name>nelts</name></name>)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <for>for (<init>;</init> <condition><expr><name>i</name> &lt; <name>(*<name>rangelist</name>)-&gt;<name>nelts</name></name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>)
+    <block>{
+      <decl_stmt><decl><type><name>svn_merge_range_t</name> *</type><name>elt</name> <init>= <expr><call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr>*<name>rangelist</name></expr></argument>, <argument><expr><name>i</name></expr></argument>,
+                                             <argument><expr><name>svn_merge_range_t</name> *</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+      <expr_stmt><expr><call><name>combine_with_lastrange</name><argument_list>(<argument><expr>&amp;<name>lastrange</name></expr></argument>, <argument><expr><name>elt</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>, <argument><expr><name>output</name></expr></argument>,
+                             <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></for>
+
+
+  <for>for (<init>;</init> <condition><expr><name>j</name> &lt; <name><name>changes</name>-&gt;<name>nelts</name></name></expr>;</condition> <incr><expr><name>j</name>++</expr></incr>)
+    <block>{
+      <decl_stmt><decl><type><name>svn_merge_range_t</name> *</type><name>elt</name> <init>= <expr><call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>changes</name></expr></argument>, <argument><expr><name>j</name></expr></argument>, <argument><expr><name>svn_merge_range_t</name> *</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+      <expr_stmt><expr><call><name>combine_with_lastrange</name><argument_list>(<argument><expr>&amp;<name>lastrange</name></expr></argument>, <argument><expr><name>elt</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>, <argument><expr><name>output</name></expr></argument>,
+                             <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></for>
+
+  <expr_stmt><expr>*<name>rangelist</name> = <name>output</name></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_boolean_t</name></type>
+<name>range_intersect</name><parameter_list>(<param><decl><type><name>svn_merge_range_t</name> *</type><name>first</name></decl></param>, <param><decl><type><name>svn_merge_range_t</name> *</type><name>second</name></decl></param>,
+                <param><decl><type><name>svn_boolean_t</name></type> <name>consider_inheritance</name></decl></param>)</parameter_list>
+<block>{
+  <return>return <expr>(<name><name>first</name>-&gt;<name>start</name></name> + 1 &lt;= <name><name>second</name>-&gt;<name>end</name></name>)
+    &amp;&amp; (<name><name>second</name>-&gt;<name>start</name></name> + 1 &lt;= <name><name>first</name>-&gt;<name>end</name></name>)
+    &amp;&amp; (!<name>consider_inheritance</name>
+        || (!(<name><name>first</name>-&gt;<name>inheritable</name></name>) == !(<name><name>second</name>-&gt;<name>inheritable</name></name>)))</expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_boolean_t</name></type>
+<name>range_contains</name><parameter_list>(<param><decl><type><name>svn_merge_range_t</name> *</type><name>first</name></decl></param>, <param><decl><type><name>svn_merge_range_t</name> *</type><name>second</name></decl></param>,
+               <param><decl><type><name>svn_boolean_t</name></type> <name>consider_inheritance</name></decl></param>)</parameter_list>
+<block>{
+  <return>return <expr>(<name><name>first</name>-&gt;<name>start</name></name> &lt;= <name><name>second</name>-&gt;<name>start</name></name>) &amp;&amp; (<name><name>second</name>-&gt;<name>end</name></name> &lt;= <name><name>first</name>-&gt;<name>end</name></name>)
+    &amp;&amp; (!<name>consider_inheritance</name>
+        || (!(<name><name>first</name>-&gt;<name>inheritable</name></name>) == !(<name><name>second</name>-&gt;<name>inheritable</name></name>)))</expr>;</return>
+}</block></function>
+
+<comment type="block">/* Swap start and end fields of RANGE. */</comment>
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>range_swap_endpoints</name><parameter_list>(<param><decl><type><name>svn_merge_range_t</name> *</type><name>range</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_revnum_t</name></type> <name>swap</name> <init>= <expr><name><name>range</name>-&gt;<name>start</name></name></expr></init></decl>;</decl_stmt>
+  <expr_stmt><expr><name><name>range</name>-&gt;<name>start</name></name> = <name><name>range</name>-&gt;<name>end</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>range</name>-&gt;<name>end</name></name> = <name>swap</name></expr>;</expr_stmt>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_rangelist_reverse</name><parameter_list>(<param><decl><type><name>apr_array_header_t</name> *</type><name>rangelist</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>, <decl><type ref="prev"/><name>swap_index</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_merge_range_t</name></type> <name>range</name></decl>;</decl_stmt>
+  <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name><name>rangelist</name>-&gt;<name>nelts</name></name> / 2</expr>;</condition> <incr><expr><name>i</name>++</expr></incr>)
+    <block>{
+      <expr_stmt><expr><name>swap_index</name> = <name><name>rangelist</name>-&gt;<name>nelts</name></name> - <name>i</name> - 1</expr>;</expr_stmt>
+      <expr_stmt><expr><name>range</name> = *<call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>rangelist</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr><name>svn_merge_range_t</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr>*<call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>rangelist</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr><name>svn_merge_range_t</name> *</expr></argument>)</argument_list></call> =
+        *<call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>rangelist</name></expr></argument>, <argument><expr><name>swap_index</name></expr></argument>, <argument><expr><name>svn_merge_range_t</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr>*<call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>rangelist</name></expr></argument>, <argument><expr><name>swap_index</name></expr></argument>, <argument><expr><name>svn_merge_range_t</name> *</expr></argument>)</argument_list></call> = <name>range</name></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>range_swap_endpoints</name><argument_list>(<argument><expr><call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>rangelist</name></expr></argument>, <argument><expr><name>swap_index</name></expr></argument>,
+                                         <argument><expr><name>svn_merge_range_t</name> *</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>range_swap_endpoints</name><argument_list>(<argument><expr><call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>rangelist</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr><name>svn_merge_range_t</name> *</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></for>
+
+  <comment type="block">/* If there's an odd number of elements, we still need to swap the
+     end points of the remaining range. */</comment>
+  <if>if <condition>(<expr><name><name>rangelist</name>-&gt;<name>nelts</name></name> % 2 == 1</expr>)</condition><then>
+    <expr_stmt><expr><call><name>range_swap_endpoints</name><argument_list>(<argument><expr><call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>rangelist</name></expr></argument>, <argument><expr><name><name>rangelist</name>-&gt;<name>nelts</name></name> / 2</expr></argument>,
+                                       <argument><expr><name>svn_merge_range_t</name> *</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* Either remove any overlapping ranges described by ERASER from
+   WHITEBOARD (when DO_REMOVE is TRUE), or capture the overlap, and
+   place the remaining or overlapping ranges in OUTPUT. */</comment>
+<comment type="block">/*  ### FIXME: Some variables names and inline comments for this method
+    ### are legacy from when it was solely the remove() impl. */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>rangelist_intersect_or_remove</name><parameter_list>(<param><decl><type><name>apr_array_header_t</name> **</type><name>output</name></decl></param>,
+                              <param><decl><type><name>apr_array_header_t</name> *</type><name>eraser</name></decl></param>,
+                              <param><decl><type><name>apr_array_header_t</name> *</type><name>whiteboard</name></decl></param>,
+                              <param><decl><type><name>svn_boolean_t</name></type> <name>do_remove</name></decl></param>,
+                              <param><decl><type><name>svn_boolean_t</name></type> <name>consider_inheritance</name></decl></param>,
+                              <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>, <decl><type ref="prev"/><name>j</name></decl>, <decl><type ref="prev"/><name>lasti</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_merge_range_t</name> *</type><name>lastrange</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_merge_range_t</name></type> <name>wboardelt</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr>*<name>output</name> = <call><name>apr_array_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>1</expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>svn_merge_range_t</name> *</expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name>i</name> = 0</expr>;</expr_stmt>
+  <expr_stmt><expr><name>j</name> = 0</expr>;</expr_stmt>
+  <expr_stmt><expr><name>lasti</name> = -1</expr>;</expr_stmt>  <comment type="block">/* Initialized to a value that "i" will never be. */</comment>
+
+  <while>while <condition>(<expr><name>i</name> &lt; <name><name>whiteboard</name>-&gt;<name>nelts</name></name> &amp;&amp; <name>j</name> &lt; <name><name>eraser</name>-&gt;<name>nelts</name></name></expr>)</condition>
+    <block>{
+      <decl_stmt><decl><type><name>svn_merge_range_t</name> *</type><name>elt1</name></decl>, *<decl><type ref="prev"/><name>elt2</name></decl>;</decl_stmt>
+
+      <expr_stmt><expr><name>elt2</name> = <call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>eraser</name></expr></argument>, <argument><expr><name>j</name></expr></argument>, <argument><expr><name>svn_merge_range_t</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <comment type="block">/* Instead of making a copy of the entire array of whiteboard
+         elements, we just keep a copy of the current whiteboard element
+         that needs to be used, and modify our copy if necessary. */</comment>
+      <if>if <condition>(<expr><name>i</name> != <name>lasti</name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><name>wboardelt</name> = *(<call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>whiteboard</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr><name>svn_merge_range_t</name> *</expr></argument>)</argument_list></call>)</expr>;</expr_stmt>
+          <expr_stmt><expr><name>lasti</name> = <name>i</name></expr>;</expr_stmt>
+        }</block></then></if>
+
+      <expr_stmt><expr><name>elt1</name> = &amp;<name>wboardelt</name></expr>;</expr_stmt>
+
+      <comment type="block">/* If the whiteboard range is contained completely in the
+         eraser, we increment the whiteboard.
+         If the ranges intersect, and match exactly, we increment both
+         eraser and whiteboard.
+         Otherwise, we have to generate a range for the left part of
+         the removal of eraser from whiteboard, and possibly change
+         the whiteboard to the remaining portion of the right part of
+         the removal, to test against. */</comment>
+      <if>if <condition>(<expr><call><name>range_contains</name><argument_list>(<argument><expr><name>elt2</name></expr></argument>, <argument><expr><name>elt1</name></expr></argument>, <argument><expr><name>consider_inheritance</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+        <block>{
+          <if>if <condition>(<expr>!<name>do_remove</name></expr>)</condition><then>
+              <expr_stmt><expr><call><name>combine_with_lastrange</name><argument_list>(<argument><expr>&amp;<name>lastrange</name></expr></argument>, <argument><expr><name>elt1</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>, <argument><expr>*<name>output</name></expr></argument>,
+                                     <argument><expr><name>consider_inheritance</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+          <expr_stmt><expr><name>i</name>++</expr>;</expr_stmt>
+
+          <if>if <condition>(<expr><name><name>elt1</name>-&gt;<name>start</name></name> == <name><name>elt2</name>-&gt;<name>start</name></name> &amp;&amp; <name><name>elt1</name>-&gt;<name>end</name></name> == <name><name>elt2</name>-&gt;<name>end</name></name></expr>)</condition><then>
+            <expr_stmt><expr><name>j</name>++</expr>;</expr_stmt></then></if>
+        }</block></then>
+      <else>else <if>if <condition>(<expr><call><name>range_intersect</name><argument_list>(<argument><expr><name>elt2</name></expr></argument>, <argument><expr><name>elt1</name></expr></argument>, <argument><expr><name>consider_inheritance</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+        <block>{
+          <if>if <condition>(<expr><name><name>elt1</name>-&gt;<name>start</name></name> &lt; <name><name>elt2</name>-&gt;<name>start</name></name></expr>)</condition><then>
+            <block>{
+              <comment type="block">/* The whiteboard range starts before the eraser range. */</comment>
+              <decl_stmt><decl><type><name>svn_merge_range_t</name></type> <name>tmp_range</name></decl>;</decl_stmt>
+              <expr_stmt><expr><name><name>tmp_range</name>.<name>inheritable</name></name> = <name><name>elt1</name>-&gt;<name>inheritable</name></name></expr>;</expr_stmt>
+              <if>if <condition>(<expr><name>do_remove</name></expr>)</condition><then>
+                <block>{
+                  <comment type="block">/* Retain the range that falls before the eraser start. */</comment>
+                  <expr_stmt><expr><name><name>tmp_range</name>.<name>start</name></name> = <name><name>elt1</name>-&gt;<name>start</name></name></expr>;</expr_stmt>
+                  <expr_stmt><expr><name><name>tmp_range</name>.<name>end</name></name> = <name><name>elt2</name>-&gt;<name>start</name></name></expr>;</expr_stmt>
+                }</block></then>
+              <else>else
+                <block>{
+                  <comment type="block">/* Retain the range that falls between the eraser
+                     start and whiteboard end. */</comment>
+                  <expr_stmt><expr><name><name>tmp_range</name>.<name>start</name></name> = <name><name>elt2</name>-&gt;<name>start</name></name></expr>;</expr_stmt>
+                  <expr_stmt><expr><name><name>tmp_range</name>.<name>end</name></name> = <call><name>MIN</name><argument_list>(<argument><expr><name><name>elt1</name>-&gt;<name>end</name></name></expr></argument>, <argument><expr><name><name>elt2</name>-&gt;<name>end</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                }</block></else></if>
+
+              <expr_stmt><expr><call><name>combine_with_lastrange</name><argument_list>(<argument><expr>&amp;<name>lastrange</name></expr></argument>, <argument><expr>&amp;<name>tmp_range</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>,
+                                     <argument><expr>*<name>output</name></expr></argument>, <argument><expr><name>consider_inheritance</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></then></if>
+
+          <comment type="block">/* Set up the rest of the whiteboard range for further
+             processing.  */</comment>
+          <if>if <condition>(<expr><name><name>elt1</name>-&gt;<name>end</name></name> &gt; <name><name>elt2</name>-&gt;<name>end</name></name></expr>)</condition><then>
+            <block>{
+              <comment type="block">/* The whiteboard range ends after the eraser range. */</comment>
+              <if>if <condition>(<expr>!<name>do_remove</name></expr>)</condition><then>
+                <block>{
+                  <comment type="block">/* Partial overlap. */</comment>
+                  <decl_stmt><decl><type><name>svn_merge_range_t</name></type> <name>tmp_range</name></decl>;</decl_stmt>
+                  <expr_stmt><expr><name><name>tmp_range</name>.<name>start</name></name> = <call><name>MAX</name><argument_list>(<argument><expr><name><name>elt1</name>-&gt;<name>start</name></name></expr></argument>, <argument><expr><name><name>elt2</name>-&gt;<name>start</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                  <expr_stmt><expr><name><name>tmp_range</name>.<name>end</name></name> = <name><name>elt2</name>-&gt;<name>end</name></name></expr>;</expr_stmt>
+                  <expr_stmt><expr><name><name>tmp_range</name>.<name>inheritable</name></name> = <name><name>elt1</name>-&gt;<name>inheritable</name></name></expr>;</expr_stmt>
+                  <expr_stmt><expr><call><name>combine_with_lastrange</name><argument_list>(<argument><expr>&amp;<name>lastrange</name></expr></argument>, <argument><expr>&amp;<name>tmp_range</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>,
+                                         <argument><expr>*<name>output</name></expr></argument>, <argument><expr><name>consider_inheritance</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                }</block></then></if>
+
+              <expr_stmt><expr><name><name>wboardelt</name>.<name>start</name></name> = <name><name>elt2</name>-&gt;<name>end</name></name></expr>;</expr_stmt>
+              <expr_stmt><expr><name><name>wboardelt</name>.<name>end</name></name> = <name><name>elt1</name>-&gt;<name>end</name></name></expr>;</expr_stmt>
+            }</block></then>
+          <else>else
+            <expr_stmt><expr><name>i</name>++</expr>;</expr_stmt></else></if>
+        }</block></then>
+      <else>else  <comment type="block">/* ranges don't intersect */</comment>
+        <block>{
+          <comment type="block">/* See which side of the whiteboard the eraser is on.  If it
+             is on the left side, we need to move the eraser.
+
+             If it is on past the whiteboard on the right side, we
+             need to output the whiteboard and increment the
+             whiteboard.  */</comment>
+          <if>if <condition>(<expr><call><name>svn_sort_compare_ranges</name><argument_list>(<argument><expr>&amp;<name>elt2</name></expr></argument>, <argument><expr>&amp;<name>elt1</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+            <expr_stmt><expr><name>j</name>++</expr>;</expr_stmt></then>
+          <else>else
+            <block>{
+              <if>if <condition>(<expr><name>do_remove</name> &amp;&amp; !(<name>lastrange</name> &amp;&amp;
+                                 <call><name>combine_ranges</name><argument_list>(<argument><expr>&amp;<name>lastrange</name></expr></argument>, <argument><expr><name>lastrange</name></expr></argument>, <argument><expr><name>elt1</name></expr></argument>,
+                                                <argument><expr><name>consider_inheritance</name></expr></argument>)</argument_list></call>)</expr>)</condition><then>
+                <block>{
+                  <expr_stmt><expr><name>lastrange</name> = <call><name>svn_merge_range_dup</name><argument_list>(<argument><expr><name>elt1</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                  <expr_stmt><expr><call><name>APR_ARRAY_PUSH</name><argument_list>(<argument><expr>*<name>output</name></expr></argument>, <argument><expr><name>svn_merge_range_t</name> *</expr></argument>)</argument_list></call> = <name>lastrange</name></expr>;</expr_stmt>
+                }</block></then></if>
+              <expr_stmt><expr><name>i</name>++</expr>;</expr_stmt>
+            }</block></else></if>
+        }</block></else></if></else></if>
+    }</block></while>
+
+  <if>if <condition>(<expr><name>do_remove</name></expr>)</condition><then>
+    <block>{
+      <comment type="block">/* Copy the current whiteboard element if we didn't hit the end
+         of the whiteboard, and we still had it around.  This element
+         may have been touched, so we can't just walk the whiteboard
+         array, we have to use our copy.  This case only happens when
+         we ran out of eraser before whiteboard, *and* we had changed
+         the whiteboard element. */</comment>
+      <if>if <condition>(<expr><name>i</name> == <name>lasti</name> &amp;&amp; <name>i</name> &lt; <name><name>whiteboard</name>-&gt;<name>nelts</name></name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>combine_with_lastrange</name><argument_list>(<argument><expr>&amp;<name>lastrange</name></expr></argument>, <argument><expr>&amp;<name>wboardelt</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>, <argument><expr>*<name>output</name></expr></argument>,
+                                 <argument><expr><name>consider_inheritance</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><name>i</name>++</expr>;</expr_stmt>
+        }</block></then></if>
+
+      <comment type="block">/* Copy any other remaining untouched whiteboard elements.  */</comment>
+      <for>for (<init>;</init> <condition><expr><name>i</name> &lt; <name><name>whiteboard</name>-&gt;<name>nelts</name></name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>)
+        <block>{
+          <decl_stmt><decl><type><name>svn_merge_range_t</name> *</type><name>elt</name> <init>= <expr><call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>whiteboard</name></expr></argument>, <argument><expr><name>i</name></expr></argument>,
+                                                 <argument><expr><name>svn_merge_range_t</name> *</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+          <expr_stmt><expr><call><name>combine_with_lastrange</name><argument_list>(<argument><expr>&amp;<name>lastrange</name></expr></argument>, <argument><expr><name>elt</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>, <argument><expr>*<name>output</name></expr></argument>,
+                                 <argument><expr><name>consider_inheritance</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></for>
+    }</block></then></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* Expected to handle all the range overlap cases: non, partial, full */</comment>
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_rangelist_intersect</name><parameter_list>(<param><decl><type><name>apr_array_header_t</name> **</type><name>output</name></decl></param>,
+                        <param><decl><type><name>apr_array_header_t</name> *</type><name>rangelist1</name></decl></param>,
+                        <param><decl><type><name>apr_array_header_t</name> *</type><name>rangelist2</name></decl></param>,
+                        <param><decl><type><name>svn_boolean_t</name></type> <name>consider_inheritance</name></decl></param>,
+                        <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <return>return <expr><call><name>rangelist_intersect_or_remove</name><argument_list>(<argument><expr><name>output</name></expr></argument>, <argument><expr><name>rangelist1</name></expr></argument>, <argument><expr><name>rangelist2</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>,
+                                       <argument><expr><name>consider_inheritance</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_rangelist_remove</name><parameter_list>(<param><decl><type><name>apr_array_header_t</name> **</type><name>output</name></decl></param>,
+                     <param><decl><type><name>apr_array_header_t</name> *</type><name>eraser</name></decl></param>,
+                     <param><decl><type><name>apr_array_header_t</name> *</type><name>whiteboard</name></decl></param>,
+                     <param><decl><type><name>svn_boolean_t</name></type> <name>consider_inheritance</name></decl></param>,
+                     <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <return>return <expr><call><name>rangelist_intersect_or_remove</name><argument_list>(<argument><expr><name>output</name></expr></argument>, <argument><expr><name>eraser</name></expr></argument>, <argument><expr><name>whiteboard</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>,
+                                       <argument><expr><name>consider_inheritance</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<comment type="block">/* Output deltas via *DELETED and *ADDED, which will never be @c NULL.
+
+   The following diagrams illustrate some common range delta scenarios:
+
+    (from)           deleted
+    r0 &lt;===========(=========)============[=========]===========&gt; rHEAD
+    [to]                                    added
+
+    (from)           deleted                deleted
+    r0 &lt;===========(=========[============]=========)===========&gt; rHEAD
+    [to]
+
+    (from)           deleted
+    r0 &lt;===========(=========[============)=========]===========&gt; rHEAD
+    [to]                                    added
+
+    (from)                                  deleted
+    r0 &lt;===========[=========(============]=========)===========&gt; rHEAD
+    [to]             added
+
+    (from)
+    r0 &lt;===========[=========(============)=========]===========&gt; rHEAD
+    [to]             added                  added
+
+    (from)  d                                  d             d
+    r0 &lt;===(=[=)=]=[==]=[=(=)=]=[=]=[=(===|===(=)==|=|==[=(=]=)=&gt; rHEAD
+    [to]        a   a    a   a   a   a                   a
+*/</comment>
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_rangelist_diff</name><parameter_list>(<param><decl><type><name>apr_array_header_t</name> **</type><name>deleted</name></decl></param>, <param><decl><type><name>apr_array_header_t</name> **</type><name>added</name></decl></param>,
+                   <param><decl><type><name>apr_array_header_t</name> *</type><name>from</name></decl></param>, <param><decl><type><name>apr_array_header_t</name> *</type><name>to</name></decl></param>,
+                   <param><decl><type><name>svn_boolean_t</name></type> <name>consider_inheritance</name></decl></param>,
+                   <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <comment type="block">/* The items that are present in from, but not in to, must have been
+     deleted. */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_rangelist_remove</name><argument_list>(<argument><expr><name>deleted</name></expr></argument>, <argument><expr><name>to</name></expr></argument>, <argument><expr><name>from</name></expr></argument>, <argument><expr><name>consider_inheritance</name></expr></argument>,
+                               <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <comment type="block">/* The items that are present in to, but not in from, must have been
+     added.  */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_rangelist_remove</name><argument_list>(<argument><expr><name>added</name></expr></argument>, <argument><expr><name>from</name></expr></argument>, <argument><expr><name>to</name></expr></argument>, <argument><expr><name>consider_inheritance</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* Record deletions and additions of entire range lists (by path
+   presence), and delegate to svn_rangelist_diff() for delta
+   calculations on a specific path. */</comment>
+<comment type="block">/* ### TODO: Merge implementation with
+   ### libsvn_subr/sorts.c:svn_prop_diffs().  Factor out a generic
+   ### hash diffing function for addition to APR's apr_hash.h API. */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>walk_mergeinfo_hash_for_diff</name><parameter_list>(<param><decl><type><name>svn_mergeinfo_t</name></type> <name>from</name></decl></param>, <param><decl><type><name>svn_mergeinfo_t</name></type> <name>to</name></decl></param>,
+                             <param><decl><type><name>svn_mergeinfo_t</name></type> <name>deleted</name></decl></param>, <param><decl><type><name>svn_mergeinfo_t</name></type> <name>added</name></decl></param>,
+                             <param><decl><type><name>svn_boolean_t</name></type> <name>consider_inheritance</name></decl></param>,
+                             <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>apr_hash_index_t</name> *</type><name>hi</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>void</name> *</type><name>key</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>void</name> *</type><name>val</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>from_rangelist</name></decl>, *<decl><type ref="prev"/><name>to_rangelist</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Handle path deletions and differences. */</comment>
+  <for>for (<init><expr><name>hi</name> = <call><name>apr_hash_first</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>from</name></expr></argument>)</argument_list></call></expr>;</init> <condition><expr><name>hi</name></expr>;</condition> <incr><expr><name>hi</name> = <call><name>apr_hash_next</name><argument_list>(<argument><expr><name>hi</name></expr></argument>)</argument_list></call></expr></incr>)
+    <block>{
+      <expr_stmt><expr><call><name>apr_hash_this</name><argument_list>(<argument><expr><name>hi</name></expr></argument>, <argument><expr>&amp;<name>key</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr>&amp;<name>val</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name>path</name> = <name>key</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name>from_rangelist</name> = <name>val</name></expr>;</expr_stmt>
+
+      <comment type="block">/* If the path is not present at all in the "to" hash, the
+         entire "from" rangelist is a deletion.  Paths which are
+         present in the "to" hash require closer scrutiny. */</comment>
+      <expr_stmt><expr><name>to_rangelist</name> = <call><name>apr_hash_get</name><argument_list>(<argument><expr><name>to</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>to_rangelist</name></expr>)</condition><then>
+        <block>{
+          <comment type="block">/* Record any deltas (additions or deletions). */</comment>
+          <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>deleted_rangelist</name></decl>, *<decl><type ref="prev"/><name>added_rangelist</name></decl>;</decl_stmt>
+          <expr_stmt><expr><call><name>svn_rangelist_diff</name><argument_list>(<argument><expr>&amp;<name>deleted_rangelist</name></expr></argument>, <argument><expr>&amp;<name>added_rangelist</name></expr></argument>,
+                             <argument><expr><name>from_rangelist</name></expr></argument>, <argument><expr><name>to_rangelist</name></expr></argument>,
+                             <argument><expr><name>consider_inheritance</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <if>if <condition>(<expr><name>deleted</name> &amp;&amp; <name><name>deleted_rangelist</name>-&gt;<name>nelts</name></name> &gt; 0</expr>)</condition><then>
+            <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name>deleted</name></expr></argument>, <argument><expr><call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>path</name></expr></argument>)</argument_list></call></expr></argument>,
+                         <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>, <argument><expr><name>deleted_rangelist</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+          <if>if <condition>(<expr><name>added</name> &amp;&amp; <name><name>added_rangelist</name>-&gt;<name>nelts</name></name> &gt; 0</expr>)</condition><then>
+            <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name>added</name></expr></argument>, <argument><expr><call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>path</name></expr></argument>)</argument_list></call></expr></argument>,
+                         <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>, <argument><expr><name>added_rangelist</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+        }</block></then>
+      <else>else <if>if <condition>(<expr><name>deleted</name></expr>)</condition><then>
+        <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name>deleted</name></expr></argument>, <argument><expr><call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>path</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>,
+                     <argument><expr><call><name>svn_rangelist_dup</name><argument_list>(<argument><expr><name>from_rangelist</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if></else></if>
+    }</block></for>
+
+  <comment type="block">/* Handle path additions. */</comment>
+  <if>if <condition>(<expr>!<name>added</name></expr>)</condition><then>
+    <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return></then></if>
+
+  <for>for (<init><expr><name>hi</name> = <call><name>apr_hash_first</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>to</name></expr></argument>)</argument_list></call></expr>;</init> <condition><expr><name>hi</name></expr>;</condition> <incr><expr><name>hi</name> = <call><name>apr_hash_next</name><argument_list>(<argument><expr><name>hi</name></expr></argument>)</argument_list></call></expr></incr>)
+    <block>{
+      <expr_stmt><expr><call><name>apr_hash_this</name><argument_list>(<argument><expr><name>hi</name></expr></argument>, <argument><expr>&amp;<name>key</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr>&amp;<name>val</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name>path</name> = <name>key</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name>to_rangelist</name> = <name>val</name></expr>;</expr_stmt>
+
+      <comment type="block">/* If the path is not present in the "from" hash, the entire
+         "to" rangelist is an addition. */</comment>
+      <if>if <condition>(<expr><call><name>apr_hash_get</name><argument_list>(<argument><expr><name>from</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>)</argument_list></call> == <name>NULL</name></expr>)</condition><then>
+        <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name>added</name></expr></argument>, <argument><expr><call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>path</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>,
+                     <argument><expr><call><name>svn_rangelist_dup</name><argument_list>(<argument><expr><name>to_rangelist</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+    }</block></for>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_mergeinfo_diff</name><parameter_list>(<param><decl><type><name>svn_mergeinfo_t</name> *</type><name>deleted</name></decl></param>, <param><decl><type><name>svn_mergeinfo_t</name> *</type><name>added</name></decl></param>,
+                   <param><decl><type><name>svn_mergeinfo_t</name></type> <name>from</name></decl></param>, <param><decl><type><name>svn_mergeinfo_t</name></type> <name>to</name></decl></param>,
+                   <param><decl><type><name>svn_boolean_t</name></type> <name>consider_inheritance</name></decl></param>,
+                   <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <if>if <condition>(<expr><name>from</name> &amp;&amp; <name>to</name> == <name>NULL</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr>*<name>deleted</name> = <call><name>svn_mergeinfo_dup</name><argument_list>(<argument><expr><name>from</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr>*<name>added</name> = <call><name>apr_hash_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>from</name> == <name>NULL</name> &amp;&amp; <name>to</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr>*<name>deleted</name> = <call><name>apr_hash_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr>*<name>added</name> = <call><name>svn_mergeinfo_dup</name><argument_list>(<argument><expr><name>to</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else
+    <block>{
+      <expr_stmt><expr>*<name>deleted</name> = <call><name>apr_hash_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr>*<name>added</name> = <call><name>apr_hash_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <if>if <condition>(<expr><name>from</name> &amp;&amp; <name>to</name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>walk_mergeinfo_hash_for_diff</name><argument_list>(<argument><expr><name>from</name></expr></argument>, <argument><expr><name>to</name></expr></argument>, <argument><expr>*<name>deleted</name></expr></argument>, <argument><expr>*<name>added</name></expr></argument>,
+                                               <argument><expr><name>consider_inheritance</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+    }</block></else></if></else></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_mergeinfo__equals</name><parameter_list>(<param><decl><type><name>svn_boolean_t</name> *</type><name>is_equal</name></decl></param>,
+                      <param><decl><type><name>svn_mergeinfo_t</name></type> <name>info1</name></decl></param>,
+                      <param><decl><type><name>svn_mergeinfo_t</name></type> <name>info2</name></decl></param>,
+                      <param><decl><type><name>svn_boolean_t</name></type> <name>consider_inheritance</name></decl></param>,
+                      <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <if>if <condition>(<expr><call><name>apr_hash_count</name><argument_list>(<argument><expr><name>info1</name></expr></argument>)</argument_list></call> == <call><name>apr_hash_count</name><argument_list>(<argument><expr><name>info2</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>svn_mergeinfo_t</name></type> <name>deleted</name></decl>, <decl><type ref="prev"/><name>added</name></decl>;</decl_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_mergeinfo_diff</name><argument_list>(<argument><expr>&amp;<name>deleted</name></expr></argument>, <argument><expr>&amp;<name>added</name></expr></argument>, <argument><expr><name>info1</name></expr></argument>, <argument><expr><name>info2</name></expr></argument>,
+                                 <argument><expr><name>consider_inheritance</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr>*<name>is_equal</name> = <call><name>apr_hash_count</name><argument_list>(<argument><expr><name>deleted</name></expr></argument>)</argument_list></call> == 0 &amp;&amp; <call><name>apr_hash_count</name><argument_list>(<argument><expr><name>added</name></expr></argument>)</argument_list></call> == 0</expr>;</expr_stmt>
+    }</block></then>
+  <else>else
+    <block>{
+      <expr_stmt><expr>*<name>is_equal</name> = <name>FALSE</name></expr>;</expr_stmt>
+    }</block></else></if>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_mergeinfo_merge</name><parameter_list>(<param><decl><type><name>svn_mergeinfo_t</name></type> <name>mergeinfo</name></decl></param>, <param><decl><type><name>svn_mergeinfo_t</name></type> <name>changes</name></decl></param>,
+                    <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>sorted1</name></decl>, *<decl><type ref="prev"/><name>sorted2</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>, <decl><type ref="prev"/><name>j</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name>sorted1</name> = <call><name>svn_sort__hash</name><argument_list>(<argument><expr><name>mergeinfo</name></expr></argument>, <argument><expr><name>svn_sort_compare_items_as_paths</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>sorted2</name> = <call><name>svn_sort__hash</name><argument_list>(<argument><expr><name>changes</name></expr></argument>, <argument><expr><name>svn_sort_compare_items_as_paths</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name>i</name> = 0</expr>;</expr_stmt>
+  <expr_stmt><expr><name>j</name> = 0</expr>;</expr_stmt>
+  <while>while <condition>(<expr><name>i</name> &lt; <name><name>sorted1</name>-&gt;<name>nelts</name></name> &amp;&amp; <name>j</name> &lt; <name><name>sorted2</name>-&gt;<name>nelts</name></name></expr>)</condition>
+    <block>{
+      <decl_stmt><decl><type><name>svn_sort__item_t</name></type> <name>elt1</name></decl>, <decl><type ref="prev"/><name>elt2</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>int</name></type> <name>res</name></decl>;</decl_stmt>
+
+      <expr_stmt><expr><name>elt1</name> = <call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>sorted1</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr><name>svn_sort__item_t</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name>elt2</name> = <call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>sorted2</name></expr></argument>, <argument><expr><name>j</name></expr></argument>, <argument><expr><name>svn_sort__item_t</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name>res</name> = <call><name>svn_sort_compare_items_as_paths</name><argument_list>(<argument><expr>&amp;<name>elt1</name></expr></argument>, <argument><expr>&amp;<name>elt2</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <if>if <condition>(<expr><name>res</name> == 0</expr>)</condition><then>
+        <block>{
+          <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>rl1</name></decl>, *<decl><type ref="prev"/><name>rl2</name></decl>;</decl_stmt>
+
+          <expr_stmt><expr><name>rl1</name> = <name><name>elt1</name>.<name>value</name></name></expr>;</expr_stmt>
+          <expr_stmt><expr><name>rl2</name> = <name><name>elt2</name>.<name>value</name></name></expr>;</expr_stmt>
+
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_rangelist_merge</name><argument_list>(<argument><expr>&amp;<name>rl1</name></expr></argument>, <argument><expr><name>rl2</name></expr></argument>,
+                                      <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name>mergeinfo</name></expr></argument>, <argument><expr><name><name>elt1</name>.<name>key</name></name></expr></argument>, <argument><expr><name><name>elt1</name>.<name>klen</name></name></expr></argument>, <argument><expr><name>rl1</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><name>i</name>++</expr>;</expr_stmt>
+          <expr_stmt><expr><name>j</name>++</expr>;</expr_stmt>
+        }</block></then>
+      <else>else <if>if <condition>(<expr><name>res</name> &lt; 0</expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><name>i</name>++</expr>;</expr_stmt>
+        }</block></then>
+      <else>else
+        <block>{
+          <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name>mergeinfo</name></expr></argument>, <argument><expr><name><name>elt2</name>.<name>key</name></name></expr></argument>, <argument><expr><name><name>elt2</name>.<name>klen</name></name></expr></argument>, <argument><expr><name><name>elt2</name>.<name>value</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><name>j</name>++</expr>;</expr_stmt>
+        }</block></else></if></else></if>
+    }</block></while>
+
+  <comment type="block">/* Copy back any remaining elements from the second hash. */</comment>
+  <for>for (<init>;</init> <condition><expr><name>j</name> &lt; <name><name>sorted2</name>-&gt;<name>nelts</name></name></expr>;</condition> <incr><expr><name>j</name>++</expr></incr>)
+    <block>{
+      <decl_stmt><decl><type><name>svn_sort__item_t</name></type> <name>elt</name> <init>= <expr><call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>sorted2</name></expr></argument>, <argument><expr><name>j</name></expr></argument>, <argument><expr><name>svn_sort__item_t</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+      <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name>mergeinfo</name></expr></argument>, <argument><expr><name><name>elt</name>.<name>key</name></name></expr></argument>, <argument><expr><name><name>elt</name>.<name>klen</name></name></expr></argument>, <argument><expr><name><name>elt</name>.<name>value</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></for>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_mergeinfo_intersect</name><parameter_list>(<param><decl><type><name>svn_mergeinfo_t</name> *</type><name>mergeinfo</name></decl></param>,
+                        <param><decl><type><name>svn_mergeinfo_t</name></type> <name>mergeinfo1</name></decl></param>,
+                        <param><decl><type><name>svn_mergeinfo_t</name></type> <name>mergeinfo2</name></decl></param>,
+                        <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>apr_hash_index_t</name> *</type><name>hi</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr>*<name>mergeinfo</name> = <call><name>apr_hash_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* ### TODO(reint): Do we care about the case when a path in one
+     ### mergeinfo hash has inheritable mergeinfo, and in the other
+     ### has non-inhertiable mergeinfo?  It seems like that path
+     ### itself should really be an intersection, while child paths
+     ### should not be... */</comment>
+  <for>for (<init><expr><name>hi</name> = <call><name>apr_hash_first</name><argument_list>(<argument><expr><call><name>apr_hash_pool_get</name><argument_list>(<argument><expr><name>mergeinfo1</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>mergeinfo1</name></expr></argument>)</argument_list></call></expr>;</init>
+       <condition><expr><name>hi</name></expr>;</condition> <incr><expr><name>hi</name> = <call><name>apr_hash_next</name><argument_list>(<argument><expr><name>hi</name></expr></argument>)</argument_list></call></expr></incr>)
+    <block>{
+      <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>rangelist</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><specifier>const</specifier> <name>void</name> *</type><name>path</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>void</name> *</type><name>val</name></decl>;</decl_stmt>
+      <expr_stmt><expr><call><name>apr_hash_this</name><argument_list>(<argument><expr><name>hi</name></expr></argument>, <argument><expr>&amp;<name>path</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr>&amp;<name>val</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name>rangelist</name> = <call><name>apr_hash_get</name><argument_list>(<argument><expr><name>mergeinfo2</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>rangelist</name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_rangelist_intersect</name><argument_list>(<argument><expr>&amp;<name>rangelist</name></expr></argument>,
+                                          <argument><expr>(<name>apr_array_header_t</name> *) <name>val</name></expr></argument>,
+                                          <argument><expr><name>rangelist</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <if>if <condition>(<expr><name><name>rangelist</name>-&gt;<name>nelts</name></name> &gt; 0</expr>)</condition><then>
+            <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr>*<name>mergeinfo</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>, <argument><expr><name>rangelist</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+        }</block></then></if>
+    }</block></for>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_mergeinfo_remove</name><parameter_list>(<param><decl><type><name>svn_mergeinfo_t</name> *</type><name>mergeinfo</name></decl></param>, <param><decl><type><name>svn_mergeinfo_t</name></type> <name>eraser</name></decl></param>,
+                     <param><decl><type><name>svn_mergeinfo_t</name></type> <name>whiteboard</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <expr_stmt><expr>*<name>mergeinfo</name> = <call><name>apr_hash_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>walk_mergeinfo_hash_for_diff</name><argument_list>(<argument><expr><name>whiteboard</name></expr></argument>, <argument><expr><name>eraser</name></expr></argument>, <argument><expr>*<name>mergeinfo</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                       <argument><expr><name>TRUE</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_rangelist_to_string</name><parameter_list>(<param><decl><type><name>svn_string_t</name> **</type><name>output</name></decl></param>,
+                        <param><decl><type><specifier>const</specifier> <name>apr_array_header_t</name> *</type><name>rangelist</name></decl></param>,
+                        <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_stringbuf_t</name> *</type><name>buf</name> <init>= <expr><call><name>svn_stringbuf_create</name><argument_list>(<argument><expr>""</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr><name><name>rangelist</name>-&gt;<name>nelts</name></name> &gt; 0</expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>svn_merge_range_t</name> *</type><name>range</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>svn_string_t</name> *</type><name>toappend</name></decl>;</decl_stmt>
+
+      <comment type="block">/* Handle the elements that need commas at the end.  */</comment>
+      <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name><name>rangelist</name>-&gt;<name>nelts</name></name> - 1</expr>;</condition> <incr><expr><name>i</name>++</expr></incr>)
+        <block>{
+          <expr_stmt><expr><name>range</name> = <call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>rangelist</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr><name>svn_merge_range_t</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>range_to_string</name><argument_list>(<argument><expr>&amp;<name>toappend</name></expr></argument>, <argument><expr><name>range</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><call><name>svn_stringbuf_appendcstr</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr><name><name>toappend</name>-&gt;<name>data</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><call><name>svn_stringbuf_appendcstr</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr>","</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></for>
+
+      <comment type="block">/* Now handle the last element, which needs no comma.  */</comment>
+      <expr_stmt><expr><name>range</name> = <call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>rangelist</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr><name>svn_merge_range_t</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>range_to_string</name><argument_list>(<argument><expr>&amp;<name>toappend</name></expr></argument>, <argument><expr><name>range</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>svn_stringbuf_appendcstr</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr><name><name>toappend</name>-&gt;<name>data</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <expr_stmt><expr>*<name>output</name> = <call><name>svn_string_create_from_buf</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* Converts a mergeinfo @a input to an unparsed mergeinfo in @a
+ * output.  If @a input contains no elements, return the empty string.
+ */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>mergeinfo_to_stringbuf</name><parameter_list>(<param><decl><type><name>svn_stringbuf_t</name> **</type><name>output</name></decl></param>, <param><decl><type><name>svn_mergeinfo_t</name></type> <name>input</name></decl></param>,
+                       <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <expr_stmt><expr>*<name>output</name> = <call><name>svn_stringbuf_create</name><argument_list>(<argument><expr>""</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><call><name>apr_hash_count</name><argument_list>(<argument><expr><name>input</name></expr></argument>)</argument_list></call> &gt; 0</expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>sorted</name> <init>=
+        <expr><call><name>svn_sort__hash</name><argument_list>(<argument><expr><name>input</name></expr></argument>, <argument><expr><name>svn_sort_compare_items_as_paths</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+
+      <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name><name>sorted</name>-&gt;<name>nelts</name></name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>)
+        <block>{
+          <decl_stmt><decl><type><name>svn_sort__item_t</name></type> <name>elt</name> <init>= <expr><call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>sorted</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr><name>svn_sort__item_t</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+          <decl_stmt><decl><type><name>svn_string_t</name> *</type><name>revlist</name></decl>;</decl_stmt>
+
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_rangelist_to_string</name><argument_list>(<argument><expr>&amp;<name>revlist</name></expr></argument>, <argument><expr><name><name>elt</name>.<name>value</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><call><name>svn_stringbuf_appendcstr</name><argument_list>(<argument><expr>*<name>output</name></expr></argument>,
+                                   <argument><expr><call><name>apr_psprintf</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>"%s:%s"</expr></argument>,
+                                                <argument><expr>(<name>char</name> *) <name><name>elt</name>.<name>key</name></name></expr></argument>,
+                                                <argument><expr><name><name>revlist</name>-&gt;<name>data</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <if>if <condition>(<expr><name>i</name> &lt; <name><name>sorted</name>-&gt;<name>nelts</name></name> - 1</expr>)</condition><then>
+            <expr_stmt><expr><call><name>svn_stringbuf_appendcstr</name><argument_list>(<argument><expr>*<name>output</name></expr></argument>, <argument><expr>"\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+        }</block></for>
+    }</block></then></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_mergeinfo_to_string</name><parameter_list>(<param><decl><type><name>svn_string_t</name> **</type><name>output</name></decl></param>, <param><decl><type><name>svn_mergeinfo_t</name></type> <name>input</name></decl></param>,
+                        <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <if>if <condition>(<expr><call><name>apr_hash_count</name><argument_list>(<argument><expr><name>input</name></expr></argument>)</argument_list></call> &gt; 0</expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>svn_stringbuf_t</name> *</type><name>mergeinfo_buf</name></decl>;</decl_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>mergeinfo_to_stringbuf</name><argument_list>(<argument><expr>&amp;<name>mergeinfo_buf</name></expr></argument>, <argument><expr><name>input</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr>*<name>output</name> = <call><name>svn_string_create_from_buf</name><argument_list>(<argument><expr><name>mergeinfo_buf</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else
+    <block>{
+      <expr_stmt><expr>*<name>output</name> = <call><name>svn_string_create</name><argument_list>(<argument><expr>""</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* Perform an in-place sort of the rangelists in a mergeinfo hash.  */</comment>
+<function><type><name>svn_error_t</name>*</type>
+<name>svn_mergeinfo_sort</name><parameter_list>(<param><decl><type><name>svn_mergeinfo_t</name></type> <name>input</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>apr_hash_index_t</name> *</type><name>hi</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>void</name> *</type><name>val</name></decl>;</decl_stmt>
+
+  <for>for (<init><expr><name>hi</name> = <call><name>apr_hash_first</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>input</name></expr></argument>)</argument_list></call></expr>;</init> <condition><expr><name>hi</name></expr>;</condition> <incr><expr><name>hi</name> = <call><name>apr_hash_next</name><argument_list>(<argument><expr><name>hi</name></expr></argument>)</argument_list></call></expr></incr>)
+    <block>{
+      <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>rl</name></decl>;</decl_stmt>
+      <expr_stmt><expr><call><name>apr_hash_this</name><argument_list>(<argument><expr><name>hi</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr>&amp;<name>val</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name>rl</name> = <name>val</name></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>qsort</name><argument_list>(<argument><expr><name><name>rl</name>-&gt;<name>elts</name></name></expr></argument>, <argument><expr><name><name>rl</name>-&gt;<name>nelts</name></name></expr></argument>, <argument><expr><name><name>rl</name>-&gt;<name>elt_size</name></name></expr></argument>, <argument><expr><name>svn_sort_compare_ranges</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></for>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_mergeinfo_t</name></type>
+<name>svn_mergeinfo_dup</name><parameter_list>(<param><decl><type><name>svn_mergeinfo_t</name></type> <name>mergeinfo</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_mergeinfo_t</name></type> <name>new_mergeinfo</name> <init>= <expr><call><name>apr_hash_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_hash_index_t</name> *</type><name>hi</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>void</name> *</type><name>path</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_ssize_t</name></type> <name>pathlen</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>void</name> *</type><name>rangelist</name></decl>;</decl_stmt>
+
+  <for>for (<init><expr><name>hi</name> = <call><name>apr_hash_first</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>mergeinfo</name></expr></argument>)</argument_list></call></expr>;</init> <condition><expr><name>hi</name></expr>;</condition> <incr><expr><name>hi</name> = <call><name>apr_hash_next</name><argument_list>(<argument><expr><name>hi</name></expr></argument>)</argument_list></call></expr></incr>)
+    <block>{
+      <expr_stmt><expr><call><name>apr_hash_this</name><argument_list>(<argument><expr><name>hi</name></expr></argument>, <argument><expr>&amp;<name>path</name></expr></argument>, <argument><expr>&amp;<name>pathlen</name></expr></argument>, <argument><expr>&amp;<name>rangelist</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name>new_mergeinfo</name></expr></argument>, <argument><expr><call><name>apr_pstrmemdup</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>pathlen</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>pathlen</name></expr></argument>,
+                   <argument><expr><call><name>svn_rangelist_dup</name><argument_list>(<argument><expr>(<name>apr_array_header_t</name> *) <name>rangelist</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></for>
+
+  <return>return <expr><name>new_mergeinfo</name></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_mergeinfo_inheritable</name><parameter_list>(<param><decl><type><name>svn_mergeinfo_t</name> *</type><name>output</name></decl></param>,
+                          <param><decl><type><name>svn_mergeinfo_t</name></type> <name>mergeinfo</name></decl></param>,
+                          <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+                          <param><decl><type><name>svn_revnum_t</name></type> <name>start</name></decl></param>,
+                          <param><decl><type><name>svn_revnum_t</name></type> <name>end</name></decl></param>,
+                          <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>apr_hash_index_t</name> *</type><name>hi</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>void</name> *</type><name>key</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_ssize_t</name></type> <name>keylen</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>void</name> *</type><name>rangelist</name></decl>;</decl_stmt>
+
+  <decl_stmt><decl><type><name>svn_mergeinfo_t</name></type> <name>inheritable_mergeinfo</name> <init>= <expr><call><name>apr_hash_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <for>for (<init><expr><name>hi</name> = <call><name>apr_hash_first</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>mergeinfo</name></expr></argument>)</argument_list></call></expr>;</init> <condition><expr><name>hi</name></expr>;</condition> <incr><expr><name>hi</name> = <call><name>apr_hash_next</name><argument_list>(<argument><expr><name>hi</name></expr></argument>)</argument_list></call></expr></incr>)
+    <block>{
+      <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>inheritable_rangelist</name></decl>;</decl_stmt>
+      <expr_stmt><expr><call><name>apr_hash_this</name><argument_list>(<argument><expr><name>hi</name></expr></argument>, <argument><expr>&amp;<name>key</name></expr></argument>, <argument><expr>&amp;<name>keylen</name></expr></argument>, <argument><expr>&amp;<name>rangelist</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr>!<name>path</name> || <call><name>svn_path_compare_paths</name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr>(const <name>char</name> *)<name>key</name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_rangelist_inheritable</name><argument_list>(<argument><expr>&amp;<name>inheritable_rangelist</name></expr></argument>,
+                                          <argument><expr>(<name>apr_array_header_t</name> *) <name>rangelist</name></expr></argument>,
+                                          <argument><expr><name>start</name></expr></argument>, <argument><expr><name>end</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+      <else>else
+        <expr_stmt><expr><name>inheritable_rangelist</name> =
+          <call><name>svn_rangelist_dup</name><argument_list>(<argument><expr>(<name>apr_array_header_t</name> *)<name>rangelist</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+      <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name>inheritable_mergeinfo</name></expr></argument>,
+                   <argument><expr><call><name>apr_pstrmemdup</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>key</name></expr></argument>, <argument><expr><name>keylen</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>keylen</name></expr></argument>,
+                   <argument><expr><name>inheritable_rangelist</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></for>
+  <expr_stmt><expr>*<name>output</name> = <name>inheritable_mergeinfo</name></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_rangelist_inheritable</name><parameter_list>(<param><decl><type><name>apr_array_header_t</name> **</type><name>inheritable_rangelist</name></decl></param>,
+                          <param><decl><type><name>apr_array_header_t</name> *</type><name>rangelist</name></decl></param>,
+                          <param><decl><type><name>svn_revnum_t</name></type> <name>start</name></decl></param>,
+                          <param><decl><type><name>svn_revnum_t</name></type> <name>end</name></decl></param>,
+                          <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <expr_stmt><expr>*<name>inheritable_rangelist</name> = <call><name>apr_array_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>1</expr></argument>,
+                                          <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>svn_merge_range_t</name> *</expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name><name>rangelist</name>-&gt;<name>nelts</name></name></expr>)</condition><then>
+    <block>{
+      <if>if <condition>(<expr>!<call><name>SVN_IS_VALID_REVNUM</name><argument_list>(<argument><expr><name>start</name></expr></argument>)</argument_list></call>
+          || !<call><name>SVN_IS_VALID_REVNUM</name><argument_list>(<argument><expr><name>end</name></expr></argument>)</argument_list></call>
+          || <name>end</name> &lt; <name>start</name></expr>)</condition><then>
+        <block>{
+          <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+          <comment type="block">/* We want all non-inheritable ranges removed. */</comment>
+          <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name><name>rangelist</name>-&gt;<name>nelts</name></name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>)
+            <block>{
+              <decl_stmt><decl><type><name>svn_merge_range_t</name> *</type><name>range</name> <init>= <expr><call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>rangelist</name></expr></argument>, <argument><expr><name>i</name></expr></argument>,
+                                                       <argument><expr><name>svn_merge_range_t</name> *</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+              <if>if <condition>(<expr><name><name>range</name>-&gt;<name>inheritable</name></name></expr>)</condition><then>
+                <block>{
+                  <decl_stmt><decl><type><name>svn_merge_range_t</name> *</type><name>inheritable_range</name> <init>=
+                    <expr><call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>inheritable_range</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+                  <expr_stmt><expr><name><name>inheritable_range</name>-&gt;<name>start</name></name> = <name><name>range</name>-&gt;<name>start</name></name></expr>;</expr_stmt>
+                  <expr_stmt><expr><name><name>inheritable_range</name>-&gt;<name>end</name></name> = <name><name>range</name>-&gt;<name>end</name></name></expr>;</expr_stmt>
+                  <expr_stmt><expr><name><name>inheritable_range</name>-&gt;<name>inheritable</name></name> = <name>TRUE</name></expr>;</expr_stmt>
+                  <expr_stmt><expr><call><name>APR_ARRAY_PUSH</name><argument_list>(<argument><expr>*<name>inheritable_rangelist</name></expr></argument>,
+                                 <argument><expr><name>svn_merge_range_t</name> *</expr></argument>)</argument_list></call> = <name>range</name></expr>;</expr_stmt>
+                }</block></then></if>
+            }</block></for>
+        }</block></then>
+      <else>else
+        <block>{
+          <comment type="block">/* We want only the non-inheritable ranges bound by START
+             and END removed. */</comment>
+          <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>ranges_inheritable</name> <init>=
+            <expr><call><name>apr_array_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>svn_merge_range_t</name> *</expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+          <decl_stmt><decl><type><name>svn_merge_range_t</name> *</type><name>range</name> <init>= <expr><call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>range</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+          <expr_stmt><expr><name><name>range</name>-&gt;<name>start</name></name> = <name>start</name></expr>;</expr_stmt>
+          <expr_stmt><expr><name><name>range</name>-&gt;<name>end</name></name> = <name>end</name></expr>;</expr_stmt>
+          <expr_stmt><expr><name><name>range</name>-&gt;<name>inheritable</name></name> = <name>FALSE</name></expr>;</expr_stmt>
+          <expr_stmt><expr><call><name>APR_ARRAY_PUSH</name><argument_list>(<argument><expr><name>ranges_inheritable</name></expr></argument>, <argument><expr><name>svn_merge_range_t</name> *</expr></argument>)</argument_list></call> = <name>range</name></expr>;</expr_stmt>
+
+          <if>if <condition>(<expr><name><name>rangelist</name>-&gt;<name>nelts</name></name></expr>)</condition><then>
+            <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_rangelist_remove</name><argument_list>(<argument><expr><name>inheritable_rangelist</name></expr></argument>,
+                                         <argument><expr><name>ranges_inheritable</name></expr></argument>,
+                                         <argument><expr><name>rangelist</name></expr></argument>,
+                                         <argument><expr><name>TRUE</name></expr></argument>,
+                                         <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+        }</block></else></if>
+    }</block></then></if>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_boolean_t</name></type>
+<name>svn_mergeinfo__remove_empty_rangelists</name><parameter_list>(<param><decl><type><name>svn_mergeinfo_t</name></type> <name>mergeinfo</name></decl></param>,
+                                       <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>apr_hash_index_t</name> *</type><name>hi</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>removed_some_ranges</name> <init>= <expr><name>FALSE</name></expr></init></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr><name>mergeinfo</name></expr>)</condition><then>
+    <block>{
+      <for>for (<init><expr><name>hi</name> = <call><name>apr_hash_first</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>mergeinfo</name></expr></argument>)</argument_list></call></expr>;</init> <condition><expr><name>hi</name></expr>;</condition> <incr><expr><name>hi</name> = <call><name>apr_hash_next</name><argument_list>(<argument><expr><name>hi</name></expr></argument>)</argument_list></call></expr></incr>)
+        <block>{
+          <decl_stmt><decl><type><specifier>const</specifier> <name>void</name> *</type><name>key</name></decl>;</decl_stmt>
+          <decl_stmt><decl><type><name>void</name> *</type><name>value</name></decl>;</decl_stmt>
+          <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl>;</decl_stmt>
+          <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>rangelist</name></decl>;</decl_stmt>
+          
+          <expr_stmt><expr><call><name>apr_hash_this</name><argument_list>(<argument><expr><name>hi</name></expr></argument>, <argument><expr>&amp;<name>key</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr>&amp;<name>value</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><name>path</name> = <name>key</name></expr>;</expr_stmt>
+          <expr_stmt><expr><name>rangelist</name> = <name>value</name></expr>;</expr_stmt>
+          
+          <if>if <condition>(<expr><name><name>rangelist</name>-&gt;<name>nelts</name></name> == 0</expr>)</condition><then>
+            <block>{
+              <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name>mergeinfo</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+              <expr_stmt><expr><name>removed_some_ranges</name> = <name>TRUE</name></expr>;</expr_stmt>
+            }</block></then></if>
+        }</block></for>
+    }</block></then></if>
+  <return>return <expr><name>removed_some_ranges</name></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_mergeinfo__remove_prefix_from_catalog</name><parameter_list>(<param><decl><type><name>svn_mergeinfo_catalog_t</name> *</type><name>out_catalog</name></decl></param>,
+                                          <param><decl><type><name>svn_mergeinfo_catalog_t</name></type> <name>in_catalog</name></decl></param>,
+                                          <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>prefix</name></decl></param>,
+                                          <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>apr_hash_index_t</name> *</type><name>hi</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>prefix_len</name> <init>= <expr><call><name>strlen</name><argument_list>(<argument><expr><name>prefix</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <expr_stmt><expr>*<name>out_catalog</name> = <call><name>apr_hash_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <for>for (<init><expr><name>hi</name> = <call><name>apr_hash_first</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>in_catalog</name></expr></argument>)</argument_list></call></expr>;</init> <condition><expr><name>hi</name></expr>;</condition> <incr><expr><name>hi</name> = <call><name>apr_hash_next</name><argument_list>(<argument><expr><name>hi</name></expr></argument>)</argument_list></call></expr></incr>)
+    <block>{
+      <decl_stmt><decl><type><specifier>const</specifier> <name>void</name> *</type><name>key</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>original_path</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>void</name> *</type><name>value</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>apr_ssize_t</name></type> <name>klen</name></decl>;</decl_stmt>
+
+      <expr_stmt><expr><call><name>apr_hash_this</name><argument_list>(<argument><expr><name>hi</name></expr></argument>, <argument><expr>&amp;<name>key</name></expr></argument>, <argument><expr>&amp;<name>klen</name></expr></argument>, <argument><expr>&amp;<name>value</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name>original_path</name> = <name>key</name></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>klen</name> &gt;= <name>prefix_len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><call><name>strncmp</name><argument_list>(<argument><expr><name>key</name></expr></argument>, <argument><expr><name>prefix</name></expr></argument>, <argument><expr><name>prefix_len</name></expr></argument>)</argument_list></call> == 0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr>*<name>out_catalog</name></expr></argument>, <argument><expr><name>original_path</name> + <name>prefix_len</name></expr></argument>, <argument><expr><name>klen</name>-<name>prefix_len</name></expr></argument>, <argument><expr><name>value</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></for>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><name>apr_array_header_t</name> *</type>
+<name>svn_rangelist_dup</name><parameter_list>(<param><decl><type><name>apr_array_header_t</name> *</type><name>rangelist</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>new_rl</name> <init>= <expr><call><name>apr_array_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name><name>rangelist</name>-&gt;<name>nelts</name></name></expr></argument>,
+                                              <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>svn_merge_range_t</name> *</expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+
+  <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name><name>rangelist</name>-&gt;<name>nelts</name></name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>)
+    <block>{
+      <expr_stmt><expr><call><name>APR_ARRAY_PUSH</name><argument_list>(<argument><expr><name>new_rl</name></expr></argument>, <argument><expr><name>svn_merge_range_t</name> *</expr></argument>)</argument_list></call> =
+        <call><name>svn_merge_range_dup</name><argument_list>(<argument><expr><call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>rangelist</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr><name>svn_merge_range_t</name> *</expr></argument>)</argument_list></call></expr></argument>,
+                            <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></for>
+
+  <return>return <expr><name>new_rl</name></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_merge_range_t</name> *</type>
+<name>svn_merge_range_dup</name><parameter_list>(<param><decl><type><name>svn_merge_range_t</name> *</type><name>range</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_merge_range_t</name> *</type><name>new_range</name> <init>= <expr><call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>new_range</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>new_range</name></expr></argument>, <argument><expr><name>range</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>new_range</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><name>new_range</name></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_boolean_t</name></type>
+<name>svn_merge_range_contains_rev</name><parameter_list>(<param><decl><type><name>svn_merge_range_t</name> *</type><name>range</name></decl></param>, <param><decl><type><name>svn_revnum_t</name></type> <name>rev</name></decl></param>)</parameter_list>
+<block>{
+  <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><call><name>SVN_IS_VALID_REVNUM</name><argument_list>(<argument><expr><name><name>range</name>-&gt;<name>start</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><call><name>SVN_IS_VALID_REVNUM</name><argument_list>(<argument><expr><name><name>range</name>-&gt;<name>end</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>range</name>-&gt;<name>start</name></name> != <name><name>range</name>-&gt;<name>end</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name><name>range</name>-&gt;<name>start</name></name> &lt; <name><name>range</name>-&gt;<name>end</name></name></expr>)</condition><then>
+    <return>return <expr><name>rev</name> &gt; <name><name>range</name>-&gt;<name>start</name></name> &amp;&amp; <name>rev</name> &lt;= <name><name>range</name>-&gt;<name>end</name></name></expr>;</return></then>
+  <else>else
+    <return>return <expr><name>rev</name> &gt; <name><name>range</name>-&gt;<name>end</name></name> &amp;&amp; <name>rev</name> &lt;= <name><name>range</name>-&gt;<name>start</name></name></expr>;</return></else></if>
+}</block></function>
+</unit>

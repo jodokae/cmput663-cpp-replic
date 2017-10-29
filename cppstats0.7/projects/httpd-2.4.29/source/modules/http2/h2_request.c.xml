@@ -1,0 +1,339 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/httpd-2.4.29/modules/http2/h2_request.c"><comment type="block">/* Copyright 2015 greenbytes GmbH (https://www.greenbytes.de)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;assert.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_strings.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;httpd.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;http_core.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;http_connection.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;http_protocol.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;http_request.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;http_log.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;http_vhost.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;util_filter.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;ap_mpm.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;mod_core.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;scoreboard.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"h2_private.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"h2_config.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"h2_push.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"h2_request.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"h2_util.h"</cpp:file></cpp:include>
+
+
+<typedef>typedef <type><struct>struct <block>{
+    <decl_stmt><decl><type><name>apr_table_t</name> *</type><name>headers</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_status_t</name></type> <name>status</name></decl>;</decl_stmt>
+}</block></struct></type> <name>h1_ctx</name>;</typedef>
+
+<function><type><specifier>static</specifier> <name>int</name></type> <name>set_h1_header</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>ctx</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>key</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>value</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>h1_ctx</name> *</type><name>x</name> <init>= <expr><name>ctx</name></expr></init></decl>;</decl_stmt>
+    <expr_stmt><expr><name><name>x</name>-&gt;<name>status</name></name> = <call><name>h2_req_add_header</name><argument_list>(<argument><expr><name><name>x</name>-&gt;<name>headers</name></name></expr></argument>, <argument><expr><name><name>x</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>key</name></expr></argument>, <argument><expr><call><name>strlen</name><argument_list>(<argument><expr><name>key</name></expr></argument>)</argument_list></call></expr></argument>, 
+                                  <argument><expr><name>value</name></expr></argument>, <argument><expr><call><name>strlen</name><argument_list>(<argument><expr><name>value</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr>(<name><name>x</name>-&gt;<name>status</name></name> == <name>APR_SUCCESS</name>)? 1 : 0</expr>;</return>
+}</block></function>
+
+<function><type><name>apr_status_t</name></type> <name>h2_request_rcreate</name><parameter_list>(<param><decl><type><name>h2_request</name> **</type><name>preq</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>, 
+                                <param><decl><type><name>request_rec</name> *</type><name>r</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>h2_request</name> *</type><name>req</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>scheme</name></decl>, *<decl><type ref="prev"/><name>authority</name></decl>, *<decl><type ref="prev"/><name>path</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>h1_ctx</name></type> <name>x</name></decl>;</decl_stmt>
+    
+    <expr_stmt><expr>*<name>preq</name> = <name>NULL</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name>scheme</name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>parsed_uri</name>.<name>scheme</name></name>? <name><name>r</name>-&gt;<name>parsed_uri</name>.<name>scheme</name></name>
+              : <call><name>ap_http_scheme</name><argument_list>(<argument><expr><name>r</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name>authority</name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>hostname</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name>path</name> = <call><name>apr_uri_unparse</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>&amp;<name><name>r</name>-&gt;<name>parsed_uri</name></name></expr></argument>, <argument><expr><name>APR_URI_UNP_OMITSITEPART</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    
+    <if>if <condition>(<expr>!<name><name>r</name>-&gt;<name>method</name></name> || !<name>scheme</name> || !<name><name>r</name>-&gt;<name>hostname</name></name> || !<name>path</name></expr>)</condition><then> <block>{
+        <return>return <expr><name>APR_EINVAL</name></expr>;</return>
+    }</block></then></if>
+
+    <if>if <condition>(<expr>!<call><name>ap_strchr_c</name><argument_list>(<argument><expr><name>authority</name></expr></argument>, <argument><expr>':'</expr></argument>)</argument_list></call> &amp;&amp; <name><name>r</name>-&gt;<name>server</name></name> &amp;&amp; <name><name>r</name>-&gt;<name>server</name>-&gt;<name>port</name></name></expr>)</condition><then> <block>{
+        <decl_stmt><decl><type><name>apr_port_t</name></type> <name>defport</name> <init>= <expr><call><name>apr_uri_port_of_scheme</name><argument_list>(<argument><expr><name>scheme</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+        <if>if <condition>(<expr><name>defport</name> != <name><name>r</name>-&gt;<name>server</name>-&gt;<name>port</name></name></expr>)</condition><then> <block>{
+            <comment type="block">/* port info missing and port is not default for scheme: append */</comment>
+            <expr_stmt><expr><name>authority</name> = <call><name>apr_psprintf</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>"%s:%d"</expr></argument>, <argument><expr><name>authority</name></expr></argument>,
+                                     <argument><expr>(<name>int</name>)<name><name>r</name>-&gt;<name>server</name>-&gt;<name>port</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+    }</block></then></if>
+    
+    <expr_stmt><expr><name>req</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>req</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>req</name>-&gt;<name>method</name></name>    = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>method</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>req</name>-&gt;<name>scheme</name></name>    = <name>scheme</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>req</name>-&gt;<name>authority</name></name> = <name>authority</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>req</name>-&gt;<name>path</name></name>      = <name>path</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>req</name>-&gt;<name>headers</name></name>   = <call><name>apr_table_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>10</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name><name>r</name>-&gt;<name>server</name></name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name><name>req</name>-&gt;<name>serialize</name></name> = <call><name>h2_config_geti</name><argument_list>(<argument><expr><call><name>h2_config_sget</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>server</name></name></expr></argument>)</argument_list></call></expr></argument>, 
+                                        <argument><expr><name>H2_CONF_SER_HEADERS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <expr_stmt><expr><name><name>x</name>.<name>pool</name></name> = <name>pool</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>x</name>.<name>headers</name></name> = <name><name>req</name>-&gt;<name>headers</name></name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>x</name>.<name>status</name></name> = <name>APR_SUCCESS</name></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>apr_table_do</name><argument_list>(<argument><expr><name>set_h1_header</name></expr></argument>, <argument><expr>&amp;<name>x</name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>headers_in</name></name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    
+    <expr_stmt><expr>*<name>preq</name> = <name>req</name></expr>;</expr_stmt>
+    <return>return <expr><name><name>x</name>.<name>status</name></name></expr>;</return>
+}</block></function>
+
+<function><type><name>apr_status_t</name></type> <name>h2_request_add_header</name><parameter_list>(<param><decl><type><name>h2_request</name> *</type><name>req</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>, 
+                                   <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>name</name></decl></param>, <param><decl><type><name>size_t</name></type> <name>nlen</name></decl></param>,
+                                   <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>value</name></decl></param>, <param><decl><type><name>size_t</name></type> <name>vlen</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>apr_status_t</name></type> <name>status</name> <init>= <expr><name>APR_SUCCESS</name></expr></init></decl>;</decl_stmt>
+    
+    <if>if <condition>(<expr><name>nlen</name> &lt;= 0</expr>)</condition><then> <block>{
+        <return>return <expr><name>status</name></expr>;</return>
+    }</block></then></if>
+    
+    <if>if <condition>(<expr><name><name>name</name><index>[<expr>0</expr>]</index></name> == ':'</expr>)</condition><then> <block>{
+        <comment type="block">/* pseudo header, see ch. 8.1.2.3, always should come first */</comment>
+        <if>if <condition>(<expr>!<call><name>apr_is_empty_table</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>headers</name></name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_ERR</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>pool</name></expr></argument>,
+                          <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>02917</expr></argument>)</argument_list></call> 
+                          "h2_request: pseudo header after request start"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <return>return <expr><name>APR_EGENERAL</name></expr>;</return>
+        }</block></then></if>
+        
+        <if>if <condition>(<expr><name>H2_HEADER_METHOD_LEN</name> == <name>nlen</name>
+            &amp;&amp; !<call><name>strncmp</name><argument_list>(<argument><expr><name>H2_HEADER_METHOD</name></expr></argument>, <argument><expr><name>name</name></expr></argument>, <argument><expr><name>nlen</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name><name>req</name>-&gt;<name>method</name></name> = <call><name>apr_pstrndup</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>value</name></expr></argument>, <argument><expr><name>vlen</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+        <else>else <if>if <condition>(<expr><name>H2_HEADER_SCHEME_LEN</name> == <name>nlen</name>
+                 &amp;&amp; !<call><name>strncmp</name><argument_list>(<argument><expr><name>H2_HEADER_SCHEME</name></expr></argument>, <argument><expr><name>name</name></expr></argument>, <argument><expr><name>nlen</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name><name>req</name>-&gt;<name>scheme</name></name> = <call><name>apr_pstrndup</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>value</name></expr></argument>, <argument><expr><name>vlen</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+        <else>else <if>if <condition>(<expr><name>H2_HEADER_PATH_LEN</name> == <name>nlen</name>
+                 &amp;&amp; !<call><name>strncmp</name><argument_list>(<argument><expr><name>H2_HEADER_PATH</name></expr></argument>, <argument><expr><name>name</name></expr></argument>, <argument><expr><name>nlen</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name><name>req</name>-&gt;<name>path</name></name> = <call><name>apr_pstrndup</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>value</name></expr></argument>, <argument><expr><name>vlen</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+        <else>else <if>if <condition>(<expr><name>H2_HEADER_AUTH_LEN</name> == <name>nlen</name>
+                 &amp;&amp; !<call><name>strncmp</name><argument_list>(<argument><expr><name>H2_HEADER_AUTH</name></expr></argument>, <argument><expr><name>name</name></expr></argument>, <argument><expr><name>nlen</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name><name>req</name>-&gt;<name>authority</name></name> = <call><name>apr_pstrndup</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>value</name></expr></argument>, <argument><expr><name>vlen</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+        <else>else <block>{
+            <decl_stmt><decl><type><name>char</name></type> <name><name>buffer</name><index>[<expr>32</expr>]</index></name></decl>;</decl_stmt>
+            <expr_stmt><expr><call><name>memset</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr>32</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>strncpy</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>, <argument><expr><name>name</name></expr></argument>, <argument><expr>(<name>nlen</name> &gt; 31)? 31 : <name>nlen</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_WARNING</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>pool</name></expr></argument>,
+                          <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>02954</expr></argument>)</argument_list></call> 
+                          "h2_request: ignoring unknown pseudo header %s"</expr></argument>,
+                          <argument><expr><name>buffer</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></else></if></else></if></else></if></else></if>
+    }</block></then>
+    <else>else <block>{
+        <comment type="block">/* non-pseudo header, append to work bucket of stream */</comment>
+        <expr_stmt><expr><name>status</name> = <call><name>h2_req_add_header</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>headers</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>, <argument><expr><name>name</name></expr></argument>, <argument><expr><name>nlen</name></expr></argument>, <argument><expr><name>value</name></expr></argument>, <argument><expr><name>vlen</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if>
+    
+    <return>return <expr><name>status</name></expr>;</return>
+}</block></function>
+
+<function><type><name>apr_status_t</name></type> <name>h2_request_end_headers</name><parameter_list>(<param><decl><type><name>h2_request</name> *</type><name>req</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>, <param><decl><type><name>int</name></type> <name>eos</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>s</name></decl>;</decl_stmt>
+    
+    <comment type="block">/* rfc7540, ch. 8.1.2.3:
+     * - if we have :authority, it overrides any Host header 
+     * - :authority MUST be ommited when converting h1-&gt;h2, so we
+     *   might get a stream without, but then Host needs to be there */</comment>
+    <if>if <condition>(<expr>!<name><name>req</name>-&gt;<name>authority</name></name></expr>)</condition><then> <block>{
+        <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>host</name> <init>= <expr><call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>headers</name></name></expr></argument>, <argument><expr>"Host"</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+        <if>if <condition>(<expr>!<name>host</name></expr>)</condition><then> <block>{
+            <return>return <expr><name>APR_BADARG</name></expr>;</return>
+        }</block></then></if>
+        <expr_stmt><expr><name><name>req</name>-&gt;<name>authority</name></name> = <name>host</name></expr>;</expr_stmt>
+    }</block></then>
+    <else>else <block>{
+        <expr_stmt><expr><call><name>apr_table_setn</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>headers</name></name></expr></argument>, <argument><expr>"Host"</expr></argument>, <argument><expr><name><name>req</name>-&gt;<name>authority</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if>
+
+    <expr_stmt><expr><name>s</name> = <call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>headers</name></name></expr></argument>, <argument><expr>"Content-Length"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr>!<name>s</name></expr>)</condition><then> <block>{
+        <comment type="block">/* HTTP/2 does not need a Content-Length for framing, but our
+         * internal request processing is used to HTTP/1.1, so we
+         * need to either add a Content-Length or a Transfer-Encoding
+         * if any content can be expected. */</comment>
+        <if>if <condition>(<expr>!<name>eos</name></expr>)</condition><then> <block>{
+            <comment type="block">/* We have not seen a content-length and have no eos,
+             * simulate a chunked encoding for our HTTP/1.1 infrastructure,
+             * in case we have "H2SerializeHeaders on" here
+             */</comment>
+            <expr_stmt><expr><name><name>req</name>-&gt;<name>chunked</name></name> = 1</expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>apr_table_mergen</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>headers</name></name></expr></argument>, <argument><expr>"Transfer-Encoding"</expr></argument>, <argument><expr>"chunked"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+        <else>else <if>if <condition>(<expr><call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>headers</name></name></expr></argument>, <argument><expr>"Content-Type"</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <comment type="block">/* If we have a content-type, but already seen eos, no more
+             * data will come. Signal a zero content length explicitly.
+             */</comment>
+            <expr_stmt><expr><call><name>apr_table_setn</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>headers</name></name></expr></argument>, <argument><expr>"Content-Length"</expr></argument>, <argument><expr>"0"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if></else></if>
+    }</block></then></if>
+
+    <return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+
+<function><type><name>h2_request</name> *</type><name>h2_request_clone</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>h2_request</name> *</type><name>src</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>h2_request</name> *</type><name>dst</name> <init>= <expr><call><name>apr_pmemdup</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>src</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>dst</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <expr_stmt><expr><name><name>dst</name>-&gt;<name>method</name></name>       = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name><name>src</name>-&gt;<name>method</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>dst</name>-&gt;<name>scheme</name></name>       = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name><name>src</name>-&gt;<name>scheme</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>dst</name>-&gt;<name>authority</name></name>    = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name><name>src</name>-&gt;<name>authority</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>dst</name>-&gt;<name>path</name></name>         = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name><name>src</name>-&gt;<name>path</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>dst</name>-&gt;<name>headers</name></name>      = <call><name>apr_table_clone</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name><name>src</name>-&gt;<name>headers</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>dst</name></expr>;</return>
+}</block></function>
+
+<function><type><name>request_rec</name> *</type><name>h2_request_create_rec</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>h2_request</name> *</type><name>req</name></decl></param>, <param><decl><type><name>conn_rec</name> *</type><name>c</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>access_status</name> <init>= <expr><name>HTTP_OK</name></expr></init></decl>;</decl_stmt>    
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>rpath</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>request_rec</name> *</type><name>r</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>s</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><call><name>apr_pool_create</name><argument_list>(<argument><expr>&amp;<name>p</name></expr></argument>, <argument><expr><name><name>c</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>apr_pool_tag</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>"request"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name>r</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>request_rec</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>AP_READ_REQUEST_ENTRY</name><argument_list>(<argument><expr>(<name>intptr_t</name>)<name>r</name></expr></argument>, <argument><expr>(<name>uintptr_t</name>)<name>c</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>pool</name></name>            = <name>p</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>connection</name></name>      = <name>c</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>server</name></name>          = <name><name>c</name>-&gt;<name>base_server</name></name></expr>;</expr_stmt>
+    
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>user</name></name>            = <name>NULL</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>ap_auth_type</name></name>    = <name>NULL</name></expr>;</expr_stmt>
+    
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>allowed_methods</name></name> = <call><name>ap_make_method_list</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>2</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>headers_in</name></name>      = <call><name>apr_table_clone</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>req</name>-&gt;<name>headers</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>trailers_in</name></name>     = <call><name>apr_table_make</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>5</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>subprocess_env</name></name>  = <call><name>apr_table_make</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>25</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>headers_out</name></name>     = <call><name>apr_table_make</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>12</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>err_headers_out</name></name> = <call><name>apr_table_make</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>5</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>trailers_out</name></name>    = <call><name>apr_table_make</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>5</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>notes</name></name>           = <call><name>apr_table_make</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>5</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>request_config</name></name>  = <call><name>ap_create_request_config</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <comment type="block">/* Must be set before we run create request hook */</comment>
+    
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>proto_output_filters</name></name> = <name><name>c</name>-&gt;<name>output_filters</name></name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>output_filters</name></name>  = <name><name>r</name>-&gt;<name>proto_output_filters</name></name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>proto_input_filters</name></name> = <name><name>c</name>-&gt;<name>input_filters</name></name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>input_filters</name></name>   = <name><name>r</name>-&gt;<name>proto_input_filters</name></name></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>ap_run_create_request</name><argument_list>(<argument><expr><name>r</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>per_dir_config</name></name>  = <name><name>r</name>-&gt;<name>server</name>-&gt;<name>lookup_defaults</name></name></expr>;</expr_stmt>
+    
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>sent_bodyct</name></name>     = 0</expr>;</expr_stmt>                      <comment type="block">/* bytect isn't for body */</comment>
+    
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>read_length</name></name>     = 0</expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>read_body</name></name>       = <name>REQUEST_NO_BODY</name></expr>;</expr_stmt>
+    
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>status</name></name>          = <name>HTTP_OK</name></expr>;</expr_stmt>  <comment type="block">/* Until further notice */</comment>
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>header_only</name></name>     = 0</expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>the_request</name></name>     = <name>NULL</name></expr>;</expr_stmt>
+    
+    <comment type="block">/* Begin by presuming any module can make its own path_info assumptions,
+     * until some module interjects and changes the value.
+     */</comment>
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>used_path_info</name></name> = <name>AP_REQ_DEFAULT_PATH_INFO</name></expr>;</expr_stmt>
+    
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>useragent_addr</name></name> = <name><name>c</name>-&gt;<name>client_addr</name></name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>useragent_ip</name></name> = <name><name>c</name>-&gt;<name>client_ip</name></name></expr>;</expr_stmt>
+    
+    <expr_stmt><expr><call><name>ap_run_pre_read_request</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><name>c</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    
+    <comment type="block">/* Time to populate r with the data we have. */</comment>
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>request_time</name></name> = <name><name>req</name>-&gt;<name>request_time</name></name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>method</name></name> = <name><name>req</name>-&gt;<name>method</name></name></expr>;</expr_stmt>
+    <comment type="block">/* Provide quick information about the request method as soon as known */</comment>
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>method_number</name></name> = <call><name>ap_method_number_of</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>method</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name><name>r</name>-&gt;<name>method_number</name></name> == <name>M_GET</name> &amp;&amp; <name><name>r</name>-&gt;<name>method</name><index>[<expr>0</expr>]</index></name> == 'H'</expr>)</condition><then> <block>{
+        <expr_stmt><expr><name><name>r</name>-&gt;<name>header_only</name></name> = 1</expr>;</expr_stmt>
+    }</block></then></if>
+
+    <expr_stmt><expr><name>rpath</name> = (<name><name>req</name>-&gt;<name>path</name></name> ? <name><name>req</name>-&gt;<name>path</name></name> : "")</expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>ap_parse_uri</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><name>rpath</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>protocol</name></name> = (<name>char</name>*)"HTTP/2.0"</expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>proto_num</name></name> = <call><name>HTTP_VERSION</name><argument_list>(<argument><expr>2</expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>the_request</name></name> = <call><name>apr_psprintf</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>"%s %s %s"</expr></argument>, 
+                                  <argument><expr><name><name>r</name>-&gt;<name>method</name></name></expr></argument>, <argument><expr><name>rpath</name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>protocol</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    
+    <comment type="block">/* update what we think the virtual host is based on the headers we've
+     * now read. may update status.
+     * Leave r-&gt;hostname empty, vhost will parse if form our Host: header,
+     * otherwise we get complains about port numbers.
+     */</comment>
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>hostname</name></name> = <name>NULL</name></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>ap_update_vhost_from_headers</name><argument_list>(<argument><expr><name>r</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    
+    <comment type="block">/* we may have switched to another server */</comment>
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>per_dir_config</name></name> = <name><name>r</name>-&gt;<name>server</name>-&gt;<name>lookup_defaults</name></name></expr>;</expr_stmt>
+    
+    <expr_stmt><expr><name>s</name> = <call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_in</name></name></expr></argument>, <argument><expr>"Expect"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>s</name> &amp;&amp; <name><name>s</name><index>[<expr>0</expr>]</index></name></expr>)</condition><then> <block>{
+        <if>if <condition>(<expr><call><name>ap_cstr_casecmp</name><argument_list>(<argument><expr><name>s</name></expr></argument>, <argument><expr>"100-continue"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then> <block>{
+            <expr_stmt><expr><name><name>r</name>-&gt;<name>expecting_100</name></name> = 1</expr>;</expr_stmt>
+        }</block></then>
+        <else>else <block>{
+            <expr_stmt><expr><name><name>r</name>-&gt;<name>status</name></name> = <name>HTTP_EXPECTATION_FAILED</name></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>ap_send_error_response</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></else></if>
+    }</block></then></if>
+
+    <comment type="block">/*
+     * Add the HTTP_IN filter here to ensure that ap_discard_request_body
+     * called by ap_die and by ap_send_error_response works correctly on
+     * status codes that do not cause the connection to be dropped and
+     * in situations where the connection should be kept alive.
+     */</comment>
+    <expr_stmt><expr><call><name>ap_add_input_filter_handle</name><argument_list>(<argument><expr><name>ap_http_input_filter_handle</name></expr></argument>,
+                               <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>r</name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>connection</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    
+    <if>if <condition>(<expr><name>access_status</name> != <name>HTTP_OK</name>
+        || (<name>access_status</name> = <call><name>ap_run_post_read_request</name><argument_list>(<argument><expr><name>r</name></expr></argument>)</argument_list></call>)</expr>)</condition><then> <block>{
+        <comment type="block">/* Request check post hooks failed. An example of this would be a
+         * request for a vhost where h2 is disabled --&gt; 421.
+         */</comment>
+        <expr_stmt><expr><call><name>ap_log_cerror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_DEBUG</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>c</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>03367</expr></argument>)</argument_list></call>
+                      "h2_request: access_status=%d, request_create failed"</expr></argument>,
+                      <argument><expr><name>access_status</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>ap_die</name><argument_list>(<argument><expr><name>access_status</name></expr></argument>, <argument><expr><name>r</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>ap_update_child_status</name><argument_list>(<argument><expr><name><name>c</name>-&gt;<name>sbh</name></name></expr></argument>, <argument><expr><name>SERVER_BUSY_LOG</name></expr></argument>, <argument><expr><name>r</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>ap_run_log_transaction</name><argument_list>(<argument><expr><name>r</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><name>r</name> = <name>NULL</name></expr>;</expr_stmt>
+        <goto>goto <name>traceout</name>;</goto>
+    }</block></then></if>
+
+    <expr_stmt><expr><call><name>AP_READ_REQUEST_SUCCESS</name><argument_list>(<argument><expr>(<name>uintptr_t</name>)<name>r</name></expr></argument>, <argument><expr>(<name>char</name> *)<name><name>r</name>-&gt;<name>method</name></name></expr></argument>, 
+                            <argument><expr>(<name>char</name> *)<name><name>r</name>-&gt;<name>uri</name></name></expr></argument>, <argument><expr>(<name>char</name> *)<name><name>r</name>-&gt;<name>server</name>-&gt;<name>defn_name</name></name></expr></argument>, 
+                            <argument><expr><name><name>r</name>-&gt;<name>status</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>r</name></expr>;</return>
+<label><name>traceout</name>:</label>
+    <expr_stmt><expr><call><name>AP_READ_REQUEST_FAILURE</name><argument_list>(<argument><expr>(<name>uintptr_t</name>)<name>r</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>r</name></expr>;</return>
+}</block></function>
+
+
+</unit>

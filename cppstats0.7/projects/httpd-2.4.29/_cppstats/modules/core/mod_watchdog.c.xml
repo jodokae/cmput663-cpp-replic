@@ -1,0 +1,511 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="modules/core/mod_watchdog.c"><cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"mod_watchdog.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"ap_provider.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"ap_mpm.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_core.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"util_mutex.h"</cpp:file></cpp:include>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>AP_WATCHDOG_PGROUP</name></cpp:macro> <cpp:value>"watchdog"</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>AP_WATCHDOG_PVERSION</name></cpp:macro> <cpp:value>"parent"</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>AP_WATCHDOG_CVERSION</name></cpp:macro> <cpp:value>"child"</cpp:value></cpp:define>
+<typedef>typedef <type>struct <name>watchdog_list_t</name></type> <name>watchdog_list_t</name>;</typedef>
+<struct>struct <name>watchdog_list_t</name> <block>{
+<decl_stmt><decl><type>struct <name>watchdog_list_t</name> *</type><name>next</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>ap_watchdog_t</name> *</type><name>wd</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_status_t</name></type> <name>status</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_interval_time_t</name></type> <name>interval</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_interval_time_t</name></type> <name>step</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>void</name> *</type><name>data</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>ap_watchdog_callback_fn_t</name> *</type><name>callback_fn</name></decl>;</decl_stmt>
+}</block>;</struct>
+<struct>struct <name>ap_watchdog_t</name> <block>{
+<decl_stmt><decl><type><name>apr_thread_mutex_t</name> *</type><name>startup</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_proc_mutex_t</name> *</type><name>mutex</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>name</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>watchdog_list_t</name> *</type><name>callbacks</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>is_running</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>singleton</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>active</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_interval_time_t</name></type> <name>step</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_thread_t</name> *</type><name>thread</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl>;</decl_stmt>
+}</block>;</struct>
+<typedef>typedef <type>struct <name>wd_server_conf_t</name></type> <name>wd_server_conf_t</name>;</typedef>
+<struct>struct <name>wd_server_conf_t</name> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>child_workers</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>parent_workers</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>server_rec</name> *</type><name>s</name></decl>;</decl_stmt>
+}</block>;</struct>
+<decl_stmt><decl><type><specifier>static</specifier> <name>wd_server_conf_t</name> *</type><name>wd_server_conf</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>apr_interval_time_t</name></type> <name>wd_interval</name> <init>= <expr><name>AP_WD_TM_INTERVAL</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name></type> <name>mpm_is_forked</name> <init>= <expr><name>AP_MPMQ_NOT_SUPPORTED</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *</type><name>wd_proc_mutex_type</name> <init>= <expr>"watchdog-callback"</expr></init></decl>;</decl_stmt>
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>wd_worker_cleanup</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>data</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>ap_watchdog_t</name> *</type><name>w</name> <init>= <expr>(<name>ap_watchdog_t</name> *)<name>data</name></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name><name>w</name>-&gt;<name>is_running</name></name></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>watchdog_list_t</name> *</type><name>wl</name> <init>= <expr><name><name>w</name>-&gt;<name>callbacks</name></name></expr></init></decl>;</decl_stmt>
+<while>while <condition>(<expr><name>wl</name></expr>)</condition> <block>{
+<if>if <condition>(<expr><name><name>wl</name>-&gt;<name>status</name></name> == <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call>(*<name><name>wl</name>-&gt;<name>callback_fn</name></name>)<argument_list>(<argument><expr><name>AP_WATCHDOG_STATE_STOPPING</name></expr></argument>,
+<argument><expr>(<name>void</name> *)<name><name>wl</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name><name>w</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>wl</name>-&gt;<name>status</name></name> = <name>APR_EOF</name></expr>;</expr_stmt>
+}</block></then></if>
+<expr_stmt><expr><name>wl</name> = <name><name>wl</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+}</block></while>
+}</block></then></if>
+<expr_stmt><expr><name><name>w</name>-&gt;<name>is_running</name></name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><call><name>apr_thread_join</name><argument_list>(<argument><expr>&amp;<name>rv</name></expr></argument>, <argument><expr><name><name>w</name>-&gt;<name>thread</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>rv</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>void</name>* <name>APR_THREAD_FUNC</name></type> <name>wd_worker</name><parameter_list>(<param><decl><type><name>apr_thread_t</name> *</type><name>thread</name></decl></param>, <param><decl><type><name>void</name> *</type><name>data</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>ap_watchdog_t</name> *</type><name>w</name> <init>= <expr>(<name>ap_watchdog_t</name> *)<name>data</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>locked</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>probed</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>inited</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>mpmq_s</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><name><name>w</name>-&gt;<name>pool</name></name> = <call><name>apr_thread_pool_get</name><argument_list>(<argument><expr><name>thread</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>w</name>-&gt;<name>is_running</name></name> = 1</expr>;</expr_stmt>
+<expr_stmt><expr><call><name>apr_thread_mutex_unlock</name><argument_list>(<argument><expr><name><name>w</name>-&gt;<name>startup</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>w</name>-&gt;<name>mutex</name></name></expr>)</condition><then> <block>{
+<while>while <condition>(<expr><name><name>w</name>-&gt;<name>is_running</name></name></expr>)</condition> <block>{
+<if>if <condition>(<expr><call><name>ap_mpm_query</name><argument_list>(<argument><expr><name>AP_MPMQ_MPM_STATE</name></expr></argument>, <argument><expr>&amp;<name>mpmq_s</name></expr></argument>)</argument_list></call> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>w</name>-&gt;<name>is_running</name></name> = 0</expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<if>if <condition>(<expr><name>mpmq_s</name> == <name>AP_MPMQ_STOPPING</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>w</name>-&gt;<name>is_running</name></name> = 0</expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<expr_stmt><expr><name>rv</name> = <call><name>apr_proc_mutex_trylock</name><argument_list>(<argument><expr><name><name>w</name>-&gt;<name>mutex</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>rv</name> == <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<if>if <condition>(<expr><name>probed</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>probed</name> = 10</expr>;</expr_stmt>
+<while>while <condition>(<expr><name><name>w</name>-&gt;<name>is_running</name></name> &amp;&amp; <name>probed</name> &gt; 0</expr>)</condition> <block>{
+<expr_stmt><expr><call><name>apr_sleep</name><argument_list>(<argument><expr><name>AP_WD_TM_INTERVAL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>probed</name>--</expr>;</expr_stmt>
+<if>if <condition>(<expr><call><name>ap_mpm_query</name><argument_list>(<argument><expr><name>AP_MPMQ_MPM_STATE</name></expr></argument>, <argument><expr>&amp;<name>mpmq_s</name></expr></argument>)</argument_list></call> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>w</name>-&gt;<name>is_running</name></name> = 0</expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<if>if <condition>(<expr><name>mpmq_s</name> == <name>AP_MPMQ_STOPPING</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>w</name>-&gt;<name>is_running</name></name> = 0</expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+}</block></while>
+}</block></then></if>
+<expr_stmt><expr><name>locked</name> = 1</expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<expr_stmt><expr><name>probed</name> = 1</expr>;</expr_stmt>
+<expr_stmt><expr><call><name>apr_sleep</name><argument_list>(<argument><expr><name>AP_WD_TM_SLICE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></while>
+}</block></then></if>
+<if>if <condition>(<expr><name><name>w</name>-&gt;<name>is_running</name></name></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>watchdog_list_t</name> *</type><name>wl</name> <init>= <expr><name><name>w</name>-&gt;<name>callbacks</name></name></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_DEBUG</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name><name>wd_server_conf</name>-&gt;<name>s</name></name></expr></argument>,
+<argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>02972</expr></argument>)</argument_list></call> "%sWatchdog (%s) running"</expr></argument>,
+<argument><expr><name><name>w</name>-&gt;<name>singleton</name></name> ? "Singleton " : ""</expr></argument>, <argument><expr><name><name>w</name>-&gt;<name>name</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>apr_time_clock_hires</name><argument_list>(<argument><expr><name><name>w</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>wl</name></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>ctx</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>apr_pool_create</name><argument_list>(<argument><expr>&amp;<name>ctx</name></expr></argument>, <argument><expr><name><name>w</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<while>while <condition>(<expr><name>wl</name> &amp;&amp; <name><name>w</name>-&gt;<name>is_running</name></name></expr>)</condition> <block>{
+<expr_stmt><expr><name><name>wl</name>-&gt;<name>status</name></name> = <call>(*<name><name>wl</name>-&gt;<name>callback_fn</name></name>)<argument_list>(<argument><expr><name>AP_WATCHDOG_STATE_STARTING</name></expr></argument>,
+<argument><expr>(<name>void</name> *)<name><name>wl</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name>ctx</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>wl</name> = <name><name>wl</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+}</block></while>
+<expr_stmt><expr><call><name>apr_pool_destroy</name><argument_list>(<argument><expr><name>ctx</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><call><name>ap_run_watchdog_init</name><argument_list>(<argument><expr><name><name>wd_server_conf</name>-&gt;<name>s</name></name></expr></argument>, <argument><expr><name><name>w</name>-&gt;<name>name</name></name></expr></argument>, <argument><expr><name><name>w</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>inited</name> = 1</expr>;</expr_stmt>
+}</block></else></if>
+}</block></then></if>
+<while>while <condition>(<expr><name><name>w</name>-&gt;<name>is_running</name></name></expr>)</condition> <block>{
+<decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>ctx</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_time_t</name></type> <name>curr</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>watchdog_list_t</name> *</type><name>wl</name> <init>= <expr><name><name>w</name>-&gt;<name>callbacks</name></name></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>apr_sleep</name><argument_list>(<argument><expr><name>AP_WD_TM_SLICE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><call><name>ap_mpm_query</name><argument_list>(<argument><expr><name>AP_MPMQ_MPM_STATE</name></expr></argument>, <argument><expr>&amp;<name>mpmq_s</name></expr></argument>)</argument_list></call> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>w</name>-&gt;<name>is_running</name></name> = 0</expr>;</expr_stmt>
+}</block></then></if>
+<if>if <condition>(<expr><name>mpmq_s</name> == <name>AP_MPMQ_STOPPING</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>w</name>-&gt;<name>is_running</name></name> = 0</expr>;</expr_stmt>
+}</block></then></if>
+<if>if <condition>(<expr>!<name><name>w</name>-&gt;<name>is_running</name></name></expr>)</condition><then> <block>{
+<break>break;</break>
+}</block></then></if>
+<expr_stmt><expr><name>curr</name> = <call><name>apr_time_now</name><argument_list>()</argument_list></call> - <name>AP_WD_TM_SLICE</name></expr>;</expr_stmt>
+<while>while <condition>(<expr><name>wl</name> &amp;&amp; <name><name>w</name>-&gt;<name>is_running</name></name></expr>)</condition> <block>{
+<if>if <condition>(<expr><name><name>wl</name>-&gt;<name>status</name></name> == <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>wl</name>-&gt;<name>step</name></name> += (<call><name>apr_time_now</name><argument_list>()</argument_list></call> - <name>curr</name>)</expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>wl</name>-&gt;<name>step</name></name> &gt;= <name><name>wl</name>-&gt;<name>interval</name></name></expr>)</condition><then> <block>{
+<if>if <condition>(<expr>!<name>ctx</name></expr>)</condition><then>
+<expr_stmt><expr><call><name>apr_pool_create</name><argument_list>(<argument><expr>&amp;<name>ctx</name></expr></argument>, <argument><expr><name><name>w</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<expr_stmt><expr><name><name>wl</name>-&gt;<name>step</name></name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>wl</name>-&gt;<name>status</name></name> = <call>(*<name><name>wl</name>-&gt;<name>callback_fn</name></name>)<argument_list>(<argument><expr><name>AP_WATCHDOG_STATE_RUNNING</name></expr></argument>,
+<argument><expr>(<name>void</name> *)<name><name>wl</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name>ctx</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><call><name>ap_mpm_query</name><argument_list>(<argument><expr><name>AP_MPMQ_MPM_STATE</name></expr></argument>, <argument><expr>&amp;<name>mpmq_s</name></expr></argument>)</argument_list></call> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>w</name>-&gt;<name>is_running</name></name> = 0</expr>;</expr_stmt>
+}</block></then></if>
+<if>if <condition>(<expr><name>mpmq_s</name> == <name>AP_MPMQ_STOPPING</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>w</name>-&gt;<name>is_running</name></name> = 0</expr>;</expr_stmt>
+}</block></then></if>
+}</block></then></if>
+}</block></then></if>
+<expr_stmt><expr><name>wl</name> = <name><name>wl</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+}</block></while>
+<if>if <condition>(<expr><name><name>w</name>-&gt;<name>is_running</name></name> &amp;&amp; <name><name>w</name>-&gt;<name>callbacks</name></name> == <name>NULL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>w</name>-&gt;<name>step</name></name> += (<call><name>apr_time_now</name><argument_list>()</argument_list></call> - <name>curr</name>)</expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>w</name>-&gt;<name>step</name></name> &gt;= <name>wd_interval</name></expr>)</condition><then> <block>{
+<if>if <condition>(<expr>!<name>ctx</name></expr>)</condition><then>
+<expr_stmt><expr><call><name>apr_pool_create</name><argument_list>(<argument><expr>&amp;<name>ctx</name></expr></argument>, <argument><expr><name><name>w</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<expr_stmt><expr><name><name>w</name>-&gt;<name>step</name></name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><call><name>ap_run_watchdog_step</name><argument_list>(<argument><expr><name><name>wd_server_conf</name>-&gt;<name>s</name></name></expr></argument>, <argument><expr><name><name>w</name>-&gt;<name>name</name></name></expr></argument>, <argument><expr><name>ctx</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+}</block></then></if>
+<if>if <condition>(<expr><name>ctx</name></expr>)</condition><then>
+<expr_stmt><expr><call><name>apr_pool_destroy</name><argument_list>(<argument><expr><name>ctx</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<if>if <condition>(<expr>!<name><name>w</name>-&gt;<name>is_running</name></name></expr>)</condition><then> <block>{
+<break>break;</break>
+}</block></then></if>
+}</block></while>
+<if>if <condition>(<expr><name>inited</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>ap_run_watchdog_exit</name><argument_list>(<argument><expr><name><name>wd_server_conf</name>-&gt;<name>s</name></name></expr></argument>, <argument><expr><name><name>w</name>-&gt;<name>name</name></name></expr></argument>, <argument><expr><name><name>w</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<decl_stmt><decl><type><name>watchdog_list_t</name> *</type><name>wl</name> <init>= <expr><name><name>w</name>-&gt;<name>callbacks</name></name></expr></init></decl>;</decl_stmt>
+<while>while <condition>(<expr><name>wl</name></expr>)</condition> <block>{
+<if>if <condition>(<expr><name><name>wl</name>-&gt;<name>status</name></name> == <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call>(*<name><name>wl</name>-&gt;<name>callback_fn</name></name>)<argument_list>(<argument><expr><name>AP_WATCHDOG_STATE_STOPPING</name></expr></argument>,
+<argument><expr>(<name>void</name> *)<name><name>wl</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name><name>w</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+<expr_stmt><expr><name>wl</name> = <name><name>wl</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+}</block></while>
+}</block></else></if>
+<expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_DEBUG</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name><name>wd_server_conf</name>-&gt;<name>s</name></name></expr></argument>,
+<argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>02973</expr></argument>)</argument_list></call> "%sWatchdog (%s) stopping"</expr></argument>,
+<argument><expr><name><name>w</name>-&gt;<name>singleton</name></name> ? "Singleton " : ""</expr></argument>, <argument><expr><name><name>w</name>-&gt;<name>name</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>locked</name></expr>)</condition><then>
+<expr_stmt><expr><call><name>apr_proc_mutex_unlock</name><argument_list>(<argument><expr><name><name>w</name>-&gt;<name>mutex</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<expr_stmt><expr><call><name>apr_thread_exit</name><argument_list>(<argument><expr><name><name>w</name>-&gt;<name>thread</name></name></expr></argument>, <argument><expr><name>APR_SUCCESS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>wd_startup</name><parameter_list>(<param><decl><type><name>ap_watchdog_t</name> *</type><name>w</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>apr_status_t</name></type> <name>rc</name></decl>;</decl_stmt>
+<expr_stmt><expr><name>rc</name> = <call><name>apr_thread_mutex_create</name><argument_list>(<argument><expr>&amp;<name><name>w</name>-&gt;<name>startup</name></name></expr></argument>, <argument><expr><name>APR_THREAD_MUTEX_UNNESTED</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>rc</name> != <name>APR_SUCCESS</name></expr>)</condition><then>
+<return>return <expr><name>rc</name></expr>;</return></then></if>
+<if>if <condition>(<expr><name><name>w</name>-&gt;<name>singleton</name></name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>rc</name> = <call><name>apr_proc_mutex_child_init</name><argument_list>(<argument><expr>&amp;<name><name>w</name>-&gt;<name>mutex</name></name></expr></argument>,
+<argument><expr><call><name>apr_proc_mutex_lockfile</name><argument_list>(<argument><expr><name><name>w</name>-&gt;<name>mutex</name></name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>rc</name> != <name>APR_SUCCESS</name></expr>)</condition><then>
+<return>return <expr><name>rc</name></expr>;</return></then></if>
+}</block></then></if>
+<expr_stmt><expr><call><name>apr_thread_mutex_lock</name><argument_list>(<argument><expr><name><name>w</name>-&gt;<name>startup</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>apr_pool_pre_cleanup_register</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>w</name></expr></argument>, <argument><expr><name>wd_worker_cleanup</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>rc</name> = <call><name>apr_thread_create</name><argument_list>(<argument><expr>&amp;<name><name>w</name>-&gt;<name>thread</name></name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>wd_worker</name></expr></argument>, <argument><expr><name>w</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>rc</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>apr_pool_cleanup_kill</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>w</name></expr></argument>, <argument><expr><name>wd_worker_cleanup</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+<expr_stmt><expr><call><name>apr_thread_mutex_lock</name><argument_list>(<argument><expr><name><name>w</name>-&gt;<name>startup</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>apr_thread_mutex_unlock</name><argument_list>(<argument><expr><name><name>w</name>-&gt;<name>startup</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>apr_thread_mutex_destroy</name><argument_list>(<argument><expr><name><name>w</name>-&gt;<name>startup</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>rc</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>ap_watchdog_get_instance</name><parameter_list>(<param><decl><type><name>ap_watchdog_t</name> **</type><name>watchdog</name></decl></param>,
+<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>name</name></decl></param>,
+<param><decl><type><name>int</name></type> <name>parent</name></decl></param>,
+<param><decl><type><name>int</name></type> <name>singleton</name></decl></param>,
+<param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>ap_watchdog_t</name> *</type><name>w</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>pver</name> <init>= <expr><name>parent</name> ? <name>AP_WATCHDOG_PVERSION</name> : <name>AP_WATCHDOG_CVERSION</name></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>parent</name> &amp;&amp; <name>mpm_is_forked</name> != <name>AP_MPMQ_NOT_SUPPORTED</name></expr>)</condition><then> <block>{
+<expr_stmt><expr>*<name>watchdog</name> = <name>NULL</name></expr>;</expr_stmt>
+<return>return <expr><name>APR_ENOTIMPL</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>w</name> = <call><name>ap_lookup_provider</name><argument_list>(<argument><expr><name>AP_WATCHDOG_PGROUP</name></expr></argument>, <argument><expr><name>name</name></expr></argument>, <argument><expr><name>pver</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>w</name></expr>)</condition><then> <block>{
+<expr_stmt><expr>*<name>watchdog</name> = <name>w</name></expr>;</expr_stmt>
+<return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>w</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>ap_watchdog_t</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>w</name>-&gt;<name>name</name></name> = <name>name</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>w</name>-&gt;<name>pool</name></name> = <name>p</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>w</name>-&gt;<name>singleton</name></name> = <name>parent</name> ? 0 : <name>singleton</name></expr>;</expr_stmt>
+<expr_stmt><expr>*<name>watchdog</name> = <name>w</name></expr>;</expr_stmt>
+<return>return <expr><call><name>ap_register_provider</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>AP_WATCHDOG_PGROUP</name></expr></argument>, <argument><expr><name>name</name></expr></argument>,
+<argument><expr><name>pver</name></expr></argument>, <argument><expr>*<name>watchdog</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>ap_watchdog_set_callback_interval</name><parameter_list>(<param><decl><type><name>ap_watchdog_t</name> *</type><name>w</name></decl></param>,
+<param><decl><type><name>apr_interval_time_t</name></type> <name>interval</name></decl></param>,
+<param><decl><type><specifier>const</specifier> <name>void</name> *</type><name>data</name></decl></param>,
+<param><decl><type><name>ap_watchdog_callback_fn_t</name> *</type><name>callback</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>watchdog_list_t</name> *</type><name>c</name> <init>= <expr><name><name>w</name>-&gt;<name>callbacks</name></name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name> <init>= <expr><name>APR_EOF</name></expr></init></decl>;</decl_stmt>
+<while>while <condition>(<expr><name>c</name></expr>)</condition> <block>{
+<if>if <condition>(<expr><name><name>c</name>-&gt;<name>data</name></name> == <name>data</name> &amp;&amp; <name><name>c</name>-&gt;<name>callback_fn</name></name> == <name>callback</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>c</name>-&gt;<name>interval</name></name> = <name>interval</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>c</name>-&gt;<name>step</name></name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>c</name>-&gt;<name>status</name></name> = <name>APR_SUCCESS</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>rv</name> = <name>APR_SUCCESS</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<expr_stmt><expr><name>c</name> = <name><name>c</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+}</block></while>
+<return>return <expr><name>rv</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>ap_watchdog_register_callback</name><parameter_list>(<param><decl><type><name>ap_watchdog_t</name> *</type><name>w</name></decl></param>,
+<param><decl><type><name>apr_interval_time_t</name></type> <name>interval</name></decl></param>,
+<param><decl><type><specifier>const</specifier> <name>void</name> *</type><name>data</name></decl></param>,
+<param><decl><type><name>ap_watchdog_callback_fn_t</name> *</type><name>callback</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>watchdog_list_t</name> *</type><name>c</name> <init>= <expr><name><name>w</name>-&gt;<name>callbacks</name></name></expr></init></decl>;</decl_stmt>
+<while>while <condition>(<expr><name>c</name></expr>)</condition> <block>{
+<if>if <condition>(<expr><name><name>c</name>-&gt;<name>data</name></name> == <name>data</name> &amp;&amp; <name><name>c</name>-&gt;<name>callback_fn</name></name> == <name>callback</name></expr>)</condition><then> <block>{
+<return>return <expr><name>APR_EEXIST</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>c</name> = <name><name>c</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+}</block></while>
+<expr_stmt><expr><name>c</name> = <call><name>apr_palloc</name><argument_list>(<argument><expr><name><name>w</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>watchdog_list_t</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>c</name>-&gt;<name>data</name></name> = <name>data</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>c</name>-&gt;<name>callback_fn</name></name> = <name>callback</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>c</name>-&gt;<name>interval</name></name> = <name>interval</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>c</name>-&gt;<name>step</name></name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>c</name>-&gt;<name>status</name></name> = <name>APR_EINIT</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>c</name>-&gt;<name>wd</name></name> = <name>w</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>c</name>-&gt;<name>next</name></name> = <name><name>w</name>-&gt;<name>callbacks</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>w</name>-&gt;<name>callbacks</name></name> = <name>c</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>w</name>-&gt;<name>active</name></name>++</expr>;</expr_stmt>
+<return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>int</name></type> <name>wd_pre_config_hook</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>pconf</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>plog</name></decl></param>,
+<param><decl><type><name>apr_pool_t</name> *</type><name>ptemp</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>ap_watchdog_t</name> *</type><name>w</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>ap_mpm_query</name><argument_list>(<argument><expr><name>AP_MPMQ_IS_FORKED</name></expr></argument>, <argument><expr>&amp;<name>mpm_is_forked</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr>(<name>rv</name> = <call><name>ap_watchdog_get_instance</name><argument_list>(<argument><expr>&amp;<name>w</name></expr></argument>,
+<argument><expr><name>AP_WATCHDOG_SINGLETON</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr>1</expr></argument>, <argument><expr><name>pconf</name></expr></argument>)</argument_list></call>) != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<return>return <expr><name>rv</name></expr>;</return>
+}</block></then></if>
+<if>if <condition>(<expr>(<name>rv</name> = <call><name>ap_watchdog_get_instance</name><argument_list>(<argument><expr>&amp;<name>w</name></expr></argument>,
+<argument><expr><name>AP_WATCHDOG_DEFAULT</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>pconf</name></expr></argument>)</argument_list></call>) != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<return>return <expr><name>rv</name></expr>;</return>
+}</block></then></if>
+<if>if <condition>(<expr><name>mpm_is_forked</name> == <name>AP_MPMQ_NOT_SUPPORTED</name></expr>)</condition><then> <block>{
+<if>if <condition>(<expr>(<name>rv</name> = <call><name>ap_watchdog_get_instance</name><argument_list>(<argument><expr>&amp;<name>w</name></expr></argument>,
+<argument><expr><name>AP_WATCHDOG_DEFAULT</name></expr></argument>, <argument><expr>1</expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>pconf</name></expr></argument>)</argument_list></call>) != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<return>return <expr><name>rv</name></expr>;</return>
+}</block></then></if>
+}</block></then></if>
+<if>if <condition>(<expr>(<name>rv</name> = <call><name>ap_mutex_register</name><argument_list>(<argument><expr><name>pconf</name></expr></argument>, <argument><expr><name>wd_proc_mutex_type</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+<argument><expr><name>APR_LOCK_DEFAULT</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call>) != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<return>return <expr><name>rv</name></expr>;</return>
+}</block></then></if>
+<return>return <expr><name>OK</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>int</name></type> <name>wd_post_config_hook</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>pconf</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>plog</name></decl></param>,
+<param><decl><type><name>apr_pool_t</name> *</type><name>ptemp</name></decl></param>, <param><decl><type><name>server_rec</name> *</type><name>s</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>pk</name> <init>= <expr>"watchdog_init_module_tag"</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>ppconf</name> <init>= <expr><name>pconf</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>apr_array_header_t</name> *</type><name>wl</name></decl>;</decl_stmt>
+<if>if <condition>(<expr><call><name>ap_state_query</name><argument_list>(<argument><expr><name>AP_SQ_MAIN_STATE</name></expr></argument>)</argument_list></call> == <name>AP_SQ_MS_CREATE_PRE_CONFIG</name></expr>)</condition><then>
+<return>return <expr><name>OK</name></expr>;</return></then></if>
+<expr_stmt><expr><call><name>apr_pool_userdata_get</name><argument_list>(<argument><expr>(<name>void</name> *)&amp;<name>wd_server_conf</name></expr></argument>, <argument><expr><name>pk</name></expr></argument>, <argument><expr><name>ppconf</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr>!<name>wd_server_conf</name></expr>)</condition><then> <block>{
+<if>if <condition>(<expr>!(<name>wd_server_conf</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>ppconf</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>wd_server_conf_t</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call>)</expr>)</condition><then>
+<return>return <expr><name>APR_ENOMEM</name></expr>;</return></then></if>
+<expr_stmt><expr><call><name>apr_pool_create</name><argument_list>(<argument><expr>&amp;<name><name>wd_server_conf</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>ppconf</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>apr_pool_userdata_set</name><argument_list>(<argument><expr><name>wd_server_conf</name></expr></argument>, <argument><expr><name>pk</name></expr></argument>, <argument><expr><name>apr_pool_cleanup_null</name></expr></argument>, <argument><expr><name>ppconf</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+<expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_DEBUG</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>s</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>010033</expr></argument>)</argument_list></call>
+"Watchdog: Running with WatchdogInterval %"
+<name>APR_TIME_T_FMT</name> "ms"</expr></argument>, <argument><expr><call><name>apr_time_as_msec</name><argument_list>(<argument><expr><name>wd_interval</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>wd_server_conf</name>-&gt;<name>s</name></name> = <name>s</name></expr>;</expr_stmt>
+<if>if <condition>(<expr>(<name>wl</name> = <call><name>ap_list_provider_names</name><argument_list>(<argument><expr><name>pconf</name></expr></argument>, <argument><expr><name>AP_WATCHDOG_PGROUP</name></expr></argument>,
+<argument><expr><name>AP_WATCHDOG_PVERSION</name></expr></argument>)</argument_list></call>)</expr>)</condition><then> <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>ap_list_provider_names_t</name> *</type><name>wn</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_DEBUG</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>s</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>02974</expr></argument>)</argument_list></call>
+"Watchdog: found parent providers."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>wn</name> = (<name>ap_list_provider_names_t</name> *)<name><name>wl</name>-&gt;<name>elts</name></name></expr>;</expr_stmt>
+<for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name><name>wl</name>-&gt;<name>nelts</name></name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>) <block>{
+<decl_stmt><decl><type><name>ap_watchdog_t</name> *</type><name>w</name> <init>= <expr><call><name>ap_lookup_provider</name><argument_list>(<argument><expr><name>AP_WATCHDOG_PGROUP</name></expr></argument>,
+<argument><expr><name><name>wn</name><index>[<expr><name>i</name></expr>]</index></name>.<name>provider_name</name></expr></argument>,
+<argument><expr><name>AP_WATCHDOG_PVERSION</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_DEBUG</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>s</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>02975</expr></argument>)</argument_list></call>
+"Watchdog: Looking for parent (%s)."</expr></argument>, <argument><expr><name><name>wn</name><index>[<expr><name>i</name></expr>]</index></name>.<name>provider_name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>w</name></expr>)</condition><then> <block>{
+<if>if <condition>(<expr>!<name><name>w</name>-&gt;<name>active</name></name></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>status</name> <init>= <expr><call><name>ap_run_watchdog_need</name><argument_list>(<argument><expr><name>s</name></expr></argument>, <argument><expr><name><name>w</name>-&gt;<name>name</name></name></expr></argument>, <argument><expr>1</expr></argument>,
+<argument><expr><name><name>w</name>-&gt;<name>singleton</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>status</name> == <name>OK</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>w</name>-&gt;<name>active</name></name> = 1</expr>;</expr_stmt>
+}</block></then></if>
+}</block></then></if>
+<if>if <condition>(<expr><name><name>w</name>-&gt;<name>active</name></name></expr>)</condition><then> <block>{
+<if>if <condition>(<expr>(<name>rv</name> = <call><name>wd_startup</name><argument_list>(<argument><expr><name>w</name></expr></argument>, <argument><expr><name><name>wd_server_conf</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call>) != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_CRIT</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name>s</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>01571</expr></argument>)</argument_list></call>
+"Watchdog: Failed to create parent worker thread."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>rv</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_DEBUG</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name>s</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>02976</expr></argument>)</argument_list></call>
+"Watchdog: Created parent worker thread (%s)."</expr></argument>, <argument><expr><name><name>w</name>-&gt;<name>name</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>wd_server_conf</name>-&gt;<name>parent_workers</name></name>++</expr>;</expr_stmt>
+}</block></then></if>
+}</block></then></if>
+}</block></for>
+}</block></then></if>
+<if>if <condition>(<expr><name><name>wd_server_conf</name>-&gt;<name>parent_workers</name></name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_DEBUG</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>s</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>01572</expr></argument>)</argument_list></call>
+"Spawned %d parent worker threads."</expr></argument>,
+<argument><expr><name><name>wd_server_conf</name>-&gt;<name>parent_workers</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+<if>if <condition>(<expr>(<name>wl</name> = <call><name>ap_list_provider_names</name><argument_list>(<argument><expr><name>pconf</name></expr></argument>, <argument><expr><name>AP_WATCHDOG_PGROUP</name></expr></argument>,
+<argument><expr><name>AP_WATCHDOG_CVERSION</name></expr></argument>)</argument_list></call>)</expr>)</condition><then> <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>ap_list_provider_names_t</name> *</type><name>wn</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_DEBUG</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>s</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>02977</expr></argument>)</argument_list></call>
+"Watchdog: found child providers."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>wn</name> = (<name>ap_list_provider_names_t</name> *)<name><name>wl</name>-&gt;<name>elts</name></name></expr>;</expr_stmt>
+<for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name><name>wl</name>-&gt;<name>nelts</name></name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>) <block>{
+<decl_stmt><decl><type><name>ap_watchdog_t</name> *</type><name>w</name> <init>= <expr><call><name>ap_lookup_provider</name><argument_list>(<argument><expr><name>AP_WATCHDOG_PGROUP</name></expr></argument>,
+<argument><expr><name><name>wn</name><index>[<expr><name>i</name></expr>]</index></name>.<name>provider_name</name></expr></argument>,
+<argument><expr><name>AP_WATCHDOG_CVERSION</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_DEBUG</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>s</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>02978</expr></argument>)</argument_list></call>
+"Watchdog: Looking for child (%s)."</expr></argument>, <argument><expr><name><name>wn</name><index>[<expr><name>i</name></expr>]</index></name>.<name>provider_name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>w</name></expr>)</condition><then> <block>{
+<if>if <condition>(<expr>!<name><name>w</name>-&gt;<name>active</name></name></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>status</name> <init>= <expr><call><name>ap_run_watchdog_need</name><argument_list>(<argument><expr><name>s</name></expr></argument>, <argument><expr><name><name>w</name>-&gt;<name>name</name></name></expr></argument>, <argument><expr>0</expr></argument>,
+<argument><expr><name><name>w</name>-&gt;<name>singleton</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>status</name> == <name>OK</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>w</name>-&gt;<name>active</name></name> = 1</expr>;</expr_stmt>
+}</block></then></if>
+}</block></then></if>
+<if>if <condition>(<expr><name><name>w</name>-&gt;<name>active</name></name></expr>)</condition><then> <block>{
+<if>if <condition>(<expr><name><name>w</name>-&gt;<name>singleton</name></name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>rv</name> = <call><name>ap_proc_mutex_create</name><argument_list>(<argument><expr>&amp;<name><name>w</name>-&gt;<name>mutex</name></name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>wd_proc_mutex_type</name></expr></argument>,
+<argument><expr><name><name>w</name>-&gt;<name>name</name></name></expr></argument>, <argument><expr><name>s</name></expr></argument>,
+<argument><expr><name><name>wd_server_conf</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<return>return <expr><name>rv</name></expr>;</return>
+}</block></then></if>
+}</block></then></if>
+<expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_DEBUG</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name>s</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>02979</expr></argument>)</argument_list></call>
+"Watchdog: Created child worker thread (%s)."</expr></argument>, <argument><expr><name><name>w</name>-&gt;<name>name</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>wd_server_conf</name>-&gt;<name>child_workers</name></name>++</expr>;</expr_stmt>
+}</block></then></if>
+}</block></then></if>
+}</block></for>
+}</block></then></if>
+<return>return <expr><name>OK</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>void</name></type> <name>wd_child_init_hook</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>, <param><decl><type><name>server_rec</name> *</type><name>s</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name> <init>= <expr><name>OK</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>apr_array_header_t</name> *</type><name>wl</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>!<name><name>wd_server_conf</name>-&gt;<name>child_workers</name></name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_DEBUG</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name>s</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>02980</expr></argument>)</argument_list></call>
+"Watchdog: nothing configured?"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return;</return>
+}</block></then></if>
+<if>if <condition>(<expr>(<name>wl</name> = <call><name>ap_list_provider_names</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>AP_WATCHDOG_PGROUP</name></expr></argument>,
+<argument><expr><name>AP_WATCHDOG_CVERSION</name></expr></argument>)</argument_list></call>)</expr>)</condition><then> <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>ap_list_provider_names_t</name> *</type><name>wn</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+<expr_stmt><expr><name>wn</name> = (<name>ap_list_provider_names_t</name> *)<name><name>wl</name>-&gt;<name>elts</name></name></expr>;</expr_stmt>
+<for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name><name>wl</name>-&gt;<name>nelts</name></name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>) <block>{
+<decl_stmt><decl><type><name>ap_watchdog_t</name> *</type><name>w</name> <init>= <expr><call><name>ap_lookup_provider</name><argument_list>(<argument><expr><name>AP_WATCHDOG_PGROUP</name></expr></argument>,
+<argument><expr><name><name>wn</name><index>[<expr><name>i</name></expr>]</index></name>.<name>provider_name</name></expr></argument>,
+<argument><expr><name>AP_WATCHDOG_CVERSION</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>w</name> &amp;&amp; <name><name>w</name>-&gt;<name>active</name></name></expr>)</condition><then> <block>{
+<if>if <condition>(<expr>(<name>rv</name> = <call><name>wd_startup</name><argument_list>(<argument><expr><name>w</name></expr></argument>, <argument><expr><name><name>wd_server_conf</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call>) != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_CRIT</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name>s</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>01573</expr></argument>)</argument_list></call>
+"Watchdog: Failed to create worker thread."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return;</return>
+}</block></then></if>
+<expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_DEBUG</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name>s</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>02981</expr></argument>)</argument_list></call>
+"Watchdog: Created worker thread (%s)."</expr></argument>, <argument><expr><name><name>wn</name><index>[<expr><name>i</name></expr>]</index></name>.<name>provider_name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+}</block></for>
+}</block></then></if>
+}</block></function>
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *</type><name>wd_cmd_watchdog_int</name><parameter_list>(<param><decl><type><name>cmd_parms</name> *</type><name>cmd</name></decl></param>, <param><decl><type><name>void</name> *</type><name>dummy</name></decl></param>,
+<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>arg</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>errs</name> <init>= <expr><call><name>ap_check_cmd_context</name><argument_list>(<argument><expr><name>cmd</name></expr></argument>, <argument><expr><name>GLOBAL_ONLY</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>errs</name> != <name>NULL</name></expr>)</condition><then>
+<return>return <expr><name>errs</name></expr>;</return></then></if>
+<expr_stmt><expr><name>rv</name> = <call><name>ap_timeout_parameter_parse</name><argument_list>(<argument><expr><name>arg</name></expr></argument>, <argument><expr>&amp;<name>wd_interval</name></expr></argument>, <argument><expr>"s"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name></expr>)</condition><then>
+<return>return <expr>"Unparse-able WatchdogInterval setting"</expr>;</return></then></if>
+<if>if <condition>(<expr><name>wd_interval</name> &lt; <name>AP_WD_TM_SLICE</name></expr>)</condition><then> <block>{
+<return>return <expr><call><name>apr_psprintf</name><argument_list>(<argument><expr><name><name>cmd</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>"Invalid WatchdogInterval: minimal value %"
+<name>APR_TIME_T_FMT</name> "ms"</expr></argument>, <argument><expr><call><name>apr_time_as_msec</name><argument_list>(<argument><expr><name>AP_WD_TM_SLICE</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+}</block></then></if>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+<decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>command_rec</name></type> <name><name>wd_directives</name><index>[]</index></name> <init>= <expr><block>{
+<expr><call><name>AP_INIT_TAKE1</name><argument_list>(
+<argument><expr>"WatchdogInterval"</expr></argument>,
+<argument><expr><name>wd_cmd_watchdog_int</name></expr></argument>,
+<argument><expr><name>NULL</name></expr></argument>,
+<argument><expr><name>RSRC_CONF</name></expr></argument>,
+<argument><expr>"Watchdog interval in seconds"</expr></argument>
+)</argument_list></call></expr>,
+<expr><block>{<expr><name>NULL</name></expr>}</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+<function><type><specifier>static</specifier> <name>void</name></type> <name>wd_register_hooks</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *<specifier>const</specifier></type> <name><name>after_mpm</name><index>[]</index></name> <init>= <expr><block>{ <expr>"mpm_winnt.c"</expr>, <expr><name>NULL</name></expr>}</block></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>ap_hook_pre_config</name><argument_list>(<argument><expr><name>wd_pre_config_hook</name></expr></argument>,
+<argument><expr><name>NULL</name></expr></argument>,
+<argument><expr><name>NULL</name></expr></argument>,
+<argument><expr><name>APR_HOOK_FIRST</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>ap_hook_post_config</name><argument_list>(<argument><expr><name>wd_post_config_hook</name></expr></argument>,
+<argument><expr><name>NULL</name></expr></argument>,
+<argument><expr><name>NULL</name></expr></argument>,
+<argument><expr><name>APR_HOOK_LAST</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>ap_hook_child_init</name><argument_list>(<argument><expr><name>wd_child_init_hook</name></expr></argument>,
+<argument><expr><name>after_mpm</name></expr></argument>,
+<argument><expr><name>NULL</name></expr></argument>,
+<argument><expr><name>APR_HOOK_MIDDLE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>APR_REGISTER_OPTIONAL_FN</name><argument_list>(<argument><expr><name>ap_watchdog_get_instance</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>APR_REGISTER_OPTIONAL_FN</name><argument_list>(<argument><expr><name>ap_watchdog_register_callback</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>APR_REGISTER_OPTIONAL_FN</name><argument_list>(<argument><expr><name>ap_watchdog_set_callback_interval</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+<expr_stmt><expr><call><name>AP_DECLARE_MODULE</name><argument_list>(<argument><expr><name>watchdog</name></expr></argument>)</argument_list></call> = <block>{
+<expr><name>STANDARD20_MODULE_STUFF</name></expr>,
+<expr><name>NULL</name></expr>,
+<expr><name>NULL</name></expr>,
+<expr><name>NULL</name></expr>,
+<expr><name>NULL</name></expr>,
+<expr><name>wd_directives</name></expr>,
+<expr><name>wd_register_hooks</name></expr>
+}</block></expr>;</expr_stmt>
+<macro><name>APR_HOOK_STRUCT</name><argument_list>(
+<argument>APR_HOOK_LINK(watchdog_need)
+APR_HOOK_LINK(watchdog_init)
+APR_HOOK_LINK(watchdog_exit)
+APR_HOOK_LINK(watchdog_step)</argument>
+)</argument_list></macro>
+<macro><name>APR_IMPLEMENT_EXTERNAL_HOOK_RUN_FIRST</name><argument_list>(<argument>ap</argument>, <argument>AP_WD</argument>, <argument>int</argument>, <argument>watchdog_need</argument>,
+<argument>(server_rec *s, const char *name,
+int parent, int singleton)</argument>,
+<argument>(s, name, parent, singleton)</argument>,
+<argument>DECLINED</argument>)</argument_list></macro>
+<macro><name>APR_IMPLEMENT_EXTERNAL_HOOK_RUN_ALL</name><argument_list>(<argument>ap</argument>, <argument>AP_WD</argument>, <argument>int</argument>, <argument>watchdog_init</argument>,
+<argument>(server_rec *s, const char *name,
+apr_pool_t *pool)</argument>,
+<argument>(s, name, pool)</argument>,
+<argument>OK</argument>, <argument>DECLINED</argument>)</argument_list></macro>
+<macro><name>APR_IMPLEMENT_EXTERNAL_HOOK_RUN_ALL</name><argument_list>(<argument>ap</argument>, <argument>AP_WD</argument>, <argument>int</argument>, <argument>watchdog_exit</argument>,
+<argument>(server_rec *s, const char *name,
+apr_pool_t *pool)</argument>,
+<argument>(s, name, pool)</argument>,
+<argument>OK</argument>, <argument>DECLINED</argument>)</argument_list></macro>
+<macro><name>APR_IMPLEMENT_EXTERNAL_HOOK_RUN_ALL</name><argument_list>(<argument>ap</argument>, <argument>AP_WD</argument>, <argument>int</argument>, <argument>watchdog_step</argument>,
+<argument>(server_rec *s, const char *name,
+apr_pool_t *pool)</argument>,
+<argument>(s, name, pool)</argument>,
+<argument>OK</argument>, <argument>DECLINED</argument>)</argument_list></macro>
+</unit>

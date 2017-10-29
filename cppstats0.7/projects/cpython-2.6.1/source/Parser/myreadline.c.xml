@@ -1,0 +1,221 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/cpython-2.6.1/source/Parser/myreadline.c">
+<comment type="block">/* Readline interface for tokenizer.c and [raw_]input() in bltinmodule.c.
+   By default, or when stdin is not a tty device, we have a super
+   simple my_readline function using fgets.
+   Optionally, we can use the GNU readline library.
+   my_readline() has a different return value from GNU readline():
+   - NULL if an interrupt occurred or if an error occurred
+   - a malloc'ed empty string if EOF was read
+   - a malloc'ed string ending in \n normally
+*/</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"Python.h"</cpp:file></cpp:include>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>MS_WINDOWS</name></cpp:ifdef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>WIN32_LEAN_AND_MEAN</name></cpp:macro></cpp:define>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"windows.h"</cpp:file></cpp:include>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* MS_WINDOWS */</comment>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>__VMS</name></cpp:ifdef>
+<function_decl><type><specifier>extern</specifier> <name>char</name>*</type> <name>vms__StdioReadline</name><parameter_list>(<param><decl><type><name>FILE</name> *</type><name>sys_stdin</name></decl></param>, <param><decl><type><name>FILE</name> *</type><name>sys_stdout</name></decl></param>, <param><decl><type><name>char</name> *</type><name>prompt</name></decl></param>)</parameter_list>;</function_decl>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+
+<decl_stmt><decl><type><name>PyThreadState</name>*</type> <name>_PyOS_ReadlineTState</name></decl>;</decl_stmt>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>WITH_THREAD</name></cpp:ifdef>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"pythread.h"</cpp:file></cpp:include>
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyThread_type_lock</name></type> <name>_PyOS_ReadlineLock</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<expr_stmt><expr><call><call><name>int</name> <argument_list>(<argument><expr>*<name>PyOS_InputHook</name></expr></argument>)</argument_list></call><argument_list>(<argument><expr><name>void</name></expr></argument>)</argument_list></call> = <name>NULL</name></expr>;</expr_stmt>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>RISCOS</name></cpp:ifdef>
+<decl_stmt><decl><type><name>int</name></type> <name>Py_RISCOSWimpFlag</name></decl>;</decl_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<comment type="block">/* This function restarts a fgets() after an EINTR error occurred
+   except if PyOS_InterruptOccurred() returns true. */</comment>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>my_fgets</name><parameter_list>(<param><decl><type><name>char</name> *</type><name>buf</name></decl></param>, <param><decl><type><name>int</name></type> <name>len</name></decl></param>, <param><decl><type><name>FILE</name> *</type><name>fp</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>char</name> *</type><name>p</name></decl>;</decl_stmt>
+	<for>for (<init>;</init><condition>;</condition><incr/>) <block>{
+		<if>if <condition>(<expr><name>PyOS_InputHook</name> != <name>NULL</name></expr>)</condition><then>
+			<expr_stmt><expr><call><call>(<name>void</name>)<argument_list>(<argument><expr><name>PyOS_InputHook</name></expr></argument>)</argument_list></call><argument_list>()</argument_list></call></expr>;</expr_stmt></then></if>
+		<expr_stmt><expr><name>errno</name> = 0</expr>;</expr_stmt>
+		<expr_stmt><expr><name>p</name> = <call><name>fgets</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr><name>len</name></expr></argument>, <argument><expr><name>fp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<if>if <condition>(<expr><name>p</name> != <name>NULL</name></expr>)</condition><then>
+			<return>return <expr>0</expr>;</return></then></if> <comment type="block">/* No error */</comment>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>MS_WINDOWS</name></cpp:ifdef>
+		<comment type="block">/* In the case of a Ctrl+C or some other external event 
+		   interrupting the operation:
+		   Win2k/NT: ERROR_OPERATION_ABORTED is the most recent Win32 
+		   error code (and feof() returns TRUE).
+		   Win9x: Ctrl+C seems to have no effect on fgets() returning
+		   early - the signal handler is called, but the fgets()
+		   only returns "normally" (ie, when Enter hit or feof())
+		*/</comment>
+		<if>if <condition>(<expr><call><name>GetLastError</name><argument_list>()</argument_list></call>==<name>ERROR_OPERATION_ABORTED</name></expr>)</condition><then> <block>{
+			<comment type="block">/* Signals come asynchronously, so we sleep a brief 
+			   moment before checking if the handler has been 
+			   triggered (we cant just return 1 before the 
+			   signal handler has been called, as the later 
+			   signal may be treated as a separate interrupt).
+			*/</comment>
+			<expr_stmt><expr><call><name>Sleep</name><argument_list>(<argument><expr>1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<if>if <condition>(<expr><call><name>PyOS_InterruptOccurred</name><argument_list>()</argument_list></call></expr>)</condition><then> <block>{
+				<return>return <expr>1</expr>;</return> <comment type="block">/* Interrupt */</comment>
+			}</block></then></if>
+			<comment type="block">/* Either the sleep wasn't long enough (need a
+			   short loop retrying?) or not interrupted at all
+			   (in which case we should revisit the whole thing!)
+			   Logging some warning would be nice.  assert is not
+			   viable as under the debugger, the various dialogs
+			   mean the condition is not true.
+			*/</comment>
+		}</block></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* MS_WINDOWS */</comment>
+		<if>if <condition>(<expr><call><name>feof</name><argument_list>(<argument><expr><name>fp</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+			<return>return <expr>-1</expr>;</return> <comment type="block">/* EOF */</comment>
+		}</block></then></if>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>EINTR</name></cpp:ifdef>
+		<if>if <condition>(<expr><name>errno</name> == <name>EINTR</name></expr>)</condition><then> <block>{
+			<decl_stmt><decl><type><name>int</name></type> <name>s</name></decl>;</decl_stmt>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>WITH_THREAD</name></cpp:ifdef>
+			<expr_stmt><expr><call><name>PyEval_RestoreThread</name><argument_list>(<argument><expr><name>_PyOS_ReadlineTState</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+			<expr_stmt><expr><name>s</name> = <call><name>PyErr_CheckSignals</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>WITH_THREAD</name></cpp:ifdef>
+			<expr_stmt><expr><call><name>PyEval_SaveThread</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+			<if>if <condition>(<expr><name>s</name> &lt; 0</expr>)</condition><then> <block>{
+				<return>return <expr>1</expr>;</return>
+			}</block></then></if>
+		}</block></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+		<if>if <condition>(<expr><call><name>PyOS_InterruptOccurred</name><argument_list>()</argument_list></call></expr>)</condition><then> <block>{
+			<return>return <expr>1</expr>;</return> <comment type="block">/* Interrupt */</comment>
+		}</block></then></if>
+		<return>return <expr>-2</expr>;</return> <comment type="block">/* Error */</comment>
+	}</block></for>
+	<comment type="block">/* NOTREACHED */</comment>
+}</block></function>
+
+
+<comment type="block">/* Readline implementation using fgets() */</comment>
+
+<function><type><name>char</name> *</type>
+<name>PyOS_StdioReadline</name><parameter_list>(<param><decl><type><name>FILE</name> *</type><name>sys_stdin</name></decl></param>, <param><decl><type><name>FILE</name> *</type><name>sys_stdout</name></decl></param>, <param><decl><type><name>char</name> *</type><name>prompt</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>size_t</name></type> <name>n</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>char</name> *</type><name>p</name></decl>;</decl_stmt>
+	<expr_stmt><expr><name>n</name> = 100</expr>;</expr_stmt>
+	<if>if <condition>(<expr>(<name>p</name> = (<name>char</name> *)<call><name>PyMem_MALLOC</name><argument_list>(<argument><expr><name>n</name></expr></argument>)</argument_list></call>) == <name>NULL</name></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><call><name>fflush</name><argument_list>(<argument><expr><name>sys_stdout</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>RISCOS</name></cpp:ifndef>
+	<if>if <condition>(<expr><name>prompt</name></expr>)</condition><then>
+		<expr_stmt><expr><call><name>fprintf</name><argument_list>(<argument><expr><name>stderr</name></expr></argument>, <argument><expr>"%s"</expr></argument>, <argument><expr><name>prompt</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+	<if>if <condition>(<expr><name>prompt</name></expr>)</condition><then> <block>{
+		<if>if<condition>(<expr><name>Py_RISCOSWimpFlag</name></expr>)</condition><then>
+			<expr_stmt><expr><call><name>fprintf</name><argument_list>(<argument><expr><name>stderr</name></expr></argument>, <argument><expr>"\x0cr%s\x0c"</expr></argument>, <argument><expr><name>prompt</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+		<else>else
+			<expr_stmt><expr><call><name>fprintf</name><argument_list>(<argument><expr><name>stderr</name></expr></argument>, <argument><expr>"%s"</expr></argument>, <argument><expr><name>prompt</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+	}</block></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<expr_stmt><expr><call><name>fflush</name><argument_list>(<argument><expr><name>stderr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<switch>switch <condition>(<expr><call><name>my_fgets</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>(<name>int</name>)<name>n</name></expr></argument>, <argument><expr><name>sys_stdin</name></expr></argument>)</argument_list></call></expr>)</condition> <block>{
+	<case>case <expr>0</expr>: <comment type="block">/* Normal case */</comment>
+		<break>break;</break>
+	</case><case>case <expr>1</expr>: <comment type="block">/* Interrupt */</comment>
+		<expr_stmt><expr><call><name>PyMem_FREE</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<return>return <expr><name>NULL</name></expr>;</return>
+	</case><case>case <expr>-1</expr>: <comment type="block">/* EOF */</comment>
+	</case><case>case <expr>-2</expr>: <comment type="block">/* Error */</comment>
+	</case><default>default: <comment type="block">/* Shouldn't happen */</comment>
+		<expr_stmt><expr>*<name>p</name> = '\0'</expr>;</expr_stmt>
+		<break>break;</break>
+	</default>}</block></switch>
+	<expr_stmt><expr><name>n</name> = <call><name>strlen</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<while>while <condition>(<expr><name>n</name> &gt; 0 &amp;&amp; <name><name>p</name><index>[<expr><name>n</name>-1</expr>]</index></name> != '\n'</expr>)</condition> <block>{
+		<decl_stmt><decl><type><name>size_t</name></type> <name>incr</name> <init>= <expr><name>n</name>+2</expr></init></decl>;</decl_stmt>
+		<expr_stmt><expr><name>p</name> = (<name>char</name> *)<call><name>PyMem_REALLOC</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>n</name> + <name>incr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<if>if <condition>(<expr><name>p</name> == <name>NULL</name></expr>)</condition><then>
+			<return>return <expr><name>NULL</name></expr>;</return></then></if>
+		<if>if <condition>(<expr><name>incr</name> &gt; <name>INT_MAX</name></expr>)</condition><then> <block>{
+			<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_OverflowError</name></expr></argument>, <argument><expr>"input line too long"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		}</block></then></if>
+		<if>if <condition>(<expr><call><name>my_fgets</name><argument_list>(<argument><expr><name>p</name>+<name>n</name></expr></argument>, <argument><expr>(<name>int</name>)<name>incr</name></expr></argument>, <argument><expr><name>sys_stdin</name></expr></argument>)</argument_list></call> != 0</expr>)</condition><then>
+			<break>break;</break></then></if>
+		<expr_stmt><expr><name>n</name> += <call><name>strlen</name><argument_list>(<argument><expr><name>p</name>+<name>n</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	}</block></while>
+	<return>return <expr>(<name>char</name> *)<call><name>PyMem_REALLOC</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>n</name>+1</expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* By initializing this function pointer, systems embedding Python can
+   override the readline function.
+
+   Note: Python expects in return a buffer allocated with PyMem_Malloc. */</comment>
+
+<function_decl><type><name>char</name> *</type>(*<name>PyOS_ReadlineFunctionPointer</name>)<parameter_list>(<param><decl><type><name>FILE</name> *</type></decl></param>, <param><decl><type><name>FILE</name> *</type></decl></param>, <param><decl><type><name>char</name> *</type></decl></param>)</parameter_list>;</function_decl>
+
+
+<comment type="block">/* Interface used by tokenizer.c and bltinmodule.c */</comment>
+
+<function><type><name>char</name> *</type>
+<name>PyOS_Readline</name><parameter_list>(<param><decl><type><name>FILE</name> *</type><name>sys_stdin</name></decl></param>, <param><decl><type><name>FILE</name> *</type><name>sys_stdout</name></decl></param>, <param><decl><type><name>char</name> *</type><name>prompt</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>char</name> *</type><name>rv</name></decl>;</decl_stmt>
+
+	<if>if <condition>(<expr><name>_PyOS_ReadlineTState</name> == <call><name>PyThreadState_GET</name><argument_list>()</argument_list></call></expr>)</condition><then> <block>{
+		<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_RuntimeError</name></expr></argument>,
+				<argument><expr>"can't re-enter readline"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<return>return <expr><name>NULL</name></expr>;</return>
+	}</block></then></if>
+	
+
+	<if>if <condition>(<expr><name>PyOS_ReadlineFunctionPointer</name> == <name>NULL</name></expr>)</condition><then> <block>{
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>__VMS</name></cpp:ifdef>
+                <expr_stmt><expr><name>PyOS_ReadlineFunctionPointer</name> = <name>vms__StdioReadline</name></expr>;</expr_stmt>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+                <expr_stmt><expr><name>PyOS_ReadlineFunctionPointer</name> = <name>PyOS_StdioReadline</name></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	}</block></then></if>
+	
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>WITH_THREAD</name></cpp:ifdef>
+	<if>if <condition>(<expr><name>_PyOS_ReadlineLock</name> == <name>NULL</name></expr>)</condition><then> <block>{
+		<expr_stmt><expr><name>_PyOS_ReadlineLock</name> = <call><name>PyThread_allocate_lock</name><argument_list>()</argument_list></call></expr>;</expr_stmt>		
+	}</block></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+	<expr_stmt><expr><name>_PyOS_ReadlineTState</name> = <call><name>PyThreadState_GET</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+	<decl_stmt><decl><type><name>Py_BEGIN_ALLOW_THREADS</name></type>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>WITH_THREAD</name></cpp:ifdef>
+	<name>PyThread_acquire_lock</name><argument_list>(<argument><expr><name>_PyOS_ReadlineLock</name></expr></argument>, <argument><expr>1</expr></argument>)</argument_list></decl>;</decl_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+        <comment type="block">/* This is needed to handle the unlikely case that the
+         * interpreter is in interactive mode *and* stdin/out are not
+         * a tty.  This can happen, for example if python is run like
+         * this: python -i &lt; test1.py
+         */</comment>
+        <if>if <condition>(<expr>!<call><name>isatty</name> <argument_list>(<argument><expr><call><name>fileno</name> <argument_list>(<argument><expr><name>sys_stdin</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call> || !<call><name>isatty</name> <argument_list>(<argument><expr><call><name>fileno</name> <argument_list>(<argument><expr><name>sys_stdout</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>)</condition><then>
+                <expr_stmt><expr><name>rv</name> = <call><name>PyOS_StdioReadline</name> <argument_list>(<argument><expr><name>sys_stdin</name></expr></argument>, <argument><expr><name>sys_stdout</name></expr></argument>, <argument><expr><name>prompt</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+        <else>else
+                <expr_stmt><expr><name>rv</name> = <call>(*<name>PyOS_ReadlineFunctionPointer</name>)<argument_list>(<argument><expr><name>sys_stdin</name></expr></argument>, <argument><expr><name>sys_stdout</name></expr></argument>,
+                                                     <argument><expr><name>prompt</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+	<function_decl><type><name>Py_END_ALLOW_THREADS</name></type>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>WITH_THREAD</name></cpp:ifdef>
+	<name>PyThread_release_lock</name><parameter_list>(<param><decl><type><name>_PyOS_ReadlineLock</name></type></decl></param>)</parameter_list>;</function_decl>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+	<expr_stmt><expr><name>_PyOS_ReadlineTState</name> = <name>NULL</name></expr>;</expr_stmt>
+
+	<return>return <expr><name>rv</name></expr>;</return>
+}</block></function>
+</unit>

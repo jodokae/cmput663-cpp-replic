@@ -1,0 +1,1692 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/httpd-2.4.29/modules/http/http_protocol.c"><comment type="block">/* Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */</comment>
+
+<comment type="block">/*
+ * http_protocol.c --- routines which directly communicate with the client.
+ *
+ * Code originally by Rob McCool; much redone by Robert S. Thau
+ * and the Apache Software Foundation.
+ */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_strings.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_buckets.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_lib.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_signal.h"</cpp:file></cpp:include>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>APR_WANT_STDIO</name></cpp:macro></cpp:define>          <comment type="block">/* for sscanf */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>APR_WANT_STRFUNC</name></cpp:macro></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>APR_WANT_MEMFUNC</name></cpp:macro></cpp:define>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_want.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"util_filter.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"ap_config.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"httpd.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_config.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_core.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_protocol.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_main.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_request.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_vhost.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_log.h"</cpp:file></cpp:include>           <comment type="block">/* For errors detected in basic auth common
+                                 * support code... */</comment>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_date.h"</cpp:file></cpp:include>           <comment type="block">/* For apr_date_parse_http and APR_DATE_BAD */</comment>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"util_charset.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"util_ebcdic.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"util_time.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"ap_mpm.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"mod_core.h"</cpp:file></cpp:include>
+
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_HAVE_STDARG_H</name></expr></cpp:if>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;stdarg.h&gt;</cpp:file></cpp:include>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_HAVE_UNISTD_H</name></expr></cpp:if>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;unistd.h&gt;</cpp:file></cpp:include>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<expr_stmt><expr><call><name>APLOG_USE_MODULE</name><argument_list>(<argument><expr><name>http</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<comment type="block">/* New Apache routine to map status codes into array indicies
+ *  e.g.  100 -&gt; 0,  101 -&gt; 1,  200 -&gt; 2 ...
+ * The number of status lines must equal the value of
+ * RESPONSE_CODES (httpd.h) and must be listed in order.
+ * No gaps are allowed between X00 and the largest Xnn
+ * for any X (see ap_index_of_response).
+ * When adding a new code here, add a define to httpd.h
+ * as well.
+ */</comment>
+
+<decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> * <specifier>const</specifier></type> <name><name>status_lines</name><index>[<expr><name>RESPONSE_CODES</name></expr>]</index></name> <init>=
+<expr><block>{
+    <expr>"100 Continue"</expr>,
+    <expr>"101 Switching Protocols"</expr>,
+    <expr>"102 Processing"</expr>,
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>LEVEL_200</name></cpp:macro>  <cpp:value>3</cpp:value></cpp:define>
+    <expr>"200 OK"</expr>,
+    <expr>"201 Created"</expr>,
+    <expr>"202 Accepted"</expr>,
+    <expr>"203 Non-Authoritative Information"</expr>,
+    <expr>"204 No Content"</expr>,
+    <expr>"205 Reset Content"</expr>,
+    <expr>"206 Partial Content"</expr>,
+    <expr>"207 Multi-Status"</expr>,
+    <expr>"208 Already Reported"</expr>,
+    <expr><name>NULL</name></expr>, <comment type="block">/* 209 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 210 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 211 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 212 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 213 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 214 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 215 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 216 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 217 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 218 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 219 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 220 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 221 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 222 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 223 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 224 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 225 */</comment>
+    <expr>"226 IM Used"</expr>,
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>LEVEL_300</name></cpp:macro> <cpp:value>30</cpp:value></cpp:define>
+    <expr>"300 Multiple Choices"</expr>,
+    <expr>"301 Moved Permanently"</expr>,
+    <expr>"302 Found"</expr>,
+    <expr>"303 See Other"</expr>,
+    <expr>"304 Not Modified"</expr>,
+    <expr>"305 Use Proxy"</expr>,
+    <expr><name>NULL</name></expr>, <comment type="block">/* 306 */</comment>
+    <expr>"307 Temporary Redirect"</expr>,
+    <expr>"308 Permanent Redirect"</expr>,
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>LEVEL_400</name></cpp:macro> <cpp:value>39</cpp:value></cpp:define>
+    <expr>"400 Bad Request"</expr>,
+    <expr>"401 Unauthorized"</expr>,
+    <expr>"402 Payment Required"</expr>,
+    <expr>"403 Forbidden"</expr>,
+    <expr>"404 Not Found"</expr>,
+    <expr>"405 Method Not Allowed"</expr>,
+    <expr>"406 Not Acceptable"</expr>,
+    <expr>"407 Proxy Authentication Required"</expr>,
+    <expr>"408 Request Timeout"</expr>,
+    <expr>"409 Conflict"</expr>,
+    <expr>"410 Gone"</expr>,
+    <expr>"411 Length Required"</expr>,
+    <expr>"412 Precondition Failed"</expr>,
+    <expr>"413 Request Entity Too Large"</expr>,
+    <expr>"414 Request-URI Too Long"</expr>,
+    <expr>"415 Unsupported Media Type"</expr>,
+    <expr>"416 Requested Range Not Satisfiable"</expr>,
+    <expr>"417 Expectation Failed"</expr>,
+    <expr><name>NULL</name></expr>, <comment type="block">/* 418 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 419 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 420 */</comment>
+    <expr>"421 Misdirected Request"</expr>,
+    <expr>"422 Unprocessable Entity"</expr>,
+    <expr>"423 Locked"</expr>,
+    <expr>"424 Failed Dependency"</expr>,
+    <expr><name>NULL</name></expr>, <comment type="block">/* 425 */</comment>
+    <expr>"426 Upgrade Required"</expr>,
+    <expr><name>NULL</name></expr>, <comment type="block">/* 427 */</comment>
+    <expr>"428 Precondition Required"</expr>,
+    <expr>"429 Too Many Requests"</expr>,
+    <expr><name>NULL</name></expr>, <comment type="block">/* 430 */</comment>
+    <expr>"431 Request Header Fields Too Large"</expr>,
+    <expr><name>NULL</name></expr>, <comment type="block">/* 432 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 433 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 434 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 435 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 436 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 437 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 438 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 439 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 440 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 441 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 442 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 443 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 444 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 445 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 446 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 447 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 448 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 449 */</comment>
+    <expr><name>NULL</name></expr>, <comment type="block">/* 450 */</comment>
+    <expr>"451 Unavailable For Legal Reasons"</expr>,
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>LEVEL_500</name></cpp:macro> <cpp:value>91</cpp:value></cpp:define>
+    <expr>"500 Internal Server Error"</expr>,
+    <expr>"501 Not Implemented"</expr>,
+    <expr>"502 Bad Gateway"</expr>,
+    <expr>"503 Service Unavailable"</expr>,
+    <expr>"504 Gateway Timeout"</expr>,
+    <expr>"505 HTTP Version Not Supported"</expr>,
+    <expr>"506 Variant Also Negotiates"</expr>,
+    <expr>"507 Insufficient Storage"</expr>,
+    <expr>"508 Loop Detected"</expr>,
+    <expr><name>NULL</name></expr>, <comment type="block">/* 509 */</comment>
+    <expr>"510 Not Extended"</expr>,
+    <expr>"511 Network Authentication Required"</expr>
+}</block></expr></init></decl>;</decl_stmt>
+
+<macro><name>APR_HOOK_STRUCT</name><argument_list>(
+    <argument>APR_HOOK_LINK(insert_error_filter)</argument>
+)</argument_list></macro>
+
+<macro><name>AP_IMPLEMENT_HOOK_VOID</name><argument_list>(<argument>insert_error_filter</argument>, <argument>(request_rec *r)</argument>, <argument>(r)</argument>)</argument_list></macro>
+
+<comment type="block">/* The index of the first bit field that is used to index into a limit
+ * bitmask. M_INVALID + 1 to METHOD_NUMBER_LAST.
+ */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>METHOD_NUMBER_FIRST</name></cpp:macro> <cpp:value>(M_INVALID + 1)</cpp:value></cpp:define>
+
+<comment type="block">/* The max method number. Method numbers are used to shift bitmasks,
+ * so this cannot exceed 63, and all bits high is equal to -1, which is a
+ * special flag, so the last bit used has index 62.
+ */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>METHOD_NUMBER_LAST</name></cpp:macro>  <cpp:value>62</cpp:value></cpp:define>
+
+<function><type><specifier>static</specifier> <name>int</name></type> <name>is_mpm_running</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>mpm_state</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr><call><name>ap_mpm_query</name><argument_list>(<argument><expr><name>AP_MPMQ_MPM_STATE</name></expr></argument>, <argument><expr>&amp;<name>mpm_state</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+      <return>return <expr>0</expr>;</return>
+    }</block></then></if>
+
+    <if>if <condition>(<expr><name>mpm_state</name> == <name>AP_MPMQ_STOPPING</name></expr>)</condition><then> <block>{
+      <return>return <expr>0</expr>;</return>
+    }</block></then></if>
+
+    <return>return <expr>1</expr>;</return>
+}</block></function>
+
+
+<macro><name>AP_DECLARE</name><argument_list>(<argument>int</argument>)</argument_list></macro> <macro><name>ap_set_keepalive</name><argument_list>(<argument>request_rec *r</argument>)</argument_list></macro>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>ka_sent</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>left</name> <init>= <expr><name><name>r</name>-&gt;<name>server</name>-&gt;<name>keep_alive_max</name></name> - <name><name>r</name>-&gt;<name>connection</name>-&gt;<name>keepalives</name></name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>wimpy</name> <init>= <expr><call><name>ap_find_token</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>,
+                              <argument><expr><call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_out</name></name></expr></argument>, <argument><expr>"Connection"</expr></argument>)</argument_list></call></expr></argument>,
+                              <argument><expr>"close"</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>conn</name> <init>= <expr><call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_in</name></name></expr></argument>, <argument><expr>"Connection"</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+    <comment type="block">/* The following convoluted conditional determines whether or not
+     * the current connection should remain persistent after this response
+     * (a.k.a. HTTP Keep-Alive) and whether or not the output message
+     * body should use the HTTP/1.1 chunked transfer-coding.  In English,
+     *
+     *   IF  we have not marked this connection as errored;
+     *   and the client isn't expecting 100-continue (PR47087 - more
+     *       input here could be the client continuing when we're
+     *       closing the request).
+     *   and the response body has a defined length due to the status code
+     *       being 304 or 204, the request method being HEAD, already
+     *       having defined Content-Length or Transfer-Encoding: chunked, or
+     *       the request version being HTTP/1.1 and thus capable of being set
+     *       as chunked [we know the (r-&gt;chunked = 1) side-effect is ugly];
+     *   and the server configuration enables keep-alive;
+     *   and the server configuration has a reasonable inter-request timeout;
+     *   and there is no maximum # requests or the max hasn't been reached;
+     *   and the response status does not require a close;
+     *   and the response generator has not already indicated close;
+     *   and the client did not request non-persistence (Connection: close);
+     *   and    we haven't been configured to ignore the buggy twit
+     *       or they're a buggy twit coming through a HTTP/1.1 proxy
+     *   and    the client is requesting an HTTP/1.0-style keep-alive
+     *       or the client claims to be HTTP/1.1 compliant (perhaps a proxy);
+     *   and this MPM process is not already exiting
+     *   THEN we can be persistent, which requires more headers be output.
+     *
+     * Note that the condition evaluation order is extremely important.
+     */</comment>
+    <if>if <condition>(<expr>(<name><name>r</name>-&gt;<name>connection</name>-&gt;<name>keepalive</name></name> != <name>AP_CONN_CLOSE</name>)
+        &amp;&amp; !<name><name>r</name>-&gt;<name>expecting_100</name></name>
+        &amp;&amp; ((<name><name>r</name>-&gt;<name>status</name></name> == <name>HTTP_NOT_MODIFIED</name>)
+            || (<name><name>r</name>-&gt;<name>status</name></name> == <name>HTTP_NO_CONTENT</name>)
+            || <name><name>r</name>-&gt;<name>header_only</name></name>
+            || <call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_out</name></name></expr></argument>, <argument><expr>"Content-Length"</expr></argument>)</argument_list></call>
+            || <call><name>ap_find_last_token</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>,
+                                  <argument><expr><call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_out</name></name></expr></argument>,
+                                                <argument><expr>"Transfer-Encoding"</expr></argument>)</argument_list></call></expr></argument>,
+                                  <argument><expr>"chunked"</expr></argument>)</argument_list></call>
+            || ((<name><name>r</name>-&gt;<name>proto_num</name></name> &gt;= <call><name>HTTP_VERSION</name><argument_list>(<argument><expr>1</expr></argument>,<argument><expr>1</expr></argument>)</argument_list></call>)
+                &amp;&amp; (<name><name>r</name>-&gt;<name>chunked</name></name> = 1))) <comment type="block">/* THIS CODE IS CORRECT, see above. */</comment>
+        &amp;&amp; <name><name>r</name>-&gt;<name>server</name>-&gt;<name>keep_alive</name></name>
+        &amp;&amp; (<name><name>r</name>-&gt;<name>server</name>-&gt;<name>keep_alive_timeout</name></name> &gt; 0)
+        &amp;&amp; ((<name><name>r</name>-&gt;<name>server</name>-&gt;<name>keep_alive_max</name></name> == 0)
+            || (<name>left</name> &gt; 0))
+        &amp;&amp; !<call><name>ap_status_drops_connection</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>status</name></name></expr></argument>)</argument_list></call>
+        &amp;&amp; !<name>wimpy</name>
+        &amp;&amp; !<call><name>ap_find_token</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>conn</name></expr></argument>, <argument><expr>"close"</expr></argument>)</argument_list></call>
+        &amp;&amp; (!<call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>subprocess_env</name></name></expr></argument>, <argument><expr>"nokeepalive"</expr></argument>)</argument_list></call>
+            || <call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_in</name></name></expr></argument>, <argument><expr>"Via"</expr></argument>)</argument_list></call>)
+        &amp;&amp; ((<name>ka_sent</name> = <call><name>ap_find_token</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>conn</name></expr></argument>, <argument><expr>"keep-alive"</expr></argument>)</argument_list></call>)
+            || (<name><name>r</name>-&gt;<name>proto_num</name></name> &gt;= <call><name>HTTP_VERSION</name><argument_list>(<argument><expr>1</expr></argument>,<argument><expr>1</expr></argument>)</argument_list></call>))
+        &amp;&amp; <call><name>is_mpm_running</name><argument_list>()</argument_list></call></expr>)</condition><then> <block>{
+
+        <expr_stmt><expr><name><name>r</name>-&gt;<name>connection</name>-&gt;<name>keepalive</name></name> = <name>AP_CONN_KEEPALIVE</name></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>r</name>-&gt;<name>connection</name>-&gt;<name>keepalives</name></name>++</expr>;</expr_stmt>
+
+        <comment type="block">/* If they sent a Keep-Alive token, send one back */</comment>
+        <if>if <condition>(<expr><name>ka_sent</name></expr>)</condition><then> <block>{
+            <if>if <condition>(<expr><name><name>r</name>-&gt;<name>server</name>-&gt;<name>keep_alive_max</name></name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><call><name>apr_table_setn</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_out</name></name></expr></argument>, <argument><expr>"Keep-Alive"</expr></argument>,
+                       <argument><expr><call><name>apr_psprintf</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>"timeout=%d, max=%d"</expr></argument>,
+                            <argument><expr>(<name>int</name>)<call><name>apr_time_sec</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>server</name>-&gt;<name>keep_alive_timeout</name></name></expr></argument>)</argument_list></call></expr></argument>,
+                            <argument><expr><name>left</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></then>
+            <else>else <block>{
+                <expr_stmt><expr><call><name>apr_table_setn</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_out</name></name></expr></argument>, <argument><expr>"Keep-Alive"</expr></argument>,
+                      <argument><expr><call><name>apr_psprintf</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>"timeout=%d"</expr></argument>,
+                            <argument><expr>(<name>int</name>)<call><name>apr_time_sec</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>server</name>-&gt;<name>keep_alive_timeout</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></else></if>
+            <expr_stmt><expr><call><name>apr_table_mergen</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_out</name></name></expr></argument>, <argument><expr>"Connection"</expr></argument>, <argument><expr>"Keep-Alive"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+
+        <return>return <expr>1</expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/* Otherwise, we need to indicate that we will be closing this
+     * connection immediately after the current response.
+     *
+     * We only really need to send "close" to HTTP/1.1 clients, but we
+     * always send it anyway, because a broken proxy may identify itself
+     * as HTTP/1.0, but pass our request along with our HTTP/1.1 tag
+     * to a HTTP/1.1 client. Better safe than sorry.
+     */</comment>
+    <if>if <condition>(<expr>!<name>wimpy</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>apr_table_mergen</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_out</name></name></expr></argument>, <argument><expr>"Connection"</expr></argument>, <argument><expr>"close"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <comment type="block">/*
+     * If we had previously been a keepalive connection and this
+     * is the last one, then bump up the number of keepalives
+     * we've had
+     */</comment>
+    <if>if <condition>(<expr>(<name><name>r</name>-&gt;<name>connection</name>-&gt;<name>keepalive</name></name> != <name>AP_CONN_CLOSE</name>)
+        &amp;&amp; <name><name>r</name>-&gt;<name>server</name>-&gt;<name>keep_alive_max</name></name>
+        &amp;&amp; !<name>left</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name><name>r</name>-&gt;<name>connection</name>-&gt;<name>keepalives</name></name>++</expr>;</expr_stmt>
+    }</block></then></if>
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>connection</name>-&gt;<name>keepalive</name></name> = <name>AP_CONN_CLOSE</name></expr>;</expr_stmt>
+
+    <return>return <expr>0</expr>;</return>
+}</block>
+
+<macro><name>AP_DECLARE</name><argument_list>(<argument>ap_condition_e</argument>)</argument_list></macro> <macro><name>ap_condition_if_match</name><argument_list>(<argument>request_rec *r</argument>,
+        <argument>apr_table_t *headers</argument>)</argument_list></macro>
+<block>{
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>if_match</name></decl>, *<decl><type ref="prev"/><name>etag</name></decl>;</decl_stmt>
+
+    <comment type="block">/* A server MUST use the strong comparison function (see section 13.3.3)
+     * to compare the entity tags in If-Match.
+     */</comment>
+    <if>if <condition>(<expr>(<name>if_match</name> = <call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_in</name></name></expr></argument>, <argument><expr>"If-Match"</expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then> <block>{
+        <if>if <condition>(<expr><name><name>if_match</name><index>[<expr>0</expr>]</index></name> == '*'
+                || ((<name>etag</name> = <call><name>apr_table_get</name><argument_list>(<argument><expr><name>headers</name></expr></argument>, <argument><expr>"ETag"</expr></argument>)</argument_list></call>) != <name>NULL</name>
+                        &amp;&amp; <call><name>ap_find_etag_strong</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>if_match</name></expr></argument>, <argument><expr><name>etag</name></expr></argument>)</argument_list></call>)</expr>)</condition><then> <block>{
+            <return>return <expr><name>AP_CONDITION_STRONG</name></expr>;</return>
+        }</block></then>
+        <else>else <block>{
+            <return>return <expr><name>AP_CONDITION_NOMATCH</name></expr>;</return>
+        }</block></else></if>
+    }</block></then></if>
+
+    <return>return <expr><name>AP_CONDITION_NONE</name></expr>;</return>
+}</block>
+
+<macro><name>AP_DECLARE</name><argument_list>(<argument>ap_condition_e</argument>)</argument_list></macro> <macro><name>ap_condition_if_unmodified_since</name><argument_list>(<argument>request_rec *r</argument>,
+        <argument>apr_table_t *headers</argument>)</argument_list></macro>
+<block>{
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>if_unmodified</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>if_unmodified</name> = <call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_in</name></name></expr></argument>, <argument><expr>"If-Unmodified-Since"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>if_unmodified</name></expr>)</condition><then> <block>{
+        <decl_stmt><decl><type><name>apr_int64_t</name></type> <name>mtime</name></decl>, <decl><type ref="prev"/><name>reqtime</name></decl>;</decl_stmt>
+
+        <decl_stmt><decl><type><name>apr_time_t</name></type> <name>ius</name> <init>= <expr><call><name>apr_time_sec</name><argument_list>(<argument><expr><call><name>apr_date_parse_http</name><argument_list>(<argument><expr><name>if_unmodified</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+        <comment type="block">/* All of our comparisons must be in seconds, because that's the
+         * highest time resolution the HTTP specification allows.
+         */</comment>
+        <expr_stmt><expr><name>mtime</name> = <call><name>apr_time_sec</name><argument_list>(<argument><expr><call><name>apr_date_parse_http</name><argument_list>(
+                        <argument><expr><call><name>apr_table_get</name><argument_list>(<argument><expr><name>headers</name></expr></argument>, <argument><expr>"Last-Modified"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>mtime</name> == <name>APR_DATE_BAD</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>mtime</name> = <call><name>apr_time_sec</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>mtime</name></name> ? <name><name>r</name>-&gt;<name>mtime</name></name> : <call><name>apr_time_now</name><argument_list>()</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+
+        <expr_stmt><expr><name>reqtime</name> = <call><name>apr_time_sec</name><argument_list>(<argument><expr><call><name>apr_date_parse_http</name><argument_list>(
+                        <argument><expr><call><name>apr_table_get</name><argument_list>(<argument><expr><name>headers</name></expr></argument>, <argument><expr>"Date"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr>!<name>reqtime</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>reqtime</name> = <call><name>apr_time_sec</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>request_time</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+
+        <if>if <condition>(<expr>(<name>ius</name> != <name>APR_DATE_BAD</name>) &amp;&amp; (<name>mtime</name> &gt; <name>ius</name>)</expr>)</condition><then> <block>{
+            <if>if <condition>(<expr><name>reqtime</name> &lt; <name>mtime</name> + 60</expr>)</condition><then> <block>{
+                <if>if <condition>(<expr><call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_in</name></name></expr></argument>, <argument><expr>"Range"</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+                    <comment type="block">/* weak matches not allowed with Range requests */</comment>
+                    <return>return <expr><name>AP_CONDITION_NOMATCH</name></expr>;</return>
+                }</block></then>
+                <else>else <block>{
+                    <return>return <expr><name>AP_CONDITION_WEAK</name></expr>;</return>
+                }</block></else></if>
+            }</block></then>
+            <else>else <block>{
+                <return>return <expr><name>AP_CONDITION_STRONG</name></expr>;</return>
+            }</block></else></if>
+        }</block></then>
+        <else>else <block>{
+            <return>return <expr><name>AP_CONDITION_NOMATCH</name></expr>;</return>
+        }</block></else></if>
+    }</block></then></if>
+
+    <return>return <expr><name>AP_CONDITION_NONE</name></expr>;</return>
+}</block>
+
+<macro><name>AP_DECLARE</name><argument_list>(<argument>ap_condition_e</argument>)</argument_list></macro> <macro><name>ap_condition_if_none_match</name><argument_list>(<argument>request_rec *r</argument>,
+        <argument>apr_table_t *headers</argument>)</argument_list></macro>
+<block>{
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>if_nonematch</name></decl>, *<decl><type ref="prev"/><name>etag</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>if_nonematch</name> = <call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_in</name></name></expr></argument>, <argument><expr>"If-None-Match"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>if_nonematch</name> != <name>NULL</name></expr>)</condition><then> <block>{
+
+        <if>if <condition>(<expr><name><name>if_nonematch</name><index>[<expr>0</expr>]</index></name> == '*'</expr>)</condition><then> <block>{
+            <return>return <expr><name>AP_CONDITION_STRONG</name></expr>;</return>
+        }</block></then></if>
+
+        <comment type="block">/* See section 13.3.3 for rules on how to determine if two entities tags
+         * match. The weak comparison function can only be used with GET or HEAD
+         * requests.
+         */</comment>
+        <if>if <condition>(<expr><name><name>r</name>-&gt;<name>method_number</name></name> == <name>M_GET</name></expr>)</condition><then> <block>{
+            <if>if <condition>(<expr>(<name>etag</name> = <call><name>apr_table_get</name><argument_list>(<argument><expr><name>headers</name></expr></argument>, <argument><expr>"ETag"</expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then> <block>{
+                <if>if <condition>(<expr><call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_in</name></name></expr></argument>, <argument><expr>"Range"</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+                    <if>if <condition>(<expr><call><name>ap_find_etag_strong</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>if_nonematch</name></expr></argument>, <argument><expr><name>etag</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+                        <return>return <expr><name>AP_CONDITION_STRONG</name></expr>;</return>
+                    }</block></then></if>
+                }</block></then>
+                <else>else <block>{
+                    <if>if <condition>(<expr><call><name>ap_find_etag_weak</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>if_nonematch</name></expr></argument>, <argument><expr><name>etag</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+                        <return>return <expr><name>AP_CONDITION_WEAK</name></expr>;</return>
+                    }</block></then></if>
+                }</block></else></if>
+            }</block></then></if>
+        }</block></then>
+
+        <else>else <if>if <condition>(<expr>(<name>etag</name> = <call><name>apr_table_get</name><argument_list>(<argument><expr><name>headers</name></expr></argument>, <argument><expr>"ETag"</expr></argument>)</argument_list></call>) != <name>NULL</name>
+                &amp;&amp; <call><name>ap_find_etag_strong</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>if_nonematch</name></expr></argument>, <argument><expr><name>etag</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <return>return <expr><name>AP_CONDITION_STRONG</name></expr>;</return>
+        }</block></then></if></else></if>
+        <return>return <expr><name>AP_CONDITION_NOMATCH</name></expr>;</return>
+    }</block></then></if>
+
+    <return>return <expr><name>AP_CONDITION_NONE</name></expr>;</return>
+}</block>
+
+<macro><name>AP_DECLARE</name><argument_list>(<argument>ap_condition_e</argument>)</argument_list></macro> <macro><name>ap_condition_if_modified_since</name><argument_list>(<argument>request_rec *r</argument>,
+        <argument>apr_table_t *headers</argument>)</argument_list></macro>
+<block>{
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>if_modified_since</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>(<name>if_modified_since</name> = <call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_in</name></name></expr></argument>, <argument><expr>"If-Modified-Since"</expr></argument>)</argument_list></call>)
+            != <name>NULL</name></expr>)</condition><then> <block>{
+        <decl_stmt><decl><type><name>apr_int64_t</name></type> <name>mtime</name></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>apr_int64_t</name></type> <name>ims</name></decl>, <decl><type ref="prev"/><name>reqtime</name></decl>;</decl_stmt>
+
+        <comment type="block">/* All of our comparisons must be in seconds, because that's the
+         * highest time resolution the HTTP specification allows.
+         */</comment>
+
+        <expr_stmt><expr><name>mtime</name> = <call><name>apr_time_sec</name><argument_list>(<argument><expr><call><name>apr_date_parse_http</name><argument_list>(
+                        <argument><expr><call><name>apr_table_get</name><argument_list>(<argument><expr><name>headers</name></expr></argument>, <argument><expr>"Last-Modified"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>mtime</name> == <name>APR_DATE_BAD</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>mtime</name> = <call><name>apr_time_sec</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>mtime</name></name> ? <name><name>r</name>-&gt;<name>mtime</name></name> : <call><name>apr_time_now</name><argument_list>()</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+
+        <expr_stmt><expr><name>reqtime</name> = <call><name>apr_time_sec</name><argument_list>(<argument><expr><call><name>apr_date_parse_http</name><argument_list>(
+                        <argument><expr><call><name>apr_table_get</name><argument_list>(<argument><expr><name>headers</name></expr></argument>, <argument><expr>"Date"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr>!<name>reqtime</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>reqtime</name> = <call><name>apr_time_sec</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>request_time</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+
+        <expr_stmt><expr><name>ims</name> = <call><name>apr_time_sec</name><argument_list>(<argument><expr><call><name>apr_date_parse_http</name><argument_list>(<argument><expr><name>if_modified_since</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <if>if <condition>(<expr><name>ims</name> &gt;= <name>mtime</name> &amp;&amp; <name>ims</name> &lt;= <name>reqtime</name></expr>)</condition><then> <block>{
+            <if>if <condition>(<expr><name>reqtime</name> &lt; <name>mtime</name> + 60</expr>)</condition><then> <block>{
+                <if>if <condition>(<expr><call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_in</name></name></expr></argument>, <argument><expr>"Range"</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+                    <comment type="block">/* weak matches not allowed with Range requests */</comment>
+                    <return>return <expr><name>AP_CONDITION_NOMATCH</name></expr>;</return>
+                }</block></then>
+                <else>else <block>{
+                    <return>return <expr><name>AP_CONDITION_WEAK</name></expr>;</return>
+                }</block></else></if>
+            }</block></then>
+            <else>else <block>{
+                <return>return <expr><name>AP_CONDITION_STRONG</name></expr>;</return>
+            }</block></else></if>
+        }</block></then>
+        <else>else <block>{
+            <return>return <expr><name>AP_CONDITION_NOMATCH</name></expr>;</return>
+        }</block></else></if>
+    }</block></then></if>
+
+    <return>return <expr><name>AP_CONDITION_NONE</name></expr>;</return>
+}</block>
+
+<macro><name>AP_DECLARE</name><argument_list>(<argument>ap_condition_e</argument>)</argument_list></macro> <macro><name>ap_condition_if_range</name><argument_list>(<argument>request_rec *r</argument>,
+        <argument>apr_table_t *headers</argument>)</argument_list></macro>
+<block>{
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>if_range</name></decl>, *<decl><type ref="prev"/><name>etag</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>(<name>if_range</name> = <call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_in</name></name></expr></argument>, <argument><expr>"If-Range"</expr></argument>)</argument_list></call>)
+            &amp;&amp; <call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_in</name></name></expr></argument>, <argument><expr>"Range"</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <if>if <condition>(<expr><name><name>if_range</name><index>[<expr>0</expr>]</index></name> == '"'</expr>)</condition><then> <block>{
+
+            <if>if <condition>(<expr>(<name>etag</name> = <call><name>apr_table_get</name><argument_list>(<argument><expr><name>headers</name></expr></argument>, <argument><expr>"ETag"</expr></argument>)</argument_list></call>)
+                    &amp;&amp; !<call><name>strcmp</name><argument_list>(<argument><expr><name>if_range</name></expr></argument>, <argument><expr><name>etag</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+                <return>return <expr><name>AP_CONDITION_STRONG</name></expr>;</return>
+            }</block></then>
+            <else>else <block>{
+                <return>return <expr><name>AP_CONDITION_NOMATCH</name></expr>;</return>
+            }</block></else></if>
+
+        }</block></then>
+        <else>else <block>{
+            <decl_stmt><decl><type><name>apr_int64_t</name></type> <name>mtime</name></decl>;</decl_stmt>
+            <decl_stmt><decl><type><name>apr_int64_t</name></type> <name>rtime</name></decl>, <decl><type ref="prev"/><name>reqtime</name></decl>;</decl_stmt>
+
+            <comment type="block">/* All of our comparisons must be in seconds, because that's the
+             * highest time resolution the HTTP specification allows.
+             */</comment>
+
+            <expr_stmt><expr><name>mtime</name> = <call><name>apr_time_sec</name><argument_list>(<argument><expr><call><name>apr_date_parse_http</name><argument_list>(
+                            <argument><expr><call><name>apr_table_get</name><argument_list>(<argument><expr><name>headers</name></expr></argument>, <argument><expr>"Last-Modified"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <if>if <condition>(<expr><name>mtime</name> == <name>APR_DATE_BAD</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><name>mtime</name> = <call><name>apr_time_sec</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>mtime</name></name> ? <name><name>r</name>-&gt;<name>mtime</name></name> : <call><name>apr_time_now</name><argument_list>()</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></then></if>
+
+            <expr_stmt><expr><name>reqtime</name> = <call><name>apr_time_sec</name><argument_list>(<argument><expr><call><name>apr_date_parse_http</name><argument_list>(
+                            <argument><expr><call><name>apr_table_get</name><argument_list>(<argument><expr><name>headers</name></expr></argument>, <argument><expr>"Date"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <if>if <condition>(<expr>!<name>reqtime</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><name>reqtime</name> = <call><name>apr_time_sec</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>request_time</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></then></if>
+
+            <expr_stmt><expr><name>rtime</name> = <call><name>apr_time_sec</name><argument_list>(<argument><expr><call><name>apr_date_parse_http</name><argument_list>(<argument><expr><name>if_range</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+            <if>if <condition>(<expr><name>rtime</name> == <name>mtime</name></expr>)</condition><then> <block>{
+                <if>if <condition>(<expr><name>reqtime</name> &lt; <name>mtime</name> + 60</expr>)</condition><then> <block>{
+                    <comment type="block">/* weak matches not allowed with Range requests */</comment>
+                    <return>return <expr><name>AP_CONDITION_NOMATCH</name></expr>;</return>
+                }</block></then>
+                <else>else <block>{
+                    <return>return <expr><name>AP_CONDITION_STRONG</name></expr>;</return>
+                }</block></else></if>
+            }</block></then>
+            <else>else <block>{
+                <return>return <expr><name>AP_CONDITION_NOMATCH</name></expr>;</return>
+            }</block></else></if>
+        }</block></else></if>
+    }</block></then></if>
+
+    <return>return <expr><name>AP_CONDITION_NONE</name></expr>;</return>
+}</block>
+
+<macro><name>AP_DECLARE</name><argument_list>(<argument>int</argument>)</argument_list></macro> <macro><name>ap_meets_conditions</name><argument_list>(<argument>request_rec *r</argument>)</argument_list></macro>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>not_modified</name> <init>= <expr>-1</expr></init></decl>;</decl_stmt> <comment type="block">/* unset by default */</comment>
+    <decl_stmt><decl><type><name>ap_condition_e</name></type> <name>cond</name></decl>;</decl_stmt>
+
+    <comment type="block">/* Check for conditional requests --- note that we only want to do
+     * this if we are successful so far and we are not processing a
+     * subrequest or an ErrorDocument.
+     *
+     * The order of the checks is important, since ETag checks are supposed
+     * to be more accurate than checks relative to the modification time.
+     * However, not all documents are guaranteed to *have* ETags, and some
+     * might have Last-Modified values w/o ETags, so this gets a little
+     * complicated.
+     */</comment>
+
+    <if>if <condition>(<expr>!<call><name>ap_is_HTTP_SUCCESS</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>status</name></name></expr></argument>)</argument_list></call> || <name><name>r</name>-&gt;<name>no_local_copy</name></name></expr>)</condition><then> <block>{
+        <return>return <expr><name>OK</name></expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/* If an If-Match request-header field was given
+     * AND the field value is not "*" (meaning match anything)
+     * AND if our strong ETag does not match any entity tag in that field,
+     *     respond with a status of 412 (Precondition Failed).
+     */</comment>
+    <expr_stmt><expr><name>cond</name> = <call><name>ap_condition_if_match</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>headers_out</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>AP_CONDITION_NOMATCH</name> == <name>cond</name></expr>)</condition><then> <block>{
+        <return>return <expr><name>HTTP_PRECONDITION_FAILED</name></expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/* Else if a valid If-Unmodified-Since request-header field was given
+     * AND the requested resource has been modified since the time
+     * specified in this field, then the server MUST
+     *     respond with a status of 412 (Precondition Failed).
+     */</comment>
+    <expr_stmt><expr><name>cond</name> = <call><name>ap_condition_if_unmodified_since</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>headers_out</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>AP_CONDITION_NOMATCH</name> == <name>cond</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>not_modified</name> = 0</expr>;</expr_stmt>
+    }</block></then>
+    <else>else <if>if <condition>(<expr><name>cond</name> &gt;= <name>AP_CONDITION_WEAK</name></expr>)</condition><then> <block>{
+        <return>return <expr><name>HTTP_PRECONDITION_FAILED</name></expr>;</return>
+    }</block></then></if></else></if>
+
+    <comment type="block">/* If an If-None-Match request-header field was given
+     * AND the field value is "*" (meaning match anything)
+     *     OR our ETag matches any of the entity tags in that field, fail.
+     *
+     * If the request method was GET or HEAD, failure means the server
+     *    SHOULD respond with a 304 (Not Modified) response.
+     * For all other request methods, failure means the server MUST
+     *    respond with a status of 412 (Precondition Failed).
+     *
+     * GET or HEAD allow weak etag comparison, all other methods require
+     * strong comparison.  We can only use weak if it's not a range request.
+     */</comment>
+    <expr_stmt><expr><name>cond</name> = <call><name>ap_condition_if_none_match</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>headers_out</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>AP_CONDITION_NOMATCH</name> == <name>cond</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>not_modified</name> = 0</expr>;</expr_stmt>
+    }</block></then>
+    <else>else <if>if <condition>(<expr><name>cond</name> &gt;= <name>AP_CONDITION_WEAK</name></expr>)</condition><then> <block>{
+        <if>if <condition>(<expr><name><name>r</name>-&gt;<name>method_number</name></name> == <name>M_GET</name></expr>)</condition><then> <block>{
+            <if>if <condition>(<expr><name>not_modified</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><name>not_modified</name> = 1</expr>;</expr_stmt>
+            }</block></then></if>
+        }</block></then>
+        <else>else <block>{
+            <return>return <expr><name>HTTP_PRECONDITION_FAILED</name></expr>;</return>
+        }</block></else></if>
+    }</block></then></if></else></if>
+
+    <comment type="block">/* If a valid If-Modified-Since request-header field was given
+     * AND it is a GET or HEAD request
+     * AND the requested resource has not been modified since the time
+     * specified in this field, then the server MUST
+     *    respond with a status of 304 (Not Modified).
+     * A date later than the server's current request time is invalid.
+     */</comment>
+    <expr_stmt><expr><name>cond</name> = <call><name>ap_condition_if_modified_since</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>headers_out</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>AP_CONDITION_NOMATCH</name> == <name>cond</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>not_modified</name> = 0</expr>;</expr_stmt>
+    }</block></then>
+    <else>else <if>if <condition>(<expr><name>cond</name> &gt;= <name>AP_CONDITION_WEAK</name></expr>)</condition><then> <block>{
+        <if>if <condition>(<expr><name><name>r</name>-&gt;<name>method_number</name></name> == <name>M_GET</name></expr>)</condition><then> <block>{
+            <if>if <condition>(<expr><name>not_modified</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><name>not_modified</name> = 1</expr>;</expr_stmt>
+            }</block></then></if>
+        }</block></then></if>
+    }</block></then></if></else></if>
+
+    <comment type="block">/* If an If-Range and an Range header is present, we must return
+     * 200 OK. The byterange filter will convert it to a range response.
+     */</comment>
+    <expr_stmt><expr><name>cond</name> = <call><name>ap_condition_if_range</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>headers_out</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>cond</name> &gt; <name>AP_CONDITION_NONE</name></expr>)</condition><then> <block>{
+        <return>return <expr><name>OK</name></expr>;</return>
+    }</block></then></if>
+
+    <if>if <condition>(<expr><name>not_modified</name> == 1</expr>)</condition><then> <block>{
+        <return>return <expr><name>HTTP_NOT_MODIFIED</name></expr>;</return>
+    }</block></then></if>
+
+    <return>return <expr><name>OK</name></expr>;</return>
+}</block>
+
+<comment type="block">/**
+ * Singleton registry of additional methods. This maps new method names
+ * such as "MYGET" to methnums, which are int offsets into bitmasks.
+ *
+ * This follows the same technique as standard M_GET, M_POST, etc. These
+ * are dynamically assigned when modules are loaded and &lt;Limit GET MYGET&gt;
+ * directives are processed.
+ */</comment>
+<decl_stmt><decl><type><specifier>static</specifier> <name>apr_hash_t</name> *</type><name>methods_registry</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name></type> <name>cur_method_number</name> <init>= <expr><name>METHOD_NUMBER_FIRST</name></expr></init></decl>;</decl_stmt>
+
+<comment type="block">/* internal function to register one method/number pair */</comment>
+<function><type><specifier>static</specifier> <name>void</name></type> <name>register_one_method</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>methname</name></decl></param>,
+                                <param><decl><type><name>int</name></type> <name>methnum</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>int</name> *</type><name>pnum</name> <init>= <expr><call><name>apr_palloc</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>pnum</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+    <expr_stmt><expr>*<name>pnum</name> = <name>methnum</name></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name>methods_registry</name></expr></argument>, <argument><expr><name>methname</name></expr></argument>, <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>, <argument><expr><name>pnum</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<comment type="block">/* This internal function is used to clear the method registry
+ * and reset the cur_method_number counter.
+ */</comment>
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>ap_method_registry_destroy</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>notused</name></decl></param>)</parameter_list>
+<block>{
+    <expr_stmt><expr><name>methods_registry</name> = <name>NULL</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name>cur_method_number</name> = <name>METHOD_NUMBER_FIRST</name></expr>;</expr_stmt>
+    <return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+
+<macro><name>AP_DECLARE</name><argument_list>(<argument>void</argument>)</argument_list></macro> <macro><name>ap_method_registry_init</name><argument_list>(<argument>apr_pool_t *p</argument>)</argument_list></macro>
+<block>{
+    <expr_stmt><expr><name>methods_registry</name> = <call><name>apr_hash_make</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>apr_pool_cleanup_register</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                              <argument><expr><name>ap_method_registry_destroy</name></expr></argument>,
+                              <argument><expr><name>apr_pool_cleanup_null</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* put all the standard methods into the registry hash to ease the
+     * mapping operations between name and number
+     * HEAD is a special-instance of the GET method and shares the same ID
+     */</comment>
+    <expr_stmt><expr><call><name>register_one_method</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>"GET"</expr></argument>, <argument><expr><name>M_GET</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>register_one_method</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>"HEAD"</expr></argument>, <argument><expr><name>M_GET</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>register_one_method</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>"PUT"</expr></argument>, <argument><expr><name>M_PUT</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>register_one_method</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>"POST"</expr></argument>, <argument><expr><name>M_POST</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>register_one_method</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>"DELETE"</expr></argument>, <argument><expr><name>M_DELETE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>register_one_method</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>"CONNECT"</expr></argument>, <argument><expr><name>M_CONNECT</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>register_one_method</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>"OPTIONS"</expr></argument>, <argument><expr><name>M_OPTIONS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>register_one_method</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>"TRACE"</expr></argument>, <argument><expr><name>M_TRACE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>register_one_method</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>"PATCH"</expr></argument>, <argument><expr><name>M_PATCH</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>register_one_method</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>"PROPFIND"</expr></argument>, <argument><expr><name>M_PROPFIND</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>register_one_method</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>"PROPPATCH"</expr></argument>, <argument><expr><name>M_PROPPATCH</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>register_one_method</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>"MKCOL"</expr></argument>, <argument><expr><name>M_MKCOL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>register_one_method</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>"COPY"</expr></argument>, <argument><expr><name>M_COPY</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>register_one_method</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>"MOVE"</expr></argument>, <argument><expr><name>M_MOVE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>register_one_method</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>"LOCK"</expr></argument>, <argument><expr><name>M_LOCK</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>register_one_method</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>"UNLOCK"</expr></argument>, <argument><expr><name>M_UNLOCK</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>register_one_method</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>"VERSION-CONTROL"</expr></argument>, <argument><expr><name>M_VERSION_CONTROL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>register_one_method</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>"CHECKOUT"</expr></argument>, <argument><expr><name>M_CHECKOUT</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>register_one_method</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>"UNCHECKOUT"</expr></argument>, <argument><expr><name>M_UNCHECKOUT</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>register_one_method</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>"CHECKIN"</expr></argument>, <argument><expr><name>M_CHECKIN</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>register_one_method</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>"UPDATE"</expr></argument>, <argument><expr><name>M_UPDATE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>register_one_method</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>"LABEL"</expr></argument>, <argument><expr><name>M_LABEL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>register_one_method</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>"REPORT"</expr></argument>, <argument><expr><name>M_REPORT</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>register_one_method</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>"MKWORKSPACE"</expr></argument>, <argument><expr><name>M_MKWORKSPACE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>register_one_method</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>"MKACTIVITY"</expr></argument>, <argument><expr><name>M_MKACTIVITY</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>register_one_method</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>"BASELINE-CONTROL"</expr></argument>, <argument><expr><name>M_BASELINE_CONTROL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>register_one_method</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>"MERGE"</expr></argument>, <argument><expr><name>M_MERGE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block>
+
+<macro><name>AP_DECLARE</name><argument_list>(<argument>int</argument>)</argument_list></macro> <macro><name>ap_method_register</name><argument_list>(<argument>apr_pool_t *p</argument>, <argument>const char *methname</argument>)</argument_list></macro>
+<block>{
+    <decl_stmt><decl><type><name>int</name> *</type><name>methnum</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr><name>methods_registry</name> == <name>NULL</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>ap_method_registry_init</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <if>if <condition>(<expr><name>methname</name> == <name>NULL</name></expr>)</condition><then> <block>{
+        <return>return <expr><name>M_INVALID</name></expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/* Check if the method was previously registered.  If it was
+     * return the associated method number.
+     */</comment>
+    <expr_stmt><expr><name>methnum</name> = (<name>int</name> *)<call><name>apr_hash_get</name><argument_list>(<argument><expr><name>methods_registry</name></expr></argument>, <argument><expr><name>methname</name></expr></argument>,
+                                  <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>methnum</name> != <name>NULL</name></expr>)</condition><then>
+        <return>return <expr>*<name>methnum</name></expr>;</return></then></if>
+
+    <if>if <condition>(<expr><name>cur_method_number</name> &gt; <name>METHOD_NUMBER_LAST</name></expr>)</condition><then> <block>{
+        <comment type="block">/* The method registry  has run out of dynamically
+         * assignable method numbers. Log this and return M_INVALID.
+         */</comment>
+        <expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_ERR</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>p</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>01610</expr></argument>)</argument_list></call>
+                      "Maximum new request methods %d reached while "
+                      "registering method %s."</expr></argument>,
+                      <argument><expr><name>METHOD_NUMBER_LAST</name></expr></argument>, <argument><expr><name>methname</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>M_INVALID</name></expr>;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><call><name>register_one_method</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>methname</name></expr></argument>, <argument><expr><name>cur_method_number</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>cur_method_number</name>++</expr>;</return>
+}</block>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>UNKNOWN_METHOD</name></cpp:macro> <cpp:value>(-1)</cpp:value></cpp:define>
+
+<function><type><specifier>static</specifier> <name>int</name></type> <name>lookup_builtin_method</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>method</name></decl></param>, <param><decl><type><name>apr_size_t</name></type> <name>len</name></decl></param>)</parameter_list>
+<block>{
+    <comment type="block">/* Note: the following code was generated by the "shilka" tool from
+       the "cocom" parsing/compilation toolkit. It is an optimized lookup
+       based on analysis of the input keywords. Postprocessing was done
+       on the shilka output, but the basic structure and analysis is
+       from there. Should new HTTP methods be added, then manual insertion
+       into this code is fine, or simply re-running the shilka tool on
+       the appropriate input. */</comment>
+
+    <comment type="block">/* Note: it is also quite reasonable to just use our method_registry,
+       but I'm assuming (probably incorrectly) we want more speed here
+       (based on the optimizations the previous code was doing). */</comment>
+
+    <switch>switch <condition>(<expr><name>len</name></expr>)</condition>
+    <block>{
+    <case>case <expr>3</expr>:
+        <switch>switch <condition>(<expr><name><name>method</name><index>[<expr>0</expr>]</index></name></expr>)</condition>
+        <block>{
+        <case>case <expr>'P'</expr>:
+            <return>return <expr>(<name><name>method</name><index>[<expr>1</expr>]</index></name> == 'U'
+                    &amp;&amp; <name><name>method</name><index>[<expr>2</expr>]</index></name> == 'T'
+                    ? <name>M_PUT</name> : <name>UNKNOWN_METHOD</name>)</expr>;</return>
+        </case><case>case <expr>'G'</expr>:
+            <return>return <expr>(<name><name>method</name><index>[<expr>1</expr>]</index></name> == 'E'
+                    &amp;&amp; <name><name>method</name><index>[<expr>2</expr>]</index></name> == 'T'
+                    ? <name>M_GET</name> : <name>UNKNOWN_METHOD</name>)</expr>;</return>
+        </case><default>default:
+            <return>return <expr><name>UNKNOWN_METHOD</name></expr>;</return>
+        </default>}</block></switch>
+
+    </case><case>case <expr>4</expr>:
+        <switch>switch <condition>(<expr><name><name>method</name><index>[<expr>0</expr>]</index></name></expr>)</condition>
+        <block>{
+        <case>case <expr>'H'</expr>:
+            <return>return <expr>(<name><name>method</name><index>[<expr>1</expr>]</index></name> == 'E'
+                    &amp;&amp; <name><name>method</name><index>[<expr>2</expr>]</index></name> == 'A'
+                    &amp;&amp; <name><name>method</name><index>[<expr>3</expr>]</index></name> == 'D'
+                    ? <name>M_GET</name> : <name>UNKNOWN_METHOD</name>)</expr>;</return>
+        </case><case>case <expr>'P'</expr>:
+            <return>return <expr>(<name><name>method</name><index>[<expr>1</expr>]</index></name> == 'O'
+                    &amp;&amp; <name><name>method</name><index>[<expr>2</expr>]</index></name> == 'S'
+                    &amp;&amp; <name><name>method</name><index>[<expr>3</expr>]</index></name> == 'T'
+                    ? <name>M_POST</name> : <name>UNKNOWN_METHOD</name>)</expr>;</return>
+        </case><case>case <expr>'M'</expr>:
+            <return>return <expr>(<name><name>method</name><index>[<expr>1</expr>]</index></name> == 'O'
+                    &amp;&amp; <name><name>method</name><index>[<expr>2</expr>]</index></name> == 'V'
+                    &amp;&amp; <name><name>method</name><index>[<expr>3</expr>]</index></name> == 'E'
+                    ? <name>M_MOVE</name> : <name>UNKNOWN_METHOD</name>)</expr>;</return>
+        </case><case>case <expr>'L'</expr>:
+            <return>return <expr>(<name><name>method</name><index>[<expr>1</expr>]</index></name> == 'O'
+                    &amp;&amp; <name><name>method</name><index>[<expr>2</expr>]</index></name> == 'C'
+                    &amp;&amp; <name><name>method</name><index>[<expr>3</expr>]</index></name> == 'K'
+                    ? <name>M_LOCK</name> : <name>UNKNOWN_METHOD</name>)</expr>;</return>
+        </case><case>case <expr>'C'</expr>:
+            <return>return <expr>(<name><name>method</name><index>[<expr>1</expr>]</index></name> == 'O'
+                    &amp;&amp; <name><name>method</name><index>[<expr>2</expr>]</index></name> == 'P'
+                    &amp;&amp; <name><name>method</name><index>[<expr>3</expr>]</index></name> == 'Y'
+                    ? <name>M_COPY</name> : <name>UNKNOWN_METHOD</name>)</expr>;</return>
+        </case><default>default:
+            <return>return <expr><name>UNKNOWN_METHOD</name></expr>;</return>
+        </default>}</block></switch>
+
+    </case><case>case <expr>5</expr>:
+        <switch>switch <condition>(<expr><name><name>method</name><index>[<expr>2</expr>]</index></name></expr>)</condition>
+        <block>{
+        <case>case <expr>'T'</expr>:
+            <return>return <expr>(<call><name>memcmp</name><argument_list>(<argument><expr><name>method</name></expr></argument>, <argument><expr>"PATCH"</expr></argument>, <argument><expr>5</expr></argument>)</argument_list></call> == 0
+                    ? <name>M_PATCH</name> : <name>UNKNOWN_METHOD</name>)</expr>;</return>
+        </case><case>case <expr>'R'</expr>:
+            <return>return <expr>(<call><name>memcmp</name><argument_list>(<argument><expr><name>method</name></expr></argument>, <argument><expr>"MERGE"</expr></argument>, <argument><expr>5</expr></argument>)</argument_list></call> == 0
+                    ? <name>M_MERGE</name> : <name>UNKNOWN_METHOD</name>)</expr>;</return>
+        </case><case>case <expr>'C'</expr>:
+            <return>return <expr>(<call><name>memcmp</name><argument_list>(<argument><expr><name>method</name></expr></argument>, <argument><expr>"MKCOL"</expr></argument>, <argument><expr>5</expr></argument>)</argument_list></call> == 0
+                    ? <name>M_MKCOL</name> : <name>UNKNOWN_METHOD</name>)</expr>;</return>
+        </case><case>case <expr>'B'</expr>:
+            <return>return <expr>(<call><name>memcmp</name><argument_list>(<argument><expr><name>method</name></expr></argument>, <argument><expr>"LABEL"</expr></argument>, <argument><expr>5</expr></argument>)</argument_list></call> == 0
+                    ? <name>M_LABEL</name> : <name>UNKNOWN_METHOD</name>)</expr>;</return>
+        </case><case>case <expr>'A'</expr>:
+            <return>return <expr>(<call><name>memcmp</name><argument_list>(<argument><expr><name>method</name></expr></argument>, <argument><expr>"TRACE"</expr></argument>, <argument><expr>5</expr></argument>)</argument_list></call> == 0
+                    ? <name>M_TRACE</name> : <name>UNKNOWN_METHOD</name>)</expr>;</return>
+        </case><default>default:
+            <return>return <expr><name>UNKNOWN_METHOD</name></expr>;</return>
+        </default>}</block></switch>
+
+    </case><case>case <expr>6</expr>:
+        <switch>switch <condition>(<expr><name><name>method</name><index>[<expr>0</expr>]</index></name></expr>)</condition>
+        <block>{
+        <case>case <expr>'U'</expr>:
+            <switch>switch <condition>(<expr><name><name>method</name><index>[<expr>5</expr>]</index></name></expr>)</condition>
+            <block>{
+            <case>case <expr>'K'</expr>:
+                <return>return <expr>(<call><name>memcmp</name><argument_list>(<argument><expr><name>method</name></expr></argument>, <argument><expr>"UNLOCK"</expr></argument>, <argument><expr>6</expr></argument>)</argument_list></call> == 0
+                        ? <name>M_UNLOCK</name> : <name>UNKNOWN_METHOD</name>)</expr>;</return>
+            </case><case>case <expr>'E'</expr>:
+                <return>return <expr>(<call><name>memcmp</name><argument_list>(<argument><expr><name>method</name></expr></argument>, <argument><expr>"UPDATE"</expr></argument>, <argument><expr>6</expr></argument>)</argument_list></call> == 0
+                        ? <name>M_UPDATE</name> : <name>UNKNOWN_METHOD</name>)</expr>;</return>
+            </case><default>default:
+                <return>return <expr><name>UNKNOWN_METHOD</name></expr>;</return>
+            </default>}</block></switch>
+        </case><case>case <expr>'R'</expr>:
+            <return>return <expr>(<call><name>memcmp</name><argument_list>(<argument><expr><name>method</name></expr></argument>, <argument><expr>"REPORT"</expr></argument>, <argument><expr>6</expr></argument>)</argument_list></call> == 0
+                    ? <name>M_REPORT</name> : <name>UNKNOWN_METHOD</name>)</expr>;</return>
+        </case><case>case <expr>'D'</expr>:
+            <return>return <expr>(<call><name>memcmp</name><argument_list>(<argument><expr><name>method</name></expr></argument>, <argument><expr>"DELETE"</expr></argument>, <argument><expr>6</expr></argument>)</argument_list></call> == 0
+                    ? <name>M_DELETE</name> : <name>UNKNOWN_METHOD</name>)</expr>;</return>
+        </case><default>default:
+            <return>return <expr><name>UNKNOWN_METHOD</name></expr>;</return>
+        </default>}</block></switch>
+
+    </case><case>case <expr>7</expr>:
+        <switch>switch <condition>(<expr><name><name>method</name><index>[<expr>1</expr>]</index></name></expr>)</condition>
+        <block>{
+        <case>case <expr>'P'</expr>:
+            <return>return <expr>(<call><name>memcmp</name><argument_list>(<argument><expr><name>method</name></expr></argument>, <argument><expr>"OPTIONS"</expr></argument>, <argument><expr>7</expr></argument>)</argument_list></call> == 0
+                    ? <name>M_OPTIONS</name> : <name>UNKNOWN_METHOD</name>)</expr>;</return>
+        </case><case>case <expr>'O'</expr>:
+            <return>return <expr>(<call><name>memcmp</name><argument_list>(<argument><expr><name>method</name></expr></argument>, <argument><expr>"CONNECT"</expr></argument>, <argument><expr>7</expr></argument>)</argument_list></call> == 0
+                    ? <name>M_CONNECT</name> : <name>UNKNOWN_METHOD</name>)</expr>;</return>
+        </case><case>case <expr>'H'</expr>:
+            <return>return <expr>(<call><name>memcmp</name><argument_list>(<argument><expr><name>method</name></expr></argument>, <argument><expr>"CHECKIN"</expr></argument>, <argument><expr>7</expr></argument>)</argument_list></call> == 0
+                    ? <name>M_CHECKIN</name> : <name>UNKNOWN_METHOD</name>)</expr>;</return>
+        </case><default>default:
+            <return>return <expr><name>UNKNOWN_METHOD</name></expr>;</return>
+        </default>}</block></switch>
+
+    </case><case>case <expr>8</expr>:
+        <switch>switch <condition>(<expr><name><name>method</name><index>[<expr>0</expr>]</index></name></expr>)</condition>
+        <block>{
+        <case>case <expr>'P'</expr>:
+            <return>return <expr>(<call><name>memcmp</name><argument_list>(<argument><expr><name>method</name></expr></argument>, <argument><expr>"PROPFIND"</expr></argument>, <argument><expr>8</expr></argument>)</argument_list></call> == 0
+                    ? <name>M_PROPFIND</name> : <name>UNKNOWN_METHOD</name>)</expr>;</return>
+        </case><case>case <expr>'C'</expr>:
+            <return>return <expr>(<call><name>memcmp</name><argument_list>(<argument><expr><name>method</name></expr></argument>, <argument><expr>"CHECKOUT"</expr></argument>, <argument><expr>8</expr></argument>)</argument_list></call> == 0
+                    ? <name>M_CHECKOUT</name> : <name>UNKNOWN_METHOD</name>)</expr>;</return>
+        </case><default>default:
+            <return>return <expr><name>UNKNOWN_METHOD</name></expr>;</return>
+        </default>}</block></switch>
+
+    </case><case>case <expr>9</expr>:
+        <return>return <expr>(<call><name>memcmp</name><argument_list>(<argument><expr><name>method</name></expr></argument>, <argument><expr>"PROPPATCH"</expr></argument>, <argument><expr>9</expr></argument>)</argument_list></call> == 0
+                ? <name>M_PROPPATCH</name> : <name>UNKNOWN_METHOD</name>)</expr>;</return>
+
+    </case><case>case <expr>10</expr>:
+        <switch>switch <condition>(<expr><name><name>method</name><index>[<expr>0</expr>]</index></name></expr>)</condition>
+        <block>{
+        <case>case <expr>'U'</expr>:
+            <return>return <expr>(<call><name>memcmp</name><argument_list>(<argument><expr><name>method</name></expr></argument>, <argument><expr>"UNCHECKOUT"</expr></argument>, <argument><expr>10</expr></argument>)</argument_list></call> == 0
+                    ? <name>M_UNCHECKOUT</name> : <name>UNKNOWN_METHOD</name>)</expr>;</return>
+        </case><case>case <expr>'M'</expr>:
+            <return>return <expr>(<call><name>memcmp</name><argument_list>(<argument><expr><name>method</name></expr></argument>, <argument><expr>"MKACTIVITY"</expr></argument>, <argument><expr>10</expr></argument>)</argument_list></call> == 0
+                    ? <name>M_MKACTIVITY</name> : <name>UNKNOWN_METHOD</name>)</expr>;</return>
+        </case><default>default:
+            <return>return <expr><name>UNKNOWN_METHOD</name></expr>;</return>
+        </default>}</block></switch>
+
+    </case><case>case <expr>11</expr>:
+        <return>return <expr>(<call><name>memcmp</name><argument_list>(<argument><expr><name>method</name></expr></argument>, <argument><expr>"MKWORKSPACE"</expr></argument>, <argument><expr>11</expr></argument>)</argument_list></call> == 0
+                ? <name>M_MKWORKSPACE</name> : <name>UNKNOWN_METHOD</name>)</expr>;</return>
+
+    </case><case>case <expr>15</expr>:
+        <return>return <expr>(<call><name>memcmp</name><argument_list>(<argument><expr><name>method</name></expr></argument>, <argument><expr>"VERSION-CONTROL"</expr></argument>, <argument><expr>15</expr></argument>)</argument_list></call> == 0
+                ? <name>M_VERSION_CONTROL</name> : <name>UNKNOWN_METHOD</name>)</expr>;</return>
+
+    </case><case>case <expr>16</expr>:
+        <return>return <expr>(<call><name>memcmp</name><argument_list>(<argument><expr><name>method</name></expr></argument>, <argument><expr>"BASELINE-CONTROL"</expr></argument>, <argument><expr>16</expr></argument>)</argument_list></call> == 0
+                ? <name>M_BASELINE_CONTROL</name> : <name>UNKNOWN_METHOD</name>)</expr>;</return>
+
+    </case><default>default:
+        <return>return <expr><name>UNKNOWN_METHOD</name></expr>;</return>
+    </default>}</block></switch>
+
+    <comment type="block">/* NOTREACHED */</comment>
+}</block></function>
+
+<comment type="block">/* Get the method number associated with the given string, assumed to
+ * contain an HTTP method.  Returns M_INVALID if not recognized.
+ *
+ * This is the first step toward placing method names in a configurable
+ * list.  Hopefully it (and other routines) can eventually be moved to
+ * something like a mod_http_methods.c, complete with config stuff.
+ */</comment>
+<macro><name>AP_DECLARE</name><argument_list>(<argument>int</argument>)</argument_list></macro> <macro><name>ap_method_number_of</name><argument_list>(<argument>const char *method</argument>)</argument_list></macro>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>len</name> <init>= <expr><call><name>strlen</name><argument_list>(<argument><expr><name>method</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>which</name> <init>= <expr><call><name>lookup_builtin_method</name><argument_list>(<argument><expr><name>method</name></expr></argument>, <argument><expr><name>len</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr><name>which</name> != <name>UNKNOWN_METHOD</name></expr>)</condition><then>
+        <return>return <expr><name>which</name></expr>;</return></then></if>
+
+    <comment type="block">/* check if the method has been dynamically registered */</comment>
+    <if>if <condition>(<expr><name>methods_registry</name> != <name>NULL</name></expr>)</condition><then> <block>{
+        <decl_stmt><decl><type><name>int</name> *</type><name>methnum</name> <init>= <expr><call><name>apr_hash_get</name><argument_list>(<argument><expr><name>methods_registry</name></expr></argument>, <argument><expr><name>method</name></expr></argument>, <argument><expr><name>len</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+        <if>if <condition>(<expr><name>methnum</name> != <name>NULL</name></expr>)</condition><then> <block>{
+            <return>return <expr>*<name>methnum</name></expr>;</return>
+        }</block></then></if>
+    }</block></then></if>
+
+    <return>return <expr><name>M_INVALID</name></expr>;</return>
+}</block>
+
+<comment type="block">/*
+ * Turn a known method number into a name.
+ */</comment>
+<macro><name>AP_DECLARE</name><argument_list>(<argument>const char *</argument>)</argument_list></macro> <macro><name>ap_method_name_of</name><argument_list>(<argument>apr_pool_t *p</argument>, <argument>int methnum</argument>)</argument_list></macro>
+<block>{
+    <decl_stmt><decl><type><name>apr_hash_index_t</name> *</type><name>hi</name> <init>= <expr><call><name>apr_hash_first</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>methods_registry</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+    <comment type="block">/* scan through the hash table, looking for a value that matches
+       the provided method number. */</comment>
+    <for>for (<init>;</init> <condition><expr><name>hi</name></expr>;</condition> <incr><expr><name>hi</name> = <call><name>apr_hash_next</name><argument_list>(<argument><expr><name>hi</name></expr></argument>)</argument_list></call></expr></incr>) <block>{
+        <decl_stmt><decl><type><specifier>const</specifier> <name>void</name> *</type><name>key</name></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>void</name> *</type><name>val</name></decl>;</decl_stmt>
+
+        <expr_stmt><expr><call><name>apr_hash_this</name><argument_list>(<argument><expr><name>hi</name></expr></argument>, <argument><expr>&amp;<name>key</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr>&amp;<name>val</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr>*(<name>int</name> *)<name>val</name> == <name>methnum</name></expr>)</condition><then>
+            <return>return <expr><name>key</name></expr>;</return></then></if>
+    }</block></for>
+
+    <comment type="block">/* it wasn't found in the hash */</comment>
+    <return>return <expr><name>NULL</name></expr>;</return>
+}</block>
+
+<comment type="block">/* The index is found by its offset from the x00 code of each level.
+ * Although this is fast, it will need to be replaced if some nutcase
+ * decides to define a high-numbered code before the lower numbers.
+ * If that sad event occurs, replace the code below with a linear search
+ * from status_lines[shortcut[i]] to status_lines[shortcut[i+1]-1];
+ * or use NULL to fill the gaps.
+ */</comment>
+<macro><name>AP_DECLARE</name><argument_list>(<argument>int</argument>)</argument_list></macro> <macro><name>ap_index_of_response</name><argument_list>(<argument>int status</argument>)</argument_list></macro>
+<block>{
+    <decl_stmt><decl><type><specifier>static</specifier> <name>int</name></type> <name><name>shortcut</name><index>[<expr>6</expr>]</index></name> <init>= <expr><block>{<expr>0</expr>, <expr><name>LEVEL_200</name></expr>, <expr><name>LEVEL_300</name></expr>, <expr><name>LEVEL_400</name></expr>,
+    <expr><name>LEVEL_500</name></expr>, <expr><name>RESPONSE_CODES</name></expr>}</block></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>, <decl><type ref="prev"/><name>pos</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr><name>status</name> &lt; 100</expr>)</condition><then> <block>{               <comment type="block">/* Below 100 is illegal for HTTP status */</comment>
+        <return>return <expr><name>LEVEL_500</name></expr>;</return>
+    }</block></then></if>
+
+    <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; 5</expr>;</condition> <incr><expr><name>i</name>++</expr></incr>) <block>{
+        <expr_stmt><expr><name>status</name> -= 100</expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>status</name> &lt; 100</expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>pos</name> = (<name>status</name> + <name><name>shortcut</name><index>[<expr><name>i</name></expr>]</index></name>)</expr>;</expr_stmt>
+            <if>if <condition>(<expr><name>pos</name> &lt; <name><name>shortcut</name><index>[<expr><name>i</name> + 1</expr>]</index></name> &amp;&amp; <name><name>status_lines</name><index>[<expr><name>pos</name></expr>]</index></name> != <name>NULL</name></expr>)</condition><then> <block>{
+                <return>return <expr><name>pos</name></expr>;</return>
+            }</block></then>
+            <else>else <block>{
+                <return>return <expr><name>LEVEL_500</name></expr>;</return>            <comment type="block">/* status unknown (falls in gap) */</comment>
+            }</block></else></if>
+        }</block></then></if>
+    }</block></for>
+    <return>return <expr><name>LEVEL_500</name></expr>;</return>                         <comment type="block">/* 600 or above is also illegal */</comment>
+}</block>
+
+<macro><name>AP_DECLARE</name><argument_list>(<argument>const char *</argument>)</argument_list></macro> <macro><name>ap_get_status_line</name><argument_list>(<argument>int status</argument>)</argument_list></macro>
+<block>{
+    <return>return <expr><name><name>status_lines</name><index>[<expr><call><name>ap_index_of_response</name><argument_list>(<argument><expr><name>status</name></expr></argument>)</argument_list></call></expr>]</index></name></expr>;</return>
+}</block>
+
+<comment type="block">/* Build the Allow field-value from the request handler method mask.
+ */</comment>
+<function><type><specifier>static</specifier> <name>char</name> *</type><name>make_allow</name><parameter_list>(<param><decl><type><name>request_rec</name> *</type><name>r</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>apr_int64_t</name></type> <name>mask</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>allow</name> <init>= <expr><call><name>apr_array_make</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>10</expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>char</name> *</expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_hash_index_t</name> *</type><name>hi</name> <init>= <expr><call><name>apr_hash_first</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>methods_registry</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <comment type="block">/* For TRACE below */</comment>
+    <decl_stmt><decl><type><name>core_server_config</name> *</type><name>conf</name> <init>=
+        <expr><call><name>ap_get_core_module_config</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>server</name>-&gt;<name>module_config</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>mask</name> = <name><name>r</name>-&gt;<name>allowed_methods</name>-&gt;<name>method_mask</name></name></expr>;</expr_stmt>
+
+    <for>for (<init>;</init> <condition><expr><name>hi</name></expr>;</condition> <incr><expr><name>hi</name> = <call><name>apr_hash_next</name><argument_list>(<argument><expr><name>hi</name></expr></argument>)</argument_list></call></expr></incr>) <block>{
+        <decl_stmt><decl><type><specifier>const</specifier> <name>void</name> *</type><name>key</name></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>void</name> *</type><name>val</name></decl>;</decl_stmt>
+
+        <expr_stmt><expr><call><name>apr_hash_this</name><argument_list>(<argument><expr><name>hi</name></expr></argument>, <argument><expr>&amp;<name>key</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr>&amp;<name>val</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr>(<name>mask</name> &amp; (<name>AP_METHOD_BIT</name> &lt;&lt; *(<name>int</name> *)<name>val</name>)) != 0</expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>APR_ARRAY_PUSH</name><argument_list>(<argument><expr><name>allow</name></expr></argument>, <argument><expr>const <name>char</name> *</expr></argument>)</argument_list></call> = <name>key</name></expr>;</expr_stmt>
+        }</block></then></if>
+    }</block></for>
+
+    <comment type="block">/* TRACE is tested on a per-server basis */</comment>
+    <if>if <condition>(<expr><name><name>conf</name>-&gt;<name>trace_enable</name></name> != <name>AP_TRACE_DISABLE</name></expr>)</condition><then>
+        <expr_stmt><expr>*(const <name>char</name> **)<call><name>apr_array_push</name><argument_list>(<argument><expr><name>allow</name></expr></argument>)</argument_list></call> = "TRACE"</expr>;</expr_stmt></then></if>
+
+    <comment type="block">/* ### this is rather annoying. we should enforce registration of
+       ### these methods */</comment>
+    <if>if <condition>(<expr>(<name>mask</name> &amp; (<name>AP_METHOD_BIT</name> &lt;&lt; <name>M_INVALID</name>))
+        &amp;&amp; (<name><name>r</name>-&gt;<name>allowed_methods</name>-&gt;<name>method_list</name></name> != <name>NULL</name>)
+        &amp;&amp; (<name><name>r</name>-&gt;<name>allowed_methods</name>-&gt;<name>method_list</name>-&gt;<name>nelts</name></name> != 0)</expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>apr_array_cat</name><argument_list>(<argument><expr><name>allow</name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>allowed_methods</name>-&gt;<name>method_list</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <return>return <expr><call><name>apr_array_pstrcat</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>allow</name></expr></argument>, <argument><expr>','</expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<macro><name>AP_DECLARE</name><argument_list>(<argument>int</argument>)</argument_list></macro> <macro><name>ap_send_http_options</name><argument_list>(<argument>request_rec *r</argument>)</argument_list></macro>
+<block>{
+    <if>if <condition>(<expr><name><name>r</name>-&gt;<name>assbackwards</name></name></expr>)</condition><then> <block>{
+        <return>return <expr><name>DECLINED</name></expr>;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><call><name>apr_table_setn</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_out</name></name></expr></argument>, <argument><expr>"Allow"</expr></argument>, <argument><expr><call><name>make_allow</name><argument_list>(<argument><expr><name>r</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* the request finalization will send an EOS, which will flush all
+     * the headers out (including the Allow header)
+     */</comment>
+
+    <return>return <expr><name>OK</name></expr>;</return>
+}</block>
+
+<macro><name>AP_DECLARE</name><argument_list>(<argument>void</argument>)</argument_list></macro> <macro><name>ap_set_content_type</name><argument_list>(<argument>request_rec *r</argument>, <argument>const char *ct</argument>)</argument_list></macro>
+<block>{
+    <if>if <condition>(<expr>!<name>ct</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name><name>r</name>-&gt;<name>content_type</name></name> = <name>NULL</name></expr>;</expr_stmt>
+    }</block></then>
+    <else>else <if>if <condition>(<expr>!<name><name>r</name>-&gt;<name>content_type</name></name> || <call><name>strcmp</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>content_type</name></name></expr></argument>, <argument><expr><name>ct</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name><name>r</name>-&gt;<name>content_type</name></name> = <name>ct</name></expr>;</expr_stmt>
+    }</block></then></if></else></if>
+}</block>
+
+<macro><name>AP_DECLARE</name><argument_list>(<argument>void</argument>)</argument_list></macro> <macro><name>ap_set_accept_ranges</name><argument_list>(<argument>request_rec *r</argument>)</argument_list></macro>
+<block>{
+    <decl_stmt><decl><type><name>core_dir_config</name> *</type><name>d</name> <init>= <expr><call><name>ap_get_core_module_config</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>per_dir_config</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <expr_stmt><expr><call><name>apr_table_setn</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_out</name></name></expr></argument>, <argument><expr>"Accept-Ranges"</expr></argument>,
+                  <argument><expr>(<name><name>d</name>-&gt;<name>max_ranges</name></name> == <name>AP_MAXRANGES_NORANGES</name>) ? "none"
+                                                           : "bytes"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block>
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *</type><name>add_optional_notes</name><parameter_list>(<param><decl><type><name>request_rec</name> *</type><name>r</name></decl></param>,
+                                      <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>prefix</name></decl></param>,
+                                      <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>key</name></decl></param>,
+                                      <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>suffix</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>notes</name></decl>, *<decl><type ref="prev"/><name>result</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>(<name>notes</name> = <call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>notes</name></name></expr></argument>, <argument><expr><name>key</name></expr></argument>)</argument_list></call>) == <name>NULL</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>result</name> = <call><name>apr_pstrcat</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>prefix</name></expr></argument>, <argument><expr><name>suffix</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+    <else>else <block>{
+        <expr_stmt><expr><name>result</name> = <call><name>apr_pstrcat</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>prefix</name></expr></argument>, <argument><expr><name>notes</name></expr></argument>, <argument><expr><name>suffix</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if>
+
+    <return>return <expr><name>result</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* construct and return the default error message for a given
+ * HTTP defined error code
+ */</comment>
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *</type><name>get_canned_error_string</name><parameter_list>(<param><decl><type><name>int</name></type> <name>status</name></decl></param>,
+                                           <param><decl><type><name>request_rec</name> *</type><name>r</name></decl></param>,
+                                           <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>location</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>p</name> <init>= <expr><name><name>r</name>-&gt;<name>pool</name></name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>error_notes</name></decl>, *<decl><type ref="prev"/><name>h1</name></decl>, *<decl><type ref="prev"/><name>s1</name></decl>;</decl_stmt>
+
+    <switch>switch <condition>(<expr><name>status</name></expr>)</condition> <block>{
+    <case>case <expr><name>HTTP_MOVED_PERMANENTLY</name></expr>:
+    </case><case>case <expr><name>HTTP_MOVED_TEMPORARILY</name></expr>:
+    </case><case>case <expr><name>HTTP_TEMPORARY_REDIRECT</name></expr>:
+    </case><case>case <expr><name>HTTP_PERMANENT_REDIRECT</name></expr>:
+        <return>return<expr>(<call><name>apr_pstrcat</name><argument_list>(<argument><expr><name>p</name></expr></argument>,
+                           <argument><expr>"&lt;p&gt;The document has moved &lt;a href=\""</expr></argument>,
+                           <argument><expr><call><name>ap_escape_html</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>location</name></expr></argument>)</argument_list></call></expr></argument>,
+                           <argument><expr>"\"&gt;here&lt;/a&gt;.&lt;/p&gt;\n"</expr></argument>,
+                           <argument><expr><name>NULL</name></expr></argument>)</argument_list></call>)</expr>;</return>
+    </case><case>case <expr><name>HTTP_SEE_OTHER</name></expr>:
+        <return>return<expr>(<call><name>apr_pstrcat</name><argument_list>(<argument><expr><name>p</name></expr></argument>,
+                           <argument><expr>"&lt;p&gt;The answer to your request is located "
+                           "&lt;a href=\""</expr></argument>,
+                           <argument><expr><call><name>ap_escape_html</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>location</name></expr></argument>)</argument_list></call></expr></argument>,
+                           <argument><expr>"\"&gt;here&lt;/a&gt;.&lt;/p&gt;\n"</expr></argument>,
+                           <argument><expr><name>NULL</name></expr></argument>)</argument_list></call>)</expr>;</return>
+    </case><case>case <expr><name>HTTP_USE_PROXY</name></expr>:
+        <return>return<expr>(<call><name>apr_pstrcat</name><argument_list>(<argument><expr><name>p</name></expr></argument>,
+                           <argument><expr>"&lt;p&gt;This resource is only accessible "
+                           "through the proxy\n"</expr></argument>,
+                           <argument><expr><call><name>ap_escape_html</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>location</name></expr></argument>)</argument_list></call></expr></argument>,
+                           <argument><expr>"&lt;br /&gt;\nYou will need to configure "
+                           "your client to use that proxy.&lt;/p&gt;\n"</expr></argument>,
+                           <argument><expr><name>NULL</name></expr></argument>)</argument_list></call>)</expr>;</return>
+    </case><case>case <expr><name>HTTP_PROXY_AUTHENTICATION_REQUIRED</name></expr>:
+    </case><case>case <expr><name>HTTP_UNAUTHORIZED</name></expr>:
+        <return>return<expr>("&lt;p&gt;This server could not verify that you\n"
+               "are authorized to access the document\n"
+               "requested.  Either you supplied the wrong\n"
+               "credentials (e.g., bad password), or your\n"
+               "browser doesn't understand how to supply\n"
+               "the credentials required.&lt;/p&gt;\n")</expr>;</return>
+    </case><case>case <expr><name>HTTP_BAD_REQUEST</name></expr>:
+        <return>return<expr>(<call><name>add_optional_notes</name><argument_list>(<argument><expr><name>r</name></expr></argument>,
+                                  <argument><expr>"&lt;p&gt;Your browser sent a request that "
+                                  "this server could not understand.&lt;br /&gt;\n"</expr></argument>,
+                                  <argument><expr>"error-notes"</expr></argument>,
+                                  <argument><expr>"&lt;/p&gt;\n"</expr></argument>)</argument_list></call>)</expr>;</return>
+    </case><case>case <expr><name>HTTP_FORBIDDEN</name></expr>:
+        <expr_stmt><expr><name>s1</name> = <call><name>apr_pstrcat</name><argument_list>(<argument><expr><name>p</name></expr></argument>,
+                         <argument><expr>"&lt;p&gt;You don't have permission to access "</expr></argument>,
+                         <argument><expr><call><name>ap_escape_html</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>uri</name></name></expr></argument>)</argument_list></call></expr></argument>,
+                         <argument><expr>"\non this server.&lt;br /&gt;\n"</expr></argument>,
+                         <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return<expr>(<call><name>add_optional_notes</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><name>s1</name></expr></argument>, <argument><expr>"error-notes"</expr></argument>, <argument><expr>"&lt;/p&gt;\n"</expr></argument>)</argument_list></call>)</expr>;</return>
+    </case><case>case <expr><name>HTTP_NOT_FOUND</name></expr>:
+        <return>return<expr>(<call><name>apr_pstrcat</name><argument_list>(<argument><expr><name>p</name></expr></argument>,
+                           <argument><expr>"&lt;p&gt;The requested URL "</expr></argument>,
+                           <argument><expr><call><name>ap_escape_html</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>uri</name></name></expr></argument>)</argument_list></call></expr></argument>,
+                           <argument><expr>" was not found on this server.&lt;/p&gt;\n"</expr></argument>,
+                           <argument><expr><name>NULL</name></expr></argument>)</argument_list></call>)</expr>;</return>
+    </case><case>case <expr><name>HTTP_METHOD_NOT_ALLOWED</name></expr>:
+        <return>return<expr>(<call><name>apr_pstrcat</name><argument_list>(<argument><expr><name>p</name></expr></argument>,
+                           <argument><expr>"&lt;p&gt;The requested method "</expr></argument>,
+                           <argument><expr><call><name>ap_escape_html</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>method</name></name></expr></argument>)</argument_list></call></expr></argument>,
+                           <argument><expr>" is not allowed for the URL "</expr></argument>,
+                           <argument><expr><call><name>ap_escape_html</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>uri</name></name></expr></argument>)</argument_list></call></expr></argument>,
+                           <argument><expr>".&lt;/p&gt;\n"</expr></argument>,
+                           <argument><expr><name>NULL</name></expr></argument>)</argument_list></call>)</expr>;</return>
+    </case><case>case <expr><name>HTTP_NOT_ACCEPTABLE</name></expr>:
+        <expr_stmt><expr><name>s1</name> = <call><name>apr_pstrcat</name><argument_list>(<argument><expr><name>p</name></expr></argument>,
+                         <argument><expr>"&lt;p&gt;An appropriate representation of the "
+                         "requested resource "</expr></argument>,
+                         <argument><expr><call><name>ap_escape_html</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>uri</name></name></expr></argument>)</argument_list></call></expr></argument>,
+                         <argument><expr>" could not be found on this server.&lt;/p&gt;\n"</expr></argument>,
+                         <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return<expr>(<call><name>add_optional_notes</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><name>s1</name></expr></argument>, <argument><expr>"variant-list"</expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call>)</expr>;</return>
+    </case><case>case <expr><name>HTTP_MULTIPLE_CHOICES</name></expr>:
+        <return>return<expr>(<call><name>add_optional_notes</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr>""</expr></argument>, <argument><expr>"variant-list"</expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call>)</expr>;</return>
+    </case><case>case <expr><name>HTTP_LENGTH_REQUIRED</name></expr>:
+        <expr_stmt><expr><name>s1</name> = <call><name>apr_pstrcat</name><argument_list>(<argument><expr><name>p</name></expr></argument>,
+                         <argument><expr>"&lt;p&gt;A request of the requested method "</expr></argument>,
+                         <argument><expr><call><name>ap_escape_html</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>method</name></name></expr></argument>)</argument_list></call></expr></argument>,
+                         <argument><expr>" requires a valid Content-length.&lt;br /&gt;\n"</expr></argument>,
+                         <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return<expr>(<call><name>add_optional_notes</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><name>s1</name></expr></argument>, <argument><expr>"error-notes"</expr></argument>, <argument><expr>"&lt;/p&gt;\n"</expr></argument>)</argument_list></call>)</expr>;</return>
+    </case><case>case <expr><name>HTTP_PRECONDITION_FAILED</name></expr>:
+        <return>return<expr>(<call><name>apr_pstrcat</name><argument_list>(<argument><expr><name>p</name></expr></argument>,
+                           <argument><expr>"&lt;p&gt;The precondition on the request "
+                           "for the URL "</expr></argument>,
+                           <argument><expr><call><name>ap_escape_html</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>uri</name></name></expr></argument>)</argument_list></call></expr></argument>,
+                           <argument><expr>" evaluated to false.&lt;/p&gt;\n"</expr></argument>,
+                           <argument><expr><name>NULL</name></expr></argument>)</argument_list></call>)</expr>;</return>
+    </case><case>case <expr><name>HTTP_NOT_IMPLEMENTED</name></expr>:
+        <expr_stmt><expr><name>s1</name> = <call><name>apr_pstrcat</name><argument_list>(<argument><expr><name>p</name></expr></argument>,
+                         <argument><expr>"&lt;p&gt;"</expr></argument>,
+                         <argument><expr><call><name>ap_escape_html</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>method</name></name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr>" to "</expr></argument>,
+                         <argument><expr><call><name>ap_escape_html</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>uri</name></name></expr></argument>)</argument_list></call></expr></argument>,
+                         <argument><expr>" not supported.&lt;br /&gt;\n"</expr></argument>,
+                         <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return<expr>(<call><name>add_optional_notes</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><name>s1</name></expr></argument>, <argument><expr>"error-notes"</expr></argument>, <argument><expr>"&lt;/p&gt;\n"</expr></argument>)</argument_list></call>)</expr>;</return>
+    </case><case>case <expr><name>HTTP_BAD_GATEWAY</name></expr>:
+        <expr_stmt><expr><name>s1</name> = "&lt;p&gt;The proxy server received an invalid" <name>CRLF</name>
+            "response from an upstream server.&lt;br /&gt;" <name>CRLF</name></expr>;</expr_stmt>
+        <return>return<expr>(<call><name>add_optional_notes</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><name>s1</name></expr></argument>, <argument><expr>"error-notes"</expr></argument>, <argument><expr>"&lt;/p&gt;\n"</expr></argument>)</argument_list></call>)</expr>;</return>
+    </case><case>case <expr><name>HTTP_VARIANT_ALSO_VARIES</name></expr>:
+        <return>return<expr>(<call><name>apr_pstrcat</name><argument_list>(<argument><expr><name>p</name></expr></argument>,
+                           <argument><expr>"&lt;p&gt;A variant for the requested "
+                           "resource\n&lt;pre&gt;\n"</expr></argument>,
+                           <argument><expr><call><name>ap_escape_html</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>uri</name></name></expr></argument>)</argument_list></call></expr></argument>,
+                           <argument><expr>"\n&lt;/pre&gt;\nis itself a negotiable resource. "
+                           "This indicates a configuration error.&lt;/p&gt;\n"</expr></argument>,
+                           <argument><expr><name>NULL</name></expr></argument>)</argument_list></call>)</expr>;</return>
+    </case><case>case <expr><name>HTTP_REQUEST_TIME_OUT</name></expr>:
+        <return>return<expr>("&lt;p&gt;Server timeout waiting for the HTTP request from the client.&lt;/p&gt;\n")</expr>;</return>
+    </case><case>case <expr><name>HTTP_GONE</name></expr>:
+        <return>return<expr>(<call><name>apr_pstrcat</name><argument_list>(<argument><expr><name>p</name></expr></argument>,
+                           <argument><expr>"&lt;p&gt;The requested resource&lt;br /&gt;"</expr></argument>,
+                           <argument><expr><call><name>ap_escape_html</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>uri</name></name></expr></argument>)</argument_list></call></expr></argument>,
+                           <argument><expr>"&lt;br /&gt;\nis no longer available on this server "
+                           "and there is no forwarding address.\n"
+                           "Please remove all references to this "
+                           "resource.&lt;/p&gt;\n"</expr></argument>,
+                           <argument><expr><name>NULL</name></expr></argument>)</argument_list></call>)</expr>;</return>
+    </case><case>case <expr><name>HTTP_REQUEST_ENTITY_TOO_LARGE</name></expr>:
+        <return>return<expr>(<call><name>apr_pstrcat</name><argument_list>(<argument><expr><name>p</name></expr></argument>,
+                           <argument><expr>"The requested resource&lt;br /&gt;"</expr></argument>,
+                           <argument><expr><call><name>ap_escape_html</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>uri</name></name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr>"&lt;br /&gt;\n"</expr></argument>,
+                           <argument><expr>"does not allow request data with "</expr></argument>,
+                           <argument><expr><call><name>ap_escape_html</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>method</name></name></expr></argument>)</argument_list></call></expr></argument>,
+                           <argument><expr>" requests, or the amount of data provided in\n"
+                           "the request exceeds the capacity limit.\n"</expr></argument>,
+                           <argument><expr><name>NULL</name></expr></argument>)</argument_list></call>)</expr>;</return>
+    </case><case>case <expr><name>HTTP_REQUEST_URI_TOO_LARGE</name></expr>:
+        <expr_stmt><expr><name>s1</name> = "&lt;p&gt;The requested URL's length exceeds the capacity\n"
+             "limit for this server.&lt;br /&gt;\n"</expr>;</expr_stmt>
+        <return>return<expr>(<call><name>add_optional_notes</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><name>s1</name></expr></argument>, <argument><expr>"error-notes"</expr></argument>, <argument><expr>"&lt;/p&gt;\n"</expr></argument>)</argument_list></call>)</expr>;</return>
+    </case><case>case <expr><name>HTTP_UNSUPPORTED_MEDIA_TYPE</name></expr>:
+        <return>return<expr>("&lt;p&gt;The supplied request data is not in a format\n"
+               "acceptable for processing by this resource.&lt;/p&gt;\n")</expr>;</return>
+    </case><case>case <expr><name>HTTP_RANGE_NOT_SATISFIABLE</name></expr>:
+        <return>return<expr>("&lt;p&gt;None of the range-specifier values in the Range\n"
+               "request-header field overlap the current extent\n"
+               "of the selected resource.&lt;/p&gt;\n")</expr>;</return>
+    </case><case>case <expr><name>HTTP_EXPECTATION_FAILED</name></expr>:
+        <expr_stmt><expr><name>s1</name> = <call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_in</name></name></expr></argument>, <argument><expr>"Expect"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>s1</name></expr>)</condition><then>
+            <expr_stmt><expr><name>s1</name> = <call><name>apr_pstrcat</name><argument_list>(<argument><expr><name>p</name></expr></argument>,
+                     <argument><expr>"&lt;p&gt;The expectation given in the Expect request-header\n"
+                     "field could not be met by this server.\n"
+                     "The client sent&lt;pre&gt;\n    Expect: "</expr></argument>,
+                     <argument><expr><call><name>ap_escape_html</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>s1</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr>"\n&lt;/pre&gt;\n"</expr></argument>,
+                     <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+        <else>else
+            <expr_stmt><expr><name>s1</name> = "&lt;p&gt;No expectation was seen, the Expect request-header \n"
+                 "field was not presented by the client.\n"</expr>;</expr_stmt></else></if>
+        <return>return <expr><call><name>add_optional_notes</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><name>s1</name></expr></argument>, <argument><expr>"error-notes"</expr></argument>, <argument><expr>"&lt;/p&gt;"
+                   "&lt;p&gt;Only the 100-continue expectation is supported.&lt;/p&gt;\n"</expr></argument>)</argument_list></call></expr>;</return>
+    </case><case>case <expr><name>HTTP_UNPROCESSABLE_ENTITY</name></expr>:
+        <return>return<expr>("&lt;p&gt;The server understands the media type of the\n"
+               "request entity, but was unable to process the\n"
+               "contained instructions.&lt;/p&gt;\n")</expr>;</return>
+    </case><case>case <expr><name>HTTP_LOCKED</name></expr>:
+        <return>return<expr>("&lt;p&gt;The requested resource is currently locked.\n"
+               "The lock must be released or proper identification\n"
+               "given before the method can be applied.&lt;/p&gt;\n")</expr>;</return>
+    </case><case>case <expr><name>HTTP_FAILED_DEPENDENCY</name></expr>:
+        <return>return<expr>("&lt;p&gt;The method could not be performed on the resource\n"
+               "because the requested action depended on another\n"
+               "action and that other action failed.&lt;/p&gt;\n")</expr>;</return>
+    </case><case>case <expr><name>HTTP_UPGRADE_REQUIRED</name></expr>:
+        <return>return<expr>("&lt;p&gt;The requested resource can only be retrieved\n"
+               "using SSL.  The server is willing to upgrade the current\n"
+               "connection to SSL, but your client doesn't support it.\n"
+               "Either upgrade your client, or try requesting the page\n"
+               "using https://\n")</expr>;</return>
+    </case><case>case <expr><name>HTTP_PRECONDITION_REQUIRED</name></expr>:
+        <return>return<expr>("&lt;p&gt;The request is required to be conditional.&lt;/p&gt;\n")</expr>;</return>
+    </case><case>case <expr><name>HTTP_TOO_MANY_REQUESTS</name></expr>:
+        <return>return<expr>("&lt;p&gt;The user has sent too many requests\n"
+               "in a given amount of time.&lt;/p&gt;\n")</expr>;</return>
+    </case><case>case <expr><name>HTTP_REQUEST_HEADER_FIELDS_TOO_LARGE</name></expr>:
+        <return>return<expr>("&lt;p&gt;The server refused this request because\n"
+               "the request header fields are too large.&lt;/p&gt;\n")</expr>;</return>
+    </case><case>case <expr><name>HTTP_INSUFFICIENT_STORAGE</name></expr>:
+        <return>return<expr>("&lt;p&gt;The method could not be performed on the resource\n"
+               "because the server is unable to store the\n"
+               "representation needed to successfully complete the\n"
+               "request.  There is insufficient free space left in\n"
+               "your storage allocation.&lt;/p&gt;\n")</expr>;</return>
+    </case><case>case <expr><name>HTTP_SERVICE_UNAVAILABLE</name></expr>:
+        <return>return<expr>("&lt;p&gt;The server is temporarily unable to service your\n"
+               "request due to maintenance downtime or capacity\n"
+               "problems. Please try again later.&lt;/p&gt;\n")</expr>;</return>
+    </case><case>case <expr><name>HTTP_GATEWAY_TIME_OUT</name></expr>:
+        <return>return<expr>("&lt;p&gt;The gateway did not receive a timely response\n"
+               "from the upstream server or application.&lt;/p&gt;\n")</expr>;</return>
+    </case><case>case <expr><name>HTTP_LOOP_DETECTED</name></expr>:
+        <return>return<expr>("&lt;p&gt;The server terminated an operation because\n"
+               "it encountered an infinite loop.&lt;/p&gt;\n")</expr>;</return>
+    </case><case>case <expr><name>HTTP_NOT_EXTENDED</name></expr>:
+        <return>return<expr>("&lt;p&gt;A mandatory extension policy in the request is not\n"
+               "accepted by the server for this resource.&lt;/p&gt;\n")</expr>;</return>
+    </case><case>case <expr><name>HTTP_NETWORK_AUTHENTICATION_REQUIRED</name></expr>:
+        <return>return<expr>("&lt;p&gt;The client needs to authenticate to gain\n"
+               "network access.&lt;/p&gt;\n")</expr>;</return>
+    </case><case>case <expr><name>HTTP_MISDIRECTED_REQUEST</name></expr>:
+        <return>return<expr>("&lt;p&gt;The client needs a new connection for this\n"
+               "request as the requested host name does not match\n"
+               "the Server Name Indication (SNI) in use for this\n"
+               "connection.&lt;/p&gt;\n")</expr>;</return>
+    </case><case>case <expr><name>HTTP_UNAVAILABLE_FOR_LEGAL_REASONS</name></expr>:
+        <expr_stmt><expr><name>s1</name> = <call><name>apr_pstrcat</name><argument_list>(<argument><expr><name>p</name></expr></argument>,
+                         <argument><expr>"&lt;p&gt;Access to "</expr></argument>, <argument><expr><call><name>ap_escape_html</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>uri</name></name></expr></argument>)</argument_list></call></expr></argument>,
+                         <argument><expr>"\nhas been denied for legal reasons.&lt;br /&gt;\n"</expr></argument>,
+                         <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return<expr>(<call><name>add_optional_notes</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><name>s1</name></expr></argument>, <argument><expr>"error-notes"</expr></argument>, <argument><expr>"&lt;/p&gt;\n"</expr></argument>)</argument_list></call>)</expr>;</return>
+    </case><default>default:                    <comment type="block">/* HTTP_INTERNAL_SERVER_ERROR */</comment>
+        <comment type="block">/*
+         * This comparison to expose error-notes could be modified to
+         * use a configuration directive and export based on that
+         * directive.  For now "*" is used to designate an error-notes
+         * that is totally safe for any user to see (ie lacks paths,
+         * database passwords, etc.)
+         */</comment>
+        <if>if <condition>(<expr>((<name>error_notes</name> = <call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>notes</name></name></expr></argument>,
+                                          <argument><expr>"error-notes"</expr></argument>)</argument_list></call>) != <name>NULL</name>)
+            &amp;&amp; (<name>h1</name> = <call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>notes</name></name></expr></argument>, <argument><expr>"verbose-error-to"</expr></argument>)</argument_list></call>) != <name>NULL</name>
+            &amp;&amp; (<call><name>strcmp</name><argument_list>(<argument><expr><name>h1</name></expr></argument>, <argument><expr>"*"</expr></argument>)</argument_list></call> == 0)</expr>)</condition><then> <block>{
+            <return>return<expr>(<call><name>apr_pstrcat</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>error_notes</name></expr></argument>, <argument><expr>"&lt;p /&gt;\n"</expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call>)</expr>;</return>
+        }</block></then>
+        <else>else <block>{
+            <return>return<expr>(<call><name>apr_pstrcat</name><argument_list>(<argument><expr><name>p</name></expr></argument>,
+                               <argument><expr>"&lt;p&gt;The server encountered an internal "
+                               "error or\n"
+                               "misconfiguration and was unable to complete\n"
+                               "your request.&lt;/p&gt;\n"
+                               "&lt;p&gt;Please contact the server "
+                               "administrator at \n "</expr></argument>,
+                               <argument><expr><call><name>ap_escape_html</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>,
+                                              <argument><expr><name><name>r</name>-&gt;<name>server</name>-&gt;<name>server_admin</name></name></expr></argument>)</argument_list></call></expr></argument>,
+                               <argument><expr>" to inform them of the time this "
+                               "error occurred,\n"
+                               " and the actions you performed just before "
+                               "this error.&lt;/p&gt;\n"
+                               "&lt;p&gt;More information about this error "
+                               "may be available\n"
+                               "in the server error log.&lt;/p&gt;\n"</expr></argument>,
+                               <argument><expr><name>NULL</name></expr></argument>)</argument_list></call>)</expr>;</return>
+        }</block></else></if>
+        <comment type="block">/*
+         * It would be nice to give the user the information they need to
+         * fix the problem directly since many users don't have access to
+         * the error_log (think University sites) even though they can easily
+         * get this error by misconfiguring an htaccess file.  However, the
+         * e error notes tend to include the real file pathname in this case,
+         * which some people consider to be a breach of privacy.  Until we
+         * can figure out a way to remove the pathname, leave this commented.
+         *
+         * if ((error_notes = apr_table_get(r-&gt;notes,
+         *                                  "error-notes")) != NULL) {
+         *     return(apr_pstrcat(p, error_notes, "&lt;p /&gt;\n", NULL);
+         * }
+         * else {
+         *     return "";
+         * }
+         */</comment>
+    </default>}</block></switch>
+}</block></function>
+
+<comment type="block">/* We should have named this send_canned_response, since it is used for any
+ * response that can be generated by the server from the request record.
+ * This includes all 204 (no content), 3xx (redirect), 4xx (client error),
+ * and 5xx (server error) messages that have not been redirected to another
+ * handler via the ErrorDocument feature.
+ */</comment>
+<macro><name>AP_DECLARE</name><argument_list>(<argument>void</argument>)</argument_list></macro> <macro><name>ap_send_error_response</name><argument_list>(<argument>request_rec *r</argument>, <argument>int recursive_error</argument>)</argument_list></macro>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>status</name> <init>= <expr><name><name>r</name>-&gt;<name>status</name></name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>idx</name> <init>= <expr><call><name>ap_index_of_response</name><argument_list>(<argument><expr><name>status</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name> *</type><name>custom_response</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>location</name> <init>= <expr><call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_out</name></name></expr></argument>, <argument><expr>"Location"</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+    <comment type="block">/* At this point, we are starting the response over, so we have to reset
+     * this value.
+     */</comment>
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>eos_sent</name></name> = 0</expr>;</expr_stmt>
+
+    <comment type="block">/* and we need to get rid of any RESOURCE filters that might be lurking
+     * around, thinking they are in the middle of the original request
+     */</comment>
+
+    <expr_stmt><expr><name><name>r</name>-&gt;<name>output_filters</name></name> = <name><name>r</name>-&gt;<name>proto_output_filters</name></name></expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>ap_run_insert_error_filter</name><argument_list>(<argument><expr><name>r</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/*
+     * It's possible that the Location field might be in r-&gt;err_headers_out
+     * instead of r-&gt;headers_out; use the latter if possible, else the
+     * former.
+     */</comment>
+    <if>if <condition>(<expr><name>location</name> == <name>NULL</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>location</name> = <call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>err_headers_out</name></name></expr></argument>, <argument><expr>"Location"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+    <comment type="block">/* We need to special-case the handling of 204 and 304 responses,
+     * since they have specific HTTP requirements and do not include a
+     * message body.  Note that being assbackwards here is not an option.
+     */</comment>
+    <if>if <condition>(<expr><name>status</name> == <name>HTTP_NOT_MODIFIED</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>ap_finalize_request_protocol</name><argument_list>(<argument><expr><name>r</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return;</return>
+    }</block></then></if>
+
+    <if>if <condition>(<expr><name>status</name> == <name>HTTP_NO_CONTENT</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>ap_finalize_request_protocol</name><argument_list>(<argument><expr><name>r</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return;</return>
+    }</block></then></if>
+
+    <if>if <condition>(<expr>!<name><name>r</name>-&gt;<name>assbackwards</name></name></expr>)</condition><then> <block>{
+        <decl_stmt><decl><type><name>apr_table_t</name> *</type><name>tmp</name> <init>= <expr><name><name>r</name>-&gt;<name>headers_out</name></name></expr></init></decl>;</decl_stmt>
+
+        <comment type="block">/* For all HTTP/1.x responses for which we generate the message,
+         * we need to avoid inheriting the "normal status" header fields
+         * that may have been set by the request handler before the
+         * error or redirect, except for Location on external redirects.
+         */</comment>
+        <expr_stmt><expr><name><name>r</name>-&gt;<name>headers_out</name></name> = <name><name>r</name>-&gt;<name>err_headers_out</name></name></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>r</name>-&gt;<name>err_headers_out</name></name> = <name>tmp</name></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>apr_table_clear</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>err_headers_out</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <if>if <condition>(<expr><call><name>ap_is_HTTP_REDIRECT</name><argument_list>(<argument><expr><name>status</name></expr></argument>)</argument_list></call> || (<name>status</name> == <name>HTTP_CREATED</name>)</expr>)</condition><then> <block>{
+            <if>if <condition>(<expr>(<name>location</name> != <name>NULL</name>) &amp;&amp; *<name>location</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><call><name>apr_table_setn</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_out</name></name></expr></argument>, <argument><expr>"Location"</expr></argument>, <argument><expr><name>location</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></then>
+            <else>else <block>{
+                <expr_stmt><expr><name>location</name> = ""</expr>;</expr_stmt>   <comment type="block">/* avoids coredump when printing, below */</comment>
+            }</block></else></if>
+        }</block></then></if>
+
+        <expr_stmt><expr><name><name>r</name>-&gt;<name>content_languages</name></name> = <name>NULL</name></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>r</name>-&gt;<name>content_encoding</name></name> = <name>NULL</name></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>r</name>-&gt;<name>clength</name></name> = 0</expr>;</expr_stmt>
+
+        <if>if <condition>(<expr><call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>subprocess_env</name></name></expr></argument>,
+                          <argument><expr>"suppress-error-charset"</expr></argument>)</argument_list></call> != <name>NULL</name></expr>)</condition><then> <block>{
+            <decl_stmt><decl><type><name>core_request_config</name> *</type><name>request_conf</name> <init>=
+                        <expr><call><name>ap_get_core_module_config</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>request_config</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+            <expr_stmt><expr><name><name>request_conf</name>-&gt;<name>suppress_charset</name></name> = 1</expr>;</expr_stmt> <comment type="block">/* avoid adding default
+                                                 * charset later
+                                                 */</comment>
+            <expr_stmt><expr><call><name>ap_set_content_type</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr>"text/html"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+        <else>else <block>{
+            <expr_stmt><expr><call><name>ap_set_content_type</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr>"text/html; charset=iso-8859-1"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></else></if>
+
+        <if>if <condition>(<expr>(<name>status</name> == <name>HTTP_METHOD_NOT_ALLOWED</name>)
+            || (<name>status</name> == <name>HTTP_NOT_IMPLEMENTED</name>)</expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>apr_table_setn</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_out</name></name></expr></argument>, <argument><expr>"Allow"</expr></argument>, <argument><expr><call><name>make_allow</name><argument_list>(<argument><expr><name>r</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+
+        <if>if <condition>(<expr><name><name>r</name>-&gt;<name>header_only</name></name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>ap_finalize_request_protocol</name><argument_list>(<argument><expr><name>r</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <return>return;</return>
+        }</block></then></if>
+    }</block></then></if>
+
+    <if>if <condition>(<expr>(<name>custom_response</name> = <call><name>ap_response_code_string</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><name>idx</name></expr></argument>)</argument_list></call>)</expr>)</condition><then> <block>{
+        <comment type="block">/*
+         * We have a custom response output. This should only be
+         * a text-string to write back. But if the ErrorDocument
+         * was a local redirect and the requested resource failed
+         * for any reason, the custom_response will still hold the
+         * redirect URL. We don't really want to output this URL
+         * as a text message, so first check the custom response
+         * string to ensure that it is a text-string (using the
+         * same test used in ap_die(), i.e. does it start with a ").
+         *
+         * If it's not a text string, we've got a recursive error or
+         * an external redirect.  If it's a recursive error, ap_die passes
+         * us the second error code so we can write both, and has already
+         * backed up to the original error.  If it's an external redirect,
+         * it hasn't happened yet; we may never know if it fails.
+         */</comment>
+        <if>if <condition>(<expr><name><name>custom_response</name><index>[<expr>0</expr>]</index></name> == '\"'</expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>ap_rputs</name><argument_list>(<argument><expr><name>custom_response</name> + 1</expr></argument>, <argument><expr><name>r</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>ap_finalize_request_protocol</name><argument_list>(<argument><expr><name>r</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <return>return;</return>
+        }</block></then></if>
+    }</block></then></if>
+    <block>{
+        <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>title</name> <init>= <expr><name><name>status_lines</name><index>[<expr><name>idx</name></expr>]</index></name></expr></init></decl>;</decl_stmt>
+        <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>h1</name></decl>;</decl_stmt>
+
+        <comment type="block">/* Accept a status_line set by a module, but only if it begins
+         * with the correct 3 digit status code
+         */</comment>
+        <if>if <condition>(<expr><name><name>r</name>-&gt;<name>status_line</name></name></expr>)</condition><then> <block>{
+            <decl_stmt><decl><type><name>char</name> *</type><name>end</name></decl>;</decl_stmt>
+            <decl_stmt><decl><type><name>int</name></type> <name>len</name> <init>= <expr><call><name>strlen</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>status_line</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+            <if>if <condition>(<expr><name>len</name> &gt;= 3
+                &amp;&amp; <call><name>apr_strtoi64</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>status_line</name></name></expr></argument>, <argument><expr>&amp;<name>end</name></expr></argument>, <argument><expr>10</expr></argument>)</argument_list></call> == <name><name>r</name>-&gt;<name>status</name></name>
+                &amp;&amp; (<name>end</name> - 3) == <name><name>r</name>-&gt;<name>status_line</name></name>
+                &amp;&amp; (<name>len</name> &lt; 4 || <call><name>apr_isspace</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>status_line</name><index>[<expr>3</expr>]</index></name></expr></argument>)</argument_list></call>)
+                &amp;&amp; (<name>len</name> &lt; 5 || <call><name>apr_isalnum</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>status_line</name><index>[<expr>4</expr>]</index></name></expr></argument>)</argument_list></call>)</expr>)</condition><then> <block>{
+                <comment type="block">/* Since we passed the above check, we know that length three
+                 * is equivalent to only a 3 digit numeric http status.
+                 * RFC2616 mandates a trailing space, let's add it.
+                 * If we have an empty reason phrase, we also add "Unknown Reason".
+                 */</comment>
+                <if>if <condition>(<expr><name>len</name> == 3</expr>)</condition><then> <block>{
+                    <expr_stmt><expr><name><name>r</name>-&gt;<name>status_line</name></name> = <call><name>apr_pstrcat</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>status_line</name></name></expr></argument>, <argument><expr>" Unknown Reason"</expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                }</block></then> <else>else <if>if <condition>(<expr><name>len</name> == 4</expr>)</condition><then> <block>{
+                    <expr_stmt><expr><name><name>r</name>-&gt;<name>status_line</name></name> = <call><name>apr_pstrcat</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>status_line</name></name></expr></argument>, <argument><expr>"Unknown Reason"</expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                }</block></then></if></else></if>
+                <expr_stmt><expr><name>title</name> = <name><name>r</name>-&gt;<name>status_line</name></name></expr>;</expr_stmt>
+            }</block></then></if>
+        }</block></then></if>
+
+        <comment type="block">/* folks decided they didn't want the error code in the H1 text */</comment>
+        <expr_stmt><expr><name>h1</name> = &amp;<name><name>title</name><index>[<expr>4</expr>]</index></name></expr>;</expr_stmt>
+
+        <comment type="block">/* can't count on a charset filter being in place here,
+         * so do ebcdic-&gt;ascii translation explicitly (if needed)
+         */</comment>
+
+        <expr_stmt><expr><call><name>ap_rvputs_proto_in_ascii</name><argument_list>(<argument><expr><name>r</name></expr></argument>,
+                  <argument><expr><name>DOCTYPE_HTML_2_0</name>
+                  "&lt;html&gt;&lt;head&gt;\n&lt;title&gt;"</expr></argument>, <argument><expr><name>title</name></expr></argument>,
+                  <argument><expr>"&lt;/title&gt;\n&lt;/head&gt;&lt;body&gt;\n&lt;h1&gt;"</expr></argument>, <argument><expr><name>h1</name></expr></argument>, <argument><expr>"&lt;/h1&gt;\n"</expr></argument>,
+                  <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <expr_stmt><expr><call><name>ap_rvputs_proto_in_ascii</name><argument_list>(<argument><expr><name>r</name></expr></argument>,
+                                 <argument><expr><call><name>get_canned_error_string</name><argument_list>(<argument><expr><name>status</name></expr></argument>, <argument><expr><name>r</name></expr></argument>, <argument><expr><name>location</name></expr></argument>)</argument_list></call></expr></argument>,
+                                 <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <if>if <condition>(<expr><name>recursive_error</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>ap_rvputs_proto_in_ascii</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr>"&lt;p&gt;Additionally, a "</expr></argument>,
+                      <argument><expr><name><name>status_lines</name><index>[<expr><call><name>ap_index_of_response</name><argument_list>(<argument><expr><name>recursive_error</name></expr></argument>)</argument_list></call></expr>]</index></name></expr></argument>,
+                      <argument><expr>"\nerror was encountered while trying to use an "
+                      "ErrorDocument to handle the request.&lt;/p&gt;\n"</expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+        <expr_stmt><expr><call><name>ap_rvputs_proto_in_ascii</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><call><name>ap_psignature</name><argument_list>(<argument><expr>"&lt;hr&gt;\n"</expr></argument>, <argument><expr><name>r</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>ap_rvputs_proto_in_ascii</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr>"&lt;/body&gt;&lt;/html&gt;\n"</expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block>
+    <expr_stmt><expr><call><name>ap_finalize_request_protocol</name><argument_list>(<argument><expr><name>r</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block>
+
+<comment type="block">/*
+ * Create a new method list with the specified number of preallocated
+ * extension slots.
+ */</comment>
+<macro><name>AP_DECLARE</name><argument_list>(<argument>ap_method_list_t *</argument>)</argument_list></macro> <macro><name>ap_make_method_list</name><argument_list>(<argument>apr_pool_t *p</argument>, <argument>int nelts</argument>)</argument_list></macro>
+<block>{
+    <decl_stmt><decl><type><name>ap_method_list_t</name> *</type><name>ml</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>ml</name> = (<name>ap_method_list_t</name> *) <call><name>apr_palloc</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>ap_method_list_t</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>ml</name>-&gt;<name>method_mask</name></name> = 0</expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>ml</name>-&gt;<name>method_list</name></name> = <call><name>apr_array_make</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>nelts</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>char</name> *</expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>ml</name></expr>;</return>
+}</block>
+
+<comment type="block">/*
+ * Make a copy of a method list (primarily for subrequests that may
+ * subsequently change it; don't want them changing the parent's, too!).
+ */</comment>
+<macro><name>AP_DECLARE</name><argument_list>(<argument>void</argument>)</argument_list></macro> <macro><name>ap_copy_method_list</name><argument_list>(<argument>ap_method_list_t *dest</argument>,
+                                     <argument>ap_method_list_t *src</argument>)</argument_list></macro>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name> **</type><name>imethods</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name> **</type><name>omethods</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name><name>dest</name>-&gt;<name>method_mask</name></name> = <name><name>src</name>-&gt;<name>method_mask</name></name></expr>;</expr_stmt>
+    <expr_stmt><expr><name>imethods</name> = (<name>char</name> **) <name><name>src</name>-&gt;<name>method_list</name>-&gt;<name>elts</name></name></expr>;</expr_stmt>
+    <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name><name>src</name>-&gt;<name>method_list</name>-&gt;<name>nelts</name></name></expr>;</condition> <incr><expr>++<name>i</name></expr></incr>) <block>{
+        <expr_stmt><expr><name>omethods</name> = (<name>char</name> **) <call><name>apr_array_push</name><argument_list>(<argument><expr><name><name>dest</name>-&gt;<name>method_list</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr>*<name>omethods</name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name><name>dest</name>-&gt;<name>method_list</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>imethods</name><index>[<expr><name>i</name></expr>]</index></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></for>
+}</block>
+
+<comment type="block">/*
+ * Return true if the specified HTTP method is in the provided
+ * method list.
+ */</comment>
+<macro><name>AP_DECLARE</name><argument_list>(<argument>int</argument>)</argument_list></macro> <macro><name>ap_method_in_list</name><argument_list>(<argument>ap_method_list_t *l</argument>, <argument>const char *method</argument>)</argument_list></macro>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>methnum</name></decl>;</decl_stmt>
+
+    <comment type="block">/*
+     * If it's one of our known methods, use the shortcut and check the
+     * bitmask.
+     */</comment>
+    <expr_stmt><expr><name>methnum</name> = <call><name>ap_method_number_of</name><argument_list>(<argument><expr><name>method</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>methnum</name> != <name>M_INVALID</name></expr>)</condition><then> <block>{
+        <return>return <expr>!!(<name><name>l</name>-&gt;<name>method_mask</name></name> &amp; (<name>AP_METHOD_BIT</name> &lt;&lt; <name>methnum</name>))</expr>;</return>
+    }</block></then></if>
+    <comment type="block">/*
+     * Otherwise, see if the method name is in the array of string names.
+     */</comment>
+    <if>if <condition>(<expr>(<name><name>l</name>-&gt;<name>method_list</name></name> == <name>NULL</name>) || (<name><name>l</name>-&gt;<name>method_list</name>-&gt;<name>nelts</name></name> == 0)</expr>)</condition><then> <block>{
+        <return>return <expr>0</expr>;</return>
+    }</block></then></if>
+
+    <return>return <expr><call><name>ap_array_str_contains</name><argument_list>(<argument><expr><name><name>l</name>-&gt;<name>method_list</name></name></expr></argument>, <argument><expr><name>method</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block>
+
+<comment type="block">/*
+ * Add the specified method to a method list (if it isn't already there).
+ */</comment>
+<macro><name>AP_DECLARE</name><argument_list>(<argument>void</argument>)</argument_list></macro> <macro><name>ap_method_list_add</name><argument_list>(<argument>ap_method_list_t *l</argument>, <argument>const char *method</argument>)</argument_list></macro>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>methnum</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> **</type><name>xmethod</name></decl>;</decl_stmt>
+
+    <comment type="block">/*
+     * If it's one of our known methods, use the shortcut and use the
+     * bitmask.
+     */</comment>
+    <expr_stmt><expr><name>methnum</name> = <call><name>ap_method_number_of</name><argument_list>(<argument><expr><name>method</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>methnum</name> != <name>M_INVALID</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name><name>l</name>-&gt;<name>method_mask</name></name> |= (<name>AP_METHOD_BIT</name> &lt;&lt; <name>methnum</name>)</expr>;</expr_stmt>
+        <return>return;</return>
+    }</block></then></if>
+    <comment type="block">/*
+     * Otherwise, see if the method name is in the array of string names.
+     */</comment>
+    <if>if <condition>(<expr><call><name>ap_array_str_contains</name><argument_list>(<argument><expr><name><name>l</name>-&gt;<name>method_list</name></name></expr></argument>, <argument><expr><name>method</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <return>return;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><name>xmethod</name> = (const <name>char</name> **) <call><name>apr_array_push</name><argument_list>(<argument><expr><name><name>l</name>-&gt;<name>method_list</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr>*<name>xmethod</name> = <name>method</name></expr>;</expr_stmt>
+}</block>
+
+<comment type="block">/*
+ * Remove the specified method from a method list.
+ */</comment>
+<macro><name>AP_DECLARE</name><argument_list>(<argument>void</argument>)</argument_list></macro> <macro><name>ap_method_list_remove</name><argument_list>(<argument>ap_method_list_t *l</argument>,
+                                       <argument>const char *method</argument>)</argument_list></macro>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>methnum</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name> **</type><name>methods</name></decl>;</decl_stmt>
+
+    <comment type="block">/*
+     * If it's a known methods, either builtin or registered
+     * by a module, use the bitmask.
+     */</comment>
+    <expr_stmt><expr><name>methnum</name> = <call><name>ap_method_number_of</name><argument_list>(<argument><expr><name>method</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>methnum</name> != <name>M_INVALID</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name><name>l</name>-&gt;<name>method_mask</name></name> &amp;= ~(<name>AP_METHOD_BIT</name> &lt;&lt; <name>methnum</name>)</expr>;</expr_stmt>
+        <return>return;</return>
+    }</block></then></if>
+    <comment type="block">/*
+     * Otherwise, see if the method name is in the array of string names.
+     */</comment>
+    <if>if <condition>(<expr><name><name>l</name>-&gt;<name>method_list</name>-&gt;<name>nelts</name></name> != 0</expr>)</condition><then> <block>{
+        <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>, <decl><type ref="prev"/><name>j</name></decl>, <decl><type ref="prev"/><name>k</name></decl>;</decl_stmt>
+        <expr_stmt><expr><name>methods</name> = (<name>char</name> **)<name><name>l</name>-&gt;<name>method_list</name>-&gt;<name>elts</name></name></expr>;</expr_stmt>
+        <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name><name>l</name>-&gt;<name>method_list</name>-&gt;<name>nelts</name></name></expr>;</condition> <incr/>) <block>{
+            <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>method</name></expr></argument>, <argument><expr><name><name>methods</name><index>[<expr><name>i</name></expr>]</index></name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then> <block>{
+                <for>for (<init><expr><name>j</name> = <name>i</name></expr>, <expr><name>k</name> = <name>i</name> + 1</expr>;</init> <condition><expr><name>k</name> &lt; <name><name>l</name>-&gt;<name>method_list</name>-&gt;<name>nelts</name></name></expr>;</condition> <incr><expr>++<name>j</name></expr>, <expr>++<name>k</name></expr></incr>) <block>{
+                    <expr_stmt><expr><name><name>methods</name><index>[<expr><name>j</name></expr>]</index></name> = <name><name>methods</name><index>[<expr><name>k</name></expr>]</index></name></expr>;</expr_stmt>
+                }</block></for>
+                <expr_stmt><expr>--<name><name>l</name>-&gt;<name>method_list</name>-&gt;<name>nelts</name></name></expr>;</expr_stmt>
+            }</block></then>
+            <else>else <block>{
+                <expr_stmt><expr>++<name>i</name></expr>;</expr_stmt>
+            }</block></else></if>
+        }</block></for>
+    }</block></then></if>
+}</block>
+
+<comment type="block">/*
+ * Reset a method list to be completely empty.
+ */</comment>
+<macro><name>AP_DECLARE</name><argument_list>(<argument>void</argument>)</argument_list></macro> <macro><name>ap_clear_method_list</name><argument_list>(<argument>ap_method_list_t *l</argument>)</argument_list></macro>
+<block>{
+    <expr_stmt><expr><name><name>l</name>-&gt;<name>method_mask</name></name> = 0</expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>l</name>-&gt;<name>method_list</name>-&gt;<name>nelts</name></name> = 0</expr>;</expr_stmt>
+}</block>
+
+</unit>

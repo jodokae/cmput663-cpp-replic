@@ -1,0 +1,1083 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/cpython-2.6.1/source/Modules/_sqlite/cursor.c"><comment type="block">/* cursor.c - the cursor type
+ *
+ * Copyright (C) 2004-2007 Gerhard Häring &lt;gh@ghaering.de&gt;
+ *
+ * This file is part of pysqlite.
+ *
+ * This software is provided 'as-is', without any express or implied
+ * warranty.  In no event will the authors be held liable for any damages
+ * arising from the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose,
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"cursor.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"module.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"util.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"sqlitecompat.h"</cpp:file></cpp:include>
+
+<comment type="block">/* used to decide wether to call PyInt_FromLong or PyLong_FromLongLong */</comment>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>INT32_MIN</name></cpp:ifndef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>INT32_MIN</name></cpp:macro> <cpp:value>(-2147483647 - 1)</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>INT32_MAX</name></cpp:ifndef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>INT32_MAX</name></cpp:macro> <cpp:value>2147483647</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<function_decl><type><name>PyObject</name>*</type> <name>pysqlite_cursor_iternext</name><parameter_list>(<param><decl><type><name>pysqlite_Cursor</name>*</type> <name>self</name></decl></param>)</parameter_list>;</function_decl>
+
+<function><type><specifier>static</specifier> <name>pysqlite_StatementKind</name></type> <name>detect_statement_type</name><parameter_list>(<param><decl><type><name>char</name>*</type> <name>statement</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>char</name></type> <name><name>buf</name><index>[<expr>20</expr>]</index></name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name>*</type> <name>src</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name>*</type> <name>dst</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>src</name> = <name>statement</name></expr>;</expr_stmt>
+    <comment type="block">/* skip over whitepace */</comment>
+    <while>while <condition>(<expr>*<name>src</name> == '\r' || *<name>src</name> == '\n' || *<name>src</name> == ' ' || *<name>src</name> == '\t'</expr>)</condition> <block>{
+        <expr_stmt><expr><name>src</name>++</expr>;</expr_stmt>
+    }</block></while>
+
+    <if>if <condition>(<expr>*<name>src</name> == 0</expr>)</condition><then>
+        <return>return <expr><name>STATEMENT_INVALID</name></expr>;</return></then></if>
+
+    <expr_stmt><expr><name>dst</name> = <name>buf</name></expr>;</expr_stmt>
+    <expr_stmt><expr>*<name>dst</name> = 0</expr>;</expr_stmt>
+    <while>while <condition>(<expr><call><name>isalpha</name><argument_list>(<argument><expr>*<name>src</name></expr></argument>)</argument_list></call> &amp;&amp; <name>dst</name> - <name>buf</name> &lt; <sizeof>sizeof<argument_list>(<argument><expr><name>buf</name></expr></argument>)</argument_list></sizeof> - 2</expr>)</condition> <block>{
+        <expr_stmt><expr>*<name>dst</name>++ = <call><name>tolower</name><argument_list>(<argument><expr>*<name>src</name>++</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></while>
+
+    <expr_stmt><expr>*<name>dst</name> = 0</expr>;</expr_stmt>
+
+    <if>if <condition>(<expr>!<call><name>strcmp</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr>"select"</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <return>return <expr><name>STATEMENT_SELECT</name></expr>;</return>
+    }</block></then> <else>else <if>if <condition>(<expr>!<call><name>strcmp</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr>"insert"</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <return>return <expr><name>STATEMENT_INSERT</name></expr>;</return>
+    }</block></then> <else>else <if>if <condition>(<expr>!<call><name>strcmp</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr>"update"</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <return>return <expr><name>STATEMENT_UPDATE</name></expr>;</return>
+    }</block></then> <else>else <if>if <condition>(<expr>!<call><name>strcmp</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr>"delete"</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <return>return <expr><name>STATEMENT_DELETE</name></expr>;</return>
+    }</block></then> <else>else <if>if <condition>(<expr>!<call><name>strcmp</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr>"replace"</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <return>return <expr><name>STATEMENT_REPLACE</name></expr>;</return>
+    }</block></then> <else>else <block>{
+        <return>return <expr><name>STATEMENT_OTHER</name></expr>;</return>
+    }</block></else></if></else></if></else></if></else></if></else></if>
+}</block></function>
+
+<function><type><name>int</name></type> <name>pysqlite_cursor_init</name><parameter_list>(<param><decl><type><name>pysqlite_Cursor</name>*</type> <name>self</name></decl></param>, <param><decl><type><name>PyObject</name>*</type> <name>args</name></decl></param>, <param><decl><type><name>PyObject</name>*</type> <name>kwargs</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>pysqlite_Connection</name>*</type> <name>connection</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"O!"</expr></argument>, <argument><expr>&amp;<name>pysqlite_ConnectionType</name></expr></argument>, <argument><expr>&amp;<name>connection</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <block>{
+        <return>return <expr>-1</expr>;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>connection</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>connection</name></name> = <name>connection</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>statement</name></name> = <name>NULL</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>next_row</name></name> = <name>NULL</name></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>row_cast_map</name></name> = <call><name>PyList_New</name><argument_list>(<argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr>!<name><name>self</name>-&gt;<name>row_cast_map</name></name></expr>)</condition><then> <block>{
+        <return>return <expr>-1</expr>;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>description</name></name> = <name>Py_None</name></expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>lastrowid</name></name>= <name>Py_None</name></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>arraysize</name></name> = 1</expr>;</expr_stmt>
+
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>rowcount</name></name> = -1L</expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>row_factory</name></name> = <name>Py_None</name></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr>!<call><name>pysqlite_check_thread</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>connection</name></name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <return>return <expr>-1</expr>;</return>
+    }</block></then></if>
+
+    <return>return <expr>0</expr>;</return>
+}</block></function>
+
+<function><type><name>void</name></type> <name>pysqlite_cursor_dealloc</name><parameter_list>(<param><decl><type><name>pysqlite_Cursor</name>*</type> <name>self</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>rc</name></decl>;</decl_stmt>
+
+    <comment type="block">/* Reset the statement if the user has not closed the cursor */</comment>
+    <if>if <condition>(<expr><name><name>self</name>-&gt;<name>statement</name></name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>rc</name> = <call><name>pysqlite_statement_reset</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>connection</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>row_cast_map</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>description</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>lastrowid</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>row_factory</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>next_row</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>Py_TYPE</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call>-&gt;<call><name>tp_free</name><argument_list>(<argument><expr>(<name>PyObject</name>*)<name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<function><type><name>PyObject</name>*</type> <name>_pysqlite_get_converter</name><parameter_list>(<param><decl><type><name>PyObject</name>*</type> <name>key</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>upcase_key</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>retval</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>upcase_key</name> = <call><name>PyObject_CallMethod</name><argument_list>(<argument><expr><name>key</name></expr></argument>, <argument><expr>"upper"</expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr>!<name>upcase_key</name></expr>)</condition><then> <block>{
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><name>retval</name> = <call><name>PyDict_GetItem</name><argument_list>(<argument><expr><name>converters</name></expr></argument>, <argument><expr><name>upcase_key</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>upcase_key</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <return>return <expr><name>retval</name></expr>;</return>
+}</block></function>
+
+<function><type><name>int</name></type> <name>pysqlite_build_row_cast_map</name><parameter_list>(<param><decl><type><name>pysqlite_Cursor</name>*</type> <name>self</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name>*</type> <name>type_start</name> <init>= <expr>(const <name>char</name>*)-1</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name>*</type> <name>pos</name></decl>;</decl_stmt>
+
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name>*</type> <name>colname</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name>*</type> <name>decltype</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>py_decltype</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>converter</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>key</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>!<name><name>self</name>-&gt;<name>connection</name>-&gt;<name>detect_types</name></name></expr>)</condition><then> <block>{
+        <return>return <expr>0</expr>;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>row_cast_map</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>row_cast_map</name></name> = <call><name>PyList_New</name><argument_list>(<argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <call><name>sqlite3_column_count</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name>-&gt;<name>st</name></name></expr></argument>)</argument_list></call></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>) <block>{
+        <expr_stmt><expr><name>converter</name> = <name>NULL</name></expr>;</expr_stmt>
+
+        <if>if <condition>(<expr><name><name>self</name>-&gt;<name>connection</name>-&gt;<name>detect_types</name></name> &amp; <name>PARSE_COLNAMES</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>colname</name> = <call><name>sqlite3_column_name</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name>-&gt;<name>st</name></name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <if>if <condition>(<expr><name>colname</name></expr>)</condition><then> <block>{
+                <for>for (<init><expr><name>pos</name> = <name>colname</name></expr>;</init> <condition><expr>*<name>pos</name> != 0</expr>;</condition> <incr><expr><name>pos</name>++</expr></incr>) <block>{
+                    <if>if <condition>(<expr>*<name>pos</name> == '['</expr>)</condition><then> <block>{
+                        <expr_stmt><expr><name>type_start</name> = <name>pos</name> + 1</expr>;</expr_stmt>
+                    }</block></then> <else>else <if>if <condition>(<expr>*<name>pos</name> == ']' &amp;&amp; <name>type_start</name> != (const <name>char</name>*)-1</expr>)</condition><then> <block>{
+                        <expr_stmt><expr><name>key</name> = <call><name>PyString_FromStringAndSize</name><argument_list>(<argument><expr><name>type_start</name></expr></argument>, <argument><expr><name>pos</name> - <name>type_start</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                        <if>if <condition>(<expr>!<name>key</name></expr>)</condition><then> <block>{
+                            <comment type="block">/* creating a string failed, but it is too complicated
+                             * to propagate the error here, we just assume there is
+                             * no converter and proceed */</comment>
+                            <break>break;</break>
+                        }</block></then></if>
+
+                        <expr_stmt><expr><name>converter</name> = <call><name>_pysqlite_get_converter</name><argument_list>(<argument><expr><name>key</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                        <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>key</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                        <break>break;</break>
+                    }</block></then></if></else></if>
+                }</block></for>
+            }</block></then></if>
+        }</block></then></if>
+
+        <if>if <condition>(<expr>!<name>converter</name> &amp;&amp; <name><name>self</name>-&gt;<name>connection</name>-&gt;<name>detect_types</name></name> &amp; <name>PARSE_DECLTYPES</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>decltype</name> = <call><name>sqlite3_column_decltype</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name>-&gt;<name>st</name></name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <if>if <condition>(<expr><name>decltype</name></expr>)</condition><then> <block>{
+                <for>for (<init><expr><name>pos</name> = <name>decltype</name></expr>;</init><condition>;</condition><incr><expr><name>pos</name>++</expr></incr>) <block>{
+                    <comment type="block">/* Converter names are split at '(' and blanks.
+                     * This allows 'INTEGER NOT NULL' to be treated as 'INTEGER' and
+                     * 'NUMBER(10)' to be treated as 'NUMBER', for example.
+                     * In other words, it will work as people expect it to work.*/</comment>
+                    <if>if <condition>(<expr>*<name>pos</name> == ' ' || *<name>pos</name> == '(' || *<name>pos</name> == 0</expr>)</condition><then> <block>{
+                        <expr_stmt><expr><name>py_decltype</name> = <call><name>PyString_FromStringAndSize</name><argument_list>(<argument><expr><name>decltype</name></expr></argument>, <argument><expr><name>pos</name> - <name>decltype</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                        <if>if <condition>(<expr>!<name>py_decltype</name></expr>)</condition><then> <block>{
+                            <return>return <expr>-1</expr>;</return>
+                        }</block></then></if>
+                        <break>break;</break>
+                    }</block></then></if>
+                }</block></for>
+
+                <expr_stmt><expr><name>converter</name> = <call><name>_pysqlite_get_converter</name><argument_list>(<argument><expr><name>py_decltype</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>py_decltype</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></then></if>
+        }</block></then></if>
+
+        <if>if <condition>(<expr>!<name>converter</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>converter</name> = <name>Py_None</name></expr>;</expr_stmt>
+        }</block></then></if>
+
+        <if>if <condition>(<expr><call><name>PyList_Append</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>row_cast_map</name></name></expr></argument>, <argument><expr><name>converter</name></expr></argument>)</argument_list></call> != 0</expr>)</condition><then> <block>{
+            <if>if <condition>(<expr><name>converter</name> != <name>Py_None</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>converter</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></then></if>
+            <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>row_cast_map</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>self</name>-&gt;<name>row_cast_map</name></name> = <name>NULL</name></expr>;</expr_stmt>
+
+            <return>return <expr>-1</expr>;</return>
+        }</block></then></if>
+    }</block></for>
+
+    <return>return <expr>0</expr>;</return>
+}</block></function>
+
+<function><type><name>PyObject</name>*</type> <name>_pysqlite_build_column_name</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name>*</type> <name>colname</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name>*</type> <name>pos</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>!<name>colname</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>Py_None</name></expr>;</return>
+    }</block></then></if>
+
+    <for>for (<init><expr><name>pos</name> = <name>colname</name></expr>;</init><condition>;</condition> <incr><expr><name>pos</name>++</expr></incr>) <block>{
+        <if>if <condition>(<expr>*<name>pos</name> == 0 || *<name>pos</name> == '['</expr>)</condition><then> <block>{
+            <if>if <condition>(<expr>(*<name>pos</name> == '[') &amp;&amp; (<name>pos</name> &gt; <name>colname</name>) &amp;&amp; (*(<name>pos</name>-1) == ' ')</expr>)</condition><then> <block>{
+                <expr_stmt><expr><name>pos</name>--</expr>;</expr_stmt>
+            }</block></then></if>
+            <return>return <expr><call><name>PyString_FromStringAndSize</name><argument_list>(<argument><expr><name>colname</name></expr></argument>, <argument><expr><name>pos</name> - <name>colname</name></expr></argument>)</argument_list></call></expr>;</return>
+        }</block></then></if>
+    }</block></for>
+}</block></function>
+
+<function><type><name>PyObject</name>*</type> <name>pysqlite_unicode_from_string</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name>*</type> <name>val_str</name></decl></param>, <param><decl><type><name>int</name></type> <name>optimize</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name>*</type> <name>check</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>is_ascii</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr><name>optimize</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>is_ascii</name> = 1</expr>;</expr_stmt>
+
+        <expr_stmt><expr><name>check</name> = <name>val_str</name></expr>;</expr_stmt>
+        <while>while <condition>(<expr>*<name>check</name></expr>)</condition> <block>{
+            <if>if <condition>(<expr>*<name>check</name> &amp; 0x80</expr>)</condition><then> <block>{
+                <expr_stmt><expr><name>is_ascii</name> = 0</expr>;</expr_stmt>
+                <break>break;</break>
+            }</block></then></if>
+
+            <expr_stmt><expr><name>check</name>++</expr>;</expr_stmt>
+        }</block></while>
+    }</block></then></if>
+
+    <if>if <condition>(<expr><name>is_ascii</name></expr>)</condition><then> <block>{
+        <return>return <expr><call><name>PyString_FromString</name><argument_list>(<argument><expr><name>val_str</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then> <else>else <block>{
+        <return>return <expr><call><name>PyUnicode_DecodeUTF8</name><argument_list>(<argument><expr><name>val_str</name></expr></argument>, <argument><expr><call><name>strlen</name><argument_list>(<argument><expr><name>val_str</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></else></if>
+}</block></function>
+
+<comment type="block">/*
+ * Returns a row from the currently active SQLite statement
+ *
+ * Precondidition:
+ * - sqlite3_step() has been called before and it returned SQLITE_ROW.
+ */</comment>
+<function><type><name>PyObject</name>*</type> <name>_pysqlite_fetch_one_row</name><parameter_list>(<param><decl><type><name>pysqlite_Cursor</name>*</type> <name>self</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>, <decl><type ref="prev"/><name>numcols</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>row</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>item</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>coltype</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PY_LONG_LONG</name></type> <name>intval</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>converter</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>converted</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>nbytes</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>buffer</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>void</name>*</type> <name>raw_buffer</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name>*</type> <name>val_str</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name></type> <name><name>buf</name><index>[<expr>200</expr>]</index></name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name>*</type> <name>colname</name></decl>;</decl_stmt>
+
+    <decl_stmt><decl><type><name>Py_BEGIN_ALLOW_THREADS</name></type>
+    <name>numcols</name> <init>= <expr><call><name>sqlite3_data_count</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name>-&gt;<name>st</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>Py_END_ALLOW_THREADS</name></type>
+
+    <name>row</name> <init>= <expr><call><name>PyTuple_New</name><argument_list>(<argument><expr><name>numcols</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <if>if <condition>(<expr>!<name>row</name></expr>)</condition><then> <block>{
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+
+    <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name>numcols</name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>) <block>{
+        <if>if <condition>(<expr><name><name>self</name>-&gt;<name>connection</name>-&gt;<name>detect_types</name></name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>converter</name> = <call><name>PyList_GetItem</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>row_cast_map</name></name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <if>if <condition>(<expr>!<name>converter</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><name>converter</name> = <name>Py_None</name></expr>;</expr_stmt>
+            }</block></then></if>
+        }</block></then> <else>else <block>{
+            <expr_stmt><expr><name>converter</name> = <name>Py_None</name></expr>;</expr_stmt>
+        }</block></else></if>
+
+        <if>if <condition>(<expr><name>converter</name> != <name>Py_None</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>nbytes</name> = <call><name>sqlite3_column_bytes</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name>-&gt;<name>st</name></name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name>val_str</name> = (const <name>char</name>*)<call><name>sqlite3_column_blob</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name>-&gt;<name>st</name></name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <if>if <condition>(<expr>!<name>val_str</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><name>converted</name> = <name>Py_None</name></expr>;</expr_stmt>
+            }</block></then> <else>else <block>{
+                <expr_stmt><expr><name>item</name> = <call><name>PyString_FromStringAndSize</name><argument_list>(<argument><expr><name>val_str</name></expr></argument>, <argument><expr><name>nbytes</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <if>if <condition>(<expr>!<name>item</name></expr>)</condition><then> <block>{
+                    <return>return <expr><name>NULL</name></expr>;</return>
+                }</block></then></if>
+                <expr_stmt><expr><name>converted</name> = <call><name>PyObject_CallFunction</name><argument_list>(<argument><expr><name>converter</name></expr></argument>, <argument><expr>"O"</expr></argument>, <argument><expr><name>item</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>item</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <if>if <condition>(<expr>!<name>converted</name></expr>)</condition><then> <block>{
+                    <break>break;</break>
+                }</block></then></if>
+            }</block></else></if>
+        }</block></then> <else>else <block>{
+            <decl_stmt><decl><type><name>Py_BEGIN_ALLOW_THREADS</name></type>
+            <name>coltype</name> <init>= <expr><call><name>sqlite3_column_type</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name>-&gt;<name>st</name></name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+            <macro><name>Py_END_ALLOW_THREADS</name></macro>
+            <if>if <condition>(<expr><name>coltype</name> == <name>SQLITE_NULL</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><name>converted</name> = <name>Py_None</name></expr>;</expr_stmt>
+            }</block></then> <else>else <if>if <condition>(<expr><name>coltype</name> == <name>SQLITE_INTEGER</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><name>intval</name> = <call><name>sqlite3_column_int64</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name>-&gt;<name>st</name></name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <if>if <condition>(<expr><name>intval</name> &lt; <name>INT32_MIN</name> || <name>intval</name> &gt; <name>INT32_MAX</name></expr>)</condition><then> <block>{
+                    <expr_stmt><expr><name>converted</name> = <call><name>PyLong_FromLongLong</name><argument_list>(<argument><expr><name>intval</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                }</block></then> <else>else <block>{
+                    <expr_stmt><expr><name>converted</name> = <call><name>PyInt_FromLong</name><argument_list>(<argument><expr>(<name>long</name>)<name>intval</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                }</block></else></if>
+            }</block></then> <else>else <if>if <condition>(<expr><name>coltype</name> == <name>SQLITE_FLOAT</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><name>converted</name> = <call><name>PyFloat_FromDouble</name><argument_list>(<argument><expr><call><name>sqlite3_column_double</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name>-&gt;<name>st</name></name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></then> <else>else <if>if <condition>(<expr><name>coltype</name> == <name>SQLITE_TEXT</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><name>val_str</name> = (const <name>char</name>*)<call><name>sqlite3_column_text</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name>-&gt;<name>st</name></name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <if>if <condition>(<expr>(<name><name>self</name>-&gt;<name>connection</name>-&gt;<name>text_factory</name></name> == (<name>PyObject</name>*)&amp;<name>PyUnicode_Type</name>)
+                    || (<name><name>self</name>-&gt;<name>connection</name>-&gt;<name>text_factory</name></name> == <name>pysqlite_OptimizedUnicode</name>)</expr>)</condition><then> <block>{
+
+                    <expr_stmt><expr><name>converted</name> = <call><name>pysqlite_unicode_from_string</name><argument_list>(<argument><expr><name>val_str</name></expr></argument>,
+                        <argument><expr><name><name>self</name>-&gt;<name>connection</name>-&gt;<name>text_factory</name></name> == <name>pysqlite_OptimizedUnicode</name> ? 1 : 0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+                    <if>if <condition>(<expr>!<name>converted</name></expr>)</condition><then> <block>{
+                        <expr_stmt><expr><name>colname</name> = <call><name>sqlite3_column_name</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name>-&gt;<name>st</name></name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                        <if>if <condition>(<expr>!<name>colname</name></expr>)</condition><then> <block>{
+                            <expr_stmt><expr><name>colname</name> = "&lt;unknown column name&gt;"</expr>;</expr_stmt>
+                        }</block></then></if>
+                        <expr_stmt><expr><call><name>PyOS_snprintf</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>buf</name></expr></argument>)</argument_list></sizeof> - 1</expr></argument>, <argument><expr>"Could not decode to UTF-8 column '%s' with text '%s'"</expr></argument>,
+                                     <argument><expr><name>colname</name></expr></argument> , <argument><expr><name>val_str</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                        <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>pysqlite_OperationalError</name></expr></argument>, <argument><expr><name>buf</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                    }</block></then></if>
+                }</block></then> <else>else <if>if <condition>(<expr><name><name>self</name>-&gt;<name>connection</name>-&gt;<name>text_factory</name></name> == (<name>PyObject</name>*)&amp;<name>PyString_Type</name></expr>)</condition><then> <block>{
+                    <expr_stmt><expr><name>converted</name> = <call><name>PyString_FromString</name><argument_list>(<argument><expr><name>val_str</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                }</block></then> <else>else <block>{
+                    <expr_stmt><expr><name>converted</name> = <call><name>PyObject_CallFunction</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>connection</name>-&gt;<name>text_factory</name></name></expr></argument>, <argument><expr>"s"</expr></argument>, <argument><expr><name>val_str</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                }</block></else></if></else></if>
+            }</block></then> <else>else <block>{
+                <comment type="block">/* coltype == SQLITE_BLOB */</comment>
+                <expr_stmt><expr><name>nbytes</name> = <call><name>sqlite3_column_bytes</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name>-&gt;<name>st</name></name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><name>buffer</name> = <call><name>PyBuffer_New</name><argument_list>(<argument><expr><name>nbytes</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <if>if <condition>(<expr>!<name>buffer</name></expr>)</condition><then> <block>{
+                    <break>break;</break>
+                }</block></then></if>
+                <if>if <condition>(<expr><call><name>PyObject_AsWriteBuffer</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>, <argument><expr>&amp;<name>raw_buffer</name></expr></argument>, <argument><expr>&amp;<name>nbytes</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+                    <break>break;</break>
+                }</block></then></if>
+                <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>raw_buffer</name></expr></argument>, <argument><expr><call><name>sqlite3_column_blob</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name>-&gt;<name>st</name></name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>nbytes</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><name>converted</name> = <name>buffer</name></expr>;</expr_stmt>
+            }</block></else></if></else></if></else></if></else></if>
+        }</block></else></if>
+
+        <if>if <condition>(<expr><name>converted</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>PyTuple_SetItem</name><argument_list>(<argument><expr><name>row</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr><name>converted</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then> <else>else <block>{
+            <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>PyTuple_SetItem</name><argument_list>(<argument><expr><name>row</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></else></if>
+    }</block></for>
+
+    <if>if <condition>(<expr><call><name>PyErr_Occurred</name><argument_list>()</argument_list></call></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>row</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><name>row</name> = <name>NULL</name></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <return>return <expr><name>row</name></expr>;</return>
+}</block></function>
+
+<function><type><name>PyObject</name>*</type> <name>_pysqlite_query_execute</name><parameter_list>(<param><decl><type><name>pysqlite_Cursor</name>*</type> <name>self</name></decl></param>, <param><decl><type><name>int</name></type> <name>multiple</name></decl></param>, <param><decl><type><name>PyObject</name>*</type> <name>args</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>operation</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>operation_bytestr</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name>*</type> <name>operation_cstr</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>parameters_list</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>parameters_iter</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>parameters</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>rc</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>func_args</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>result</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>numcols</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PY_LONG_LONG</name></type> <name>lastrowid</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>statement_type</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>descriptor</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>second_argument</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>allow_8bit_chars</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>!<call><name>pysqlite_check_thread</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>connection</name></name></expr></argument>)</argument_list></call> || !<call><name>pysqlite_check_connection</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>connection</name></name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/* Make shooting yourself in the foot with not utf-8 decodable 8-bit-strings harder */</comment>
+    <expr_stmt><expr><name>allow_8bit_chars</name> = ((<name><name>self</name>-&gt;<name>connection</name>-&gt;<name>text_factory</name></name> != (<name>PyObject</name>*)&amp;<name>PyUnicode_Type</name>) &amp;&amp;
+        (<name><name>self</name>-&gt;<name>connection</name>-&gt;<name>text_factory</name></name> != (<name>PyObject</name>*)&amp;<name>PyUnicode_Type</name> &amp;&amp; <name>pysqlite_OptimizedUnicode</name>))</expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>next_row</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>next_row</name></name> = <name>NULL</name></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr><name>multiple</name></expr>)</condition><then> <block>{
+        <comment type="block">/* executemany() */</comment>
+        <if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"OO"</expr></argument>, <argument><expr>&amp;<name>operation</name></expr></argument>, <argument><expr>&amp;<name>second_argument</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <return>return <expr><name>NULL</name></expr>;</return>
+        }</block></then></if>
+
+        <if>if <condition>(<expr>!<call><name>PyString_Check</name><argument_list>(<argument><expr><name>operation</name></expr></argument>)</argument_list></call> &amp;&amp; !<call><name>PyUnicode_Check</name><argument_list>(<argument><expr><name>operation</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>, <argument><expr>"operation parameter must be str or unicode"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <return>return <expr><name>NULL</name></expr>;</return>
+        }</block></then></if>
+
+        <if>if <condition>(<expr><call><name>PyIter_Check</name><argument_list>(<argument><expr><name>second_argument</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <comment type="block">/* iterator */</comment>
+            <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>second_argument</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name>parameters_iter</name> = <name>second_argument</name></expr>;</expr_stmt>
+        }</block></then> <else>else <block>{
+            <comment type="block">/* sequence */</comment>
+            <expr_stmt><expr><name>parameters_iter</name> = <call><name>PyObject_GetIter</name><argument_list>(<argument><expr><name>second_argument</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <if>if <condition>(<expr>!<name>parameters_iter</name></expr>)</condition><then> <block>{
+                <return>return <expr><name>NULL</name></expr>;</return>
+            }</block></then></if>
+        }</block></else></if>
+    }</block></then> <else>else <block>{
+        <comment type="block">/* execute() */</comment>
+        <if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"O|O"</expr></argument>, <argument><expr>&amp;<name>operation</name></expr></argument>, <argument><expr>&amp;<name>second_argument</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <return>return <expr><name>NULL</name></expr>;</return>
+        }</block></then></if>
+
+        <if>if <condition>(<expr>!<call><name>PyString_Check</name><argument_list>(<argument><expr><name>operation</name></expr></argument>)</argument_list></call> &amp;&amp; !<call><name>PyUnicode_Check</name><argument_list>(<argument><expr><name>operation</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>, <argument><expr>"operation parameter must be str or unicode"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <return>return <expr><name>NULL</name></expr>;</return>
+        }</block></then></if>
+
+        <expr_stmt><expr><name>parameters_list</name> = <call><name>PyList_New</name><argument_list>(<argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr>!<name>parameters_list</name></expr>)</condition><then> <block>{
+            <return>return <expr><name>NULL</name></expr>;</return>
+        }</block></then></if>
+
+        <if>if <condition>(<expr><name>second_argument</name> == <name>NULL</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>second_argument</name> = <call><name>PyTuple_New</name><argument_list>(<argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <if>if <condition>(<expr>!<name>second_argument</name></expr>)</condition><then> <block>{
+                <goto>goto <name>error</name>;</goto>
+            }</block></then></if>
+        }</block></then> <else>else <block>{
+            <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>second_argument</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></else></if>
+        <if>if <condition>(<expr><call><name>PyList_Append</name><argument_list>(<argument><expr><name>parameters_list</name></expr></argument>, <argument><expr><name>second_argument</name></expr></argument>)</argument_list></call> != 0</expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>second_argument</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <goto>goto <name>error</name>;</goto>
+        }</block></then></if>
+        <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>second_argument</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <expr_stmt><expr><name>parameters_iter</name> = <call><name>PyObject_GetIter</name><argument_list>(<argument><expr><name>parameters_list</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr>!<name>parameters_iter</name></expr>)</condition><then> <block>{
+            <goto>goto <name>error</name>;</goto>
+        }</block></then></if>
+    }</block></else></if>
+
+    <if>if <condition>(<expr><name><name>self</name>-&gt;<name>statement</name></name> != <name>NULL</name></expr>)</condition><then> <block>{
+        <comment type="block">/* There is an active statement */</comment>
+        <expr_stmt><expr><name>rc</name> = <call><name>pysqlite_statement_reset</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <if>if <condition>(<expr><call><name>PyString_Check</name><argument_list>(<argument><expr><name>operation</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>operation_cstr</name> = <call><name>PyString_AsString</name><argument_list>(<argument><expr><name>operation</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then> <else>else <block>{
+        <expr_stmt><expr><name>operation_bytestr</name> = <call><name>PyUnicode_AsUTF8String</name><argument_list>(<argument><expr><name>operation</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr>!<name>operation_bytestr</name></expr>)</condition><then> <block>{
+            <goto>goto <name>error</name>;</goto>
+        }</block></then></if>
+
+        <expr_stmt><expr><name>operation_cstr</name> = <call><name>PyString_AsString</name><argument_list>(<argument><expr><name>operation_bytestr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if>
+
+    <comment type="block">/* reset description and rowcount */</comment>
+    <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>description</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>description</name></name> = <name>Py_None</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>rowcount</name></name> = -1L</expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>func_args</name> = <call><name>PyTuple_New</name><argument_list>(<argument><expr>1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr>!<name>func_args</name></expr>)</condition><then> <block>{
+        <goto>goto <name>error</name>;</goto>
+    }</block></then></if>
+    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>operation</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><call><name>PyTuple_SetItem</name><argument_list>(<argument><expr><name>func_args</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>operation</name></expr></argument>)</argument_list></call> != 0</expr>)</condition><then> <block>{
+        <goto>goto <name>error</name>;</goto>
+    }</block></then></if>
+
+    <if>if <condition>(<expr><name><name>self</name>-&gt;<name>statement</name></name></expr>)</condition><then> <block>{
+        <expr_stmt><expr>(<name>void</name>)<call><name>pysqlite_statement_reset</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>statement</name></name> = (<name>pysqlite_Statement</name>*)<call><name>pysqlite_cache_get</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>connection</name>-&gt;<name>statement_cache</name></name></expr></argument>, <argument><expr><name>func_args</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>func_args</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr>!<name><name>self</name>-&gt;<name>statement</name></name></expr>)</condition><then> <block>{
+        <goto>goto <name>error</name>;</goto>
+    }</block></then></if>
+
+    <if>if <condition>(<expr><name><name>self</name>-&gt;<name>statement</name>-&gt;<name>in_use</name></name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>self</name>-&gt;<name>statement</name></name> = <call><name>PyObject_New</name><argument_list>(<argument><expr><name>pysqlite_Statement</name></expr></argument>, <argument><expr>&amp;<name>pysqlite_StatementType</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr>!<name><name>self</name>-&gt;<name>statement</name></name></expr>)</condition><then> <block>{
+            <goto>goto <name>error</name>;</goto>
+        }</block></then></if>
+        <expr_stmt><expr><name>rc</name> = <call><name>pysqlite_statement_create</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name></name></expr></argument>, <argument><expr><name><name>self</name>-&gt;<name>connection</name></name></expr></argument>, <argument><expr><name>operation</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>rc</name> != <name>SQLITE_OK</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>Py_CLEAR</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <goto>goto <name>error</name>;</goto>
+        }</block></then></if>
+    }</block></then></if>
+
+    <expr_stmt><expr><call><name>pysqlite_statement_reset</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>pysqlite_statement_mark_dirty</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>statement_type</name> = <call><name>detect_statement_type</name><argument_list>(<argument><expr><name>operation_cstr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name><name>self</name>-&gt;<name>connection</name>-&gt;<name>begin_statement</name></name></expr>)</condition><then> <block>{
+        <switch>switch <condition>(<expr><name>statement_type</name></expr>)</condition> <block>{
+            <case>case <expr><name>STATEMENT_UPDATE</name></expr>:
+            </case><case>case <expr><name>STATEMENT_DELETE</name></expr>:
+            </case><case>case <expr><name>STATEMENT_INSERT</name></expr>:
+            </case><case>case <expr><name>STATEMENT_REPLACE</name></expr>:
+                <if>if <condition>(<expr>!<name><name>self</name>-&gt;<name>connection</name>-&gt;<name>inTransaction</name></name></expr>)</condition><then> <block>{
+                    <expr_stmt><expr><name>result</name> = <call><name>_pysqlite_connection_begin</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>connection</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                    <if>if <condition>(<expr>!<name>result</name></expr>)</condition><then> <block>{
+                        <goto>goto <name>error</name>;</goto>
+                    }</block></then></if>
+                    <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>result</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                }</block></then></if>
+                <break>break;</break>
+            </case><case>case <expr><name>STATEMENT_OTHER</name></expr>:
+                <comment type="block">/* it's a DDL statement or something similar
+                   - we better COMMIT first so it works for all cases */</comment>
+                <if>if <condition>(<expr><name><name>self</name>-&gt;<name>connection</name>-&gt;<name>inTransaction</name></name></expr>)</condition><then> <block>{
+                    <expr_stmt><expr><name>result</name> = <call><name>pysqlite_connection_commit</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>connection</name></name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                    <if>if <condition>(<expr>!<name>result</name></expr>)</condition><then> <block>{
+                        <goto>goto <name>error</name>;</goto>
+                    }</block></then></if>
+                    <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>result</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                }</block></then></if>
+                <break>break;</break>
+            </case><case>case <expr><name>STATEMENT_SELECT</name></expr>:
+                <if>if <condition>(<expr><name>multiple</name></expr>)</condition><then> <block>{
+                    <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>pysqlite_ProgrammingError</name></expr></argument>,
+                                <argument><expr>"You cannot execute SELECT statements in executemany()."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                    <goto>goto <name>error</name>;</goto>
+                }</block></then></if>
+                <break>break;</break>
+        </case>}</block></switch>
+    }</block></then></if>
+
+    <while>while <condition>(<expr>1</expr>)</condition> <block>{
+        <expr_stmt><expr><name>parameters</name> = <call><name>PyIter_Next</name><argument_list>(<argument><expr><name>parameters_iter</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr>!<name>parameters</name></expr>)</condition><then> <block>{
+            <break>break;</break>
+        }</block></then></if>
+
+        <expr_stmt><expr><call><name>pysqlite_statement_mark_dirty</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <expr_stmt><expr><call><name>pysqlite_statement_bind_parameters</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name></name></expr></argument>, <argument><expr><name>parameters</name></expr></argument>, <argument><expr><name>allow_8bit_chars</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><call><name>PyErr_Occurred</name><argument_list>()</argument_list></call></expr>)</condition><then> <block>{
+            <goto>goto <name>error</name>;</goto>
+        }</block></then></if>
+
+        <comment type="block">/* Keep trying the SQL statement until the schema stops changing. */</comment>
+        <while>while <condition>(<expr>1</expr>)</condition> <block>{
+            <comment type="block">/* Actually execute the SQL statement. */</comment>
+            <expr_stmt><expr><name>rc</name> = <call><name>pysqlite_step</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name>-&gt;<name>st</name></name></expr></argument>, <argument><expr><name><name>self</name>-&gt;<name>connection</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <if>if <condition>(<expr><name>rc</name> == <name>SQLITE_DONE</name> ||  <name>rc</name> == <name>SQLITE_ROW</name></expr>)</condition><then> <block>{
+                <comment type="block">/* If it worked, let's get out of the loop */</comment>
+                <break>break;</break>
+            }</block></then></if>
+            <comment type="block">/* Something went wrong.  Re-set the statement and try again. */</comment>
+            <expr_stmt><expr><name>rc</name> = <call><name>pysqlite_statement_reset</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <if>if <condition>(<expr><name>rc</name> == <name>SQLITE_SCHEMA</name></expr>)</condition><then> <block>{
+                <comment type="block">/* If this was a result of the schema changing, let's try
+                   again. */</comment>
+                <expr_stmt><expr><name>rc</name> = <call><name>pysqlite_statement_recompile</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name></name></expr></argument>, <argument><expr><name>parameters</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <if>if <condition>(<expr><name>rc</name> == <name>SQLITE_OK</name></expr>)</condition><then> <block>{
+                    <continue>continue;</continue>
+                }</block></then> <else>else <block>{
+                    <comment type="block">/* If the database gave us an error, promote it to Python. */</comment>
+                    <expr_stmt><expr>(<name>void</name>)<call><name>pysqlite_statement_reset</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                    <expr_stmt><expr><call><name>_pysqlite_seterror</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>connection</name>-&gt;<name>db</name></name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                    <goto>goto <name>error</name>;</goto>
+                }</block></else></if>
+            }</block></then> <else>else <block>{
+                <if>if <condition>(<expr><call><name>PyErr_Occurred</name><argument_list>()</argument_list></call></expr>)</condition><then> <block>{
+                    <comment type="block">/* there was an error that occurred in a user-defined callback */</comment>
+                    <if>if <condition>(<expr><name>_enable_callback_tracebacks</name></expr>)</condition><then> <block>{
+                        <expr_stmt><expr><call><name>PyErr_Print</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+                    }</block></then> <else>else <block>{
+                        <expr_stmt><expr><call><name>PyErr_Clear</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+                    }</block></else></if>
+                }</block></then></if>
+                <expr_stmt><expr>(<name>void</name>)<call><name>pysqlite_statement_reset</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><call><name>_pysqlite_seterror</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>connection</name>-&gt;<name>db</name></name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <goto>goto <name>error</name>;</goto>
+            }</block></else></if>
+        }</block></while>
+
+        <if>if <condition>(<expr><call><name>pysqlite_build_row_cast_map</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call> != 0</expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>pysqlite_OperationalError</name></expr></argument>, <argument><expr>"Error while building row_cast_map"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <goto>goto <name>error</name>;</goto>
+        }</block></then></if>
+
+        <if>if <condition>(<expr><name>rc</name> == <name>SQLITE_ROW</name> || (<name>rc</name> == <name>SQLITE_DONE</name> &amp;&amp; <name>statement_type</name> == <name>STATEMENT_SELECT</name>)</expr>)</condition><then> <block>{
+            <if>if <condition>(<expr><name><name>self</name>-&gt;<name>description</name></name> == <name>Py_None</name></expr>)</condition><then> <block>{
+                <decl_stmt><decl><type><name>Py_BEGIN_ALLOW_THREADS</name></type>
+                <name>numcols</name> <init>= <expr><call><name>sqlite3_column_count</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name>-&gt;<name>st</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+                <function_decl><type><name>Py_END_ALLOW_THREADS</name></type>
+
+                <name>Py_DECREF</name><parameter_list>(<param><decl><type><name><name>self</name>-&gt;<name>description</name></name></type></decl></param>)</parameter_list>;</function_decl>
+                <expr_stmt><expr><name><name>self</name>-&gt;<name>description</name></name> = <call><name>PyTuple_New</name><argument_list>(<argument><expr><name>numcols</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <if>if <condition>(<expr>!<name><name>self</name>-&gt;<name>description</name></name></expr>)</condition><then> <block>{
+                    <goto>goto <name>error</name>;</goto>
+                }</block></then></if>
+                <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name>numcols</name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>) <block>{
+                    <expr_stmt><expr><name>descriptor</name> = <call><name>PyTuple_New</name><argument_list>(<argument><expr>7</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                    <if>if <condition>(<expr>!<name>descriptor</name></expr>)</condition><then> <block>{
+                        <goto>goto <name>error</name>;</goto>
+                    }</block></then></if>
+                    <expr_stmt><expr><call><name>PyTuple_SetItem</name><argument_list>(<argument><expr><name>descriptor</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><call><name>_pysqlite_build_column_name</name><argument_list>(<argument><expr><call><name>sqlite3_column_name</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name>-&gt;<name>st</name></name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt> <expr_stmt><expr><call><name>PyTuple_SetItem</name><argument_list>(<argument><expr><name>descriptor</name></expr></argument>, <argument><expr>1</expr></argument>, <argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt> <expr_stmt><expr><call><name>PyTuple_SetItem</name><argument_list>(<argument><expr><name>descriptor</name></expr></argument>, <argument><expr>2</expr></argument>, <argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt> <expr_stmt><expr><call><name>PyTuple_SetItem</name><argument_list>(<argument><expr><name>descriptor</name></expr></argument>, <argument><expr>3</expr></argument>, <argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt> <expr_stmt><expr><call><name>PyTuple_SetItem</name><argument_list>(<argument><expr><name>descriptor</name></expr></argument>, <argument><expr>4</expr></argument>, <argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt> <expr_stmt><expr><call><name>PyTuple_SetItem</name><argument_list>(<argument><expr><name>descriptor</name></expr></argument>, <argument><expr>5</expr></argument>, <argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt> <expr_stmt><expr><call><name>PyTuple_SetItem</name><argument_list>(<argument><expr><name>descriptor</name></expr></argument>, <argument><expr>6</expr></argument>, <argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                    <expr_stmt><expr><call><name>PyTuple_SetItem</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>description</name></name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr><name>descriptor</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                }</block></for>
+            }</block></then></if>
+        }</block></then></if>
+
+        <if>if <condition>(<expr><name>rc</name> == <name>SQLITE_ROW</name></expr>)</condition><then> <block>{
+            <if>if <condition>(<expr><name>multiple</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>pysqlite_ProgrammingError</name></expr></argument>, <argument><expr>"executemany() can only execute DML statements."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <goto>goto <name>error</name>;</goto>
+            }</block></then></if>
+
+            <expr_stmt><expr><name><name>self</name>-&gt;<name>next_row</name></name> = <call><name>_pysqlite_fetch_one_row</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then> <else>else <if>if <condition>(<expr><name>rc</name> == <name>SQLITE_DONE</name> &amp;&amp; !<name>multiple</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>pysqlite_statement_reset</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>Py_CLEAR</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if></else></if>
+
+        <switch>switch <condition>(<expr><name>statement_type</name></expr>)</condition> <block>{
+            <case>case <expr><name>STATEMENT_UPDATE</name></expr>:
+            </case><case>case <expr><name>STATEMENT_DELETE</name></expr>:
+            </case><case>case <expr><name>STATEMENT_INSERT</name></expr>:
+            </case><case>case <expr><name>STATEMENT_REPLACE</name></expr>:
+                <if>if <condition>(<expr><name><name>self</name>-&gt;<name>rowcount</name></name> == -1L</expr>)</condition><then> <block>{
+                    <expr_stmt><expr><name><name>self</name>-&gt;<name>rowcount</name></name> = 0L</expr>;</expr_stmt>
+                }</block></then></if>
+                <expr_stmt><expr><name><name>self</name>-&gt;<name>rowcount</name></name> += (<name>long</name>)<call><name>sqlite3_changes</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>connection</name>-&gt;<name>db</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        </case>}</block></switch>
+
+        <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>lastrowid</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr>!<name>multiple</name> &amp;&amp; <name>statement_type</name> == <name>STATEMENT_INSERT</name></expr>)</condition><then> <block>{
+            <decl_stmt><decl><type><name>Py_BEGIN_ALLOW_THREADS</name></type>
+            <name>lastrowid</name> <init>= <expr><call><name>sqlite3_last_insert_rowid</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>connection</name>-&gt;<name>db</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+            <decl_stmt><decl><type><name>Py_END_ALLOW_THREADS</name></type>
+            <name><name>self</name>-&gt;<name>lastrowid</name></name> <init>= <expr><call><name>PyInt_FromLong</name><argument_list>(<argument><expr>(<name>long</name>)<name>lastrowid</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+        }</block></then> <else>else <block>{
+            <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>self</name>-&gt;<name>lastrowid</name></name> = <name>Py_None</name></expr>;</expr_stmt>
+        }</block></else></if>
+
+        <if>if <condition>(<expr><name>multiple</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>rc</name> = <call><name>pysqlite_statement_reset</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+        <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>parameters</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></while>
+
+<label><name>error</name>:</label>
+    <comment type="block">/* just to be sure (implicit ROLLBACKs with ON CONFLICT ROLLBACK/OR
+     * ROLLBACK could have happened */</comment>
+    <cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>SQLITE_VERSION_NUMBER</name></cpp:ifdef>
+    <cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>SQLITE_VERSION_NUMBER</name> &gt;= 3002002</expr></cpp:if>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>connection</name>-&gt;<name>inTransaction</name></name> = !<call><name>sqlite3_get_autocommit</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>connection</name>-&gt;<name>db</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+    <cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>operation_bytestr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>parameters</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>parameters_iter</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>parameters_list</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr><call><name>PyErr_Occurred</name><argument_list>()</argument_list></call></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name><name>self</name>-&gt;<name>rowcount</name></name> = -1L</expr>;</expr_stmt>
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then> <else>else <block>{
+        <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr>(<name>PyObject</name>*)<name>self</name></expr>;</return>
+    }</block></else></if>
+}</block></function>
+
+<function><type><name>PyObject</name>*</type> <name>pysqlite_cursor_execute</name><parameter_list>(<param><decl><type><name>pysqlite_Cursor</name>*</type> <name>self</name></decl></param>, <param><decl><type><name>PyObject</name>*</type> <name>args</name></decl></param>)</parameter_list>
+<block>{
+    <return>return <expr><call><name>_pysqlite_query_execute</name><argument_list>(<argument><expr><name>self</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>args</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><name>PyObject</name>*</type> <name>pysqlite_cursor_executemany</name><parameter_list>(<param><decl><type><name>pysqlite_Cursor</name>*</type> <name>self</name></decl></param>, <param><decl><type><name>PyObject</name>*</type> <name>args</name></decl></param>)</parameter_list>
+<block>{
+    <return>return <expr><call><name>_pysqlite_query_execute</name><argument_list>(<argument><expr><name>self</name></expr></argument>, <argument><expr>1</expr></argument>, <argument><expr><name>args</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><name>PyObject</name>*</type> <name>pysqlite_cursor_executescript</name><parameter_list>(<param><decl><type><name>pysqlite_Cursor</name>*</type> <name>self</name></decl></param>, <param><decl><type><name>PyObject</name>*</type> <name>args</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>script_obj</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>script_str</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name>*</type> <name>script_cstr</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>sqlite3_stmt</name>*</type> <name>statement</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>rc</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>result</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>statement_completed</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"O"</expr></argument>, <argument><expr>&amp;<name>script_obj</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+
+    <if>if <condition>(<expr>!<call><name>pysqlite_check_thread</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>connection</name></name></expr></argument>)</argument_list></call> || !<call><name>pysqlite_check_connection</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>connection</name></name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+
+    <if>if <condition>(<expr><call><name>PyString_Check</name><argument_list>(<argument><expr><name>script_obj</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>script_cstr</name> = <call><name>PyString_AsString</name><argument_list>(<argument><expr><name>script_obj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then> <else>else <if>if <condition>(<expr><call><name>PyUnicode_Check</name><argument_list>(<argument><expr><name>script_obj</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>script_str</name> = <call><name>PyUnicode_AsUTF8String</name><argument_list>(<argument><expr><name>script_obj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr>!<name>script_str</name></expr>)</condition><then> <block>{
+            <return>return <expr><name>NULL</name></expr>;</return>
+        }</block></then></if>
+
+        <expr_stmt><expr><name>script_cstr</name> = <call><name>PyString_AsString</name><argument_list>(<argument><expr><name>script_str</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then> <else>else <block>{
+        <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>, <argument><expr>"script argument must be unicode or string."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></else></if></else></if>
+
+    <comment type="block">/* commit first */</comment>
+    <expr_stmt><expr><name>result</name> = <call><name>pysqlite_connection_commit</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>connection</name></name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr>!<name>result</name></expr>)</condition><then> <block>{
+        <goto>goto <name>error</name>;</goto>
+    }</block></then></if>
+    <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>result</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <while>while <condition>(<expr>1</expr>)</condition> <block>{
+        <if>if <condition>(<expr>!<call><name>sqlite3_complete</name><argument_list>(<argument><expr><name>script_cstr</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <break>break;</break>
+        }</block></then></if>
+        <expr_stmt><expr><name>statement_completed</name> = 1</expr>;</expr_stmt>
+
+        <decl_stmt><decl><type><name>Py_BEGIN_ALLOW_THREADS</name></type>
+        <name>rc</name> <init>= <expr><call><name>sqlite3_prepare</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>connection</name>-&gt;<name>db</name></name></expr></argument>,
+                             <argument><expr><name>script_cstr</name></expr></argument>,
+                             <argument><expr>-1</expr></argument>,
+                             <argument><expr>&amp;<name>statement</name></expr></argument>,
+                             <argument><expr>&amp;<name>script_cstr</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+        <macro><name>Py_END_ALLOW_THREADS</name></macro>
+        <if>if <condition>(<expr><name>rc</name> != <name>SQLITE_OK</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>_pysqlite_seterror</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>connection</name>-&gt;<name>db</name></name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <goto>goto <name>error</name>;</goto>
+        }</block></then></if>
+
+        <comment type="block">/* execute statement, and ignore results of SELECT statements */</comment>
+        <expr_stmt><expr><name>rc</name> = <name>SQLITE_ROW</name></expr>;</expr_stmt>
+        <while>while <condition>(<expr><name>rc</name> == <name>SQLITE_ROW</name></expr>)</condition> <block>{
+            <expr_stmt><expr><name>rc</name> = <call><name>pysqlite_step</name><argument_list>(<argument><expr><name>statement</name></expr></argument>, <argument><expr><name><name>self</name>-&gt;<name>connection</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <comment type="block">/* TODO: we probably need more error handling here */</comment>
+        }</block></while>
+
+        <if>if <condition>(<expr><name>rc</name> != <name>SQLITE_DONE</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr>(<name>void</name>)<call><name>sqlite3_finalize</name><argument_list>(<argument><expr><name>statement</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>_pysqlite_seterror</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>connection</name>-&gt;<name>db</name></name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <goto>goto <name>error</name>;</goto>
+        }</block></then></if>
+
+        <expr_stmt><expr><name>rc</name> = <call><name>sqlite3_finalize</name><argument_list>(<argument><expr><name>statement</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>rc</name> != <name>SQLITE_OK</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>_pysqlite_seterror</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>connection</name>-&gt;<name>db</name></name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <goto>goto <name>error</name>;</goto>
+        }</block></then></if>
+    }</block></while>
+
+<label><name>error</name>:</label>
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>script_str</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr>!<name>statement_completed</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>pysqlite_ProgrammingError</name></expr></argument>, <argument><expr>"you did not provide a complete SQL statement"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <if>if <condition>(<expr><call><name>PyErr_Occurred</name><argument_list>()</argument_list></call></expr>)</condition><then> <block>{
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then> <else>else <block>{
+        <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr>(<name>PyObject</name>*)<name>self</name></expr>;</return>
+    }</block></else></if>
+}</block></function>
+
+<function><type><name>PyObject</name>*</type> <name>pysqlite_cursor_getiter</name><parameter_list>(<param><decl><type><name>pysqlite_Cursor</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr>(<name>PyObject</name>*)<name>self</name></expr>;</return>
+}</block></function>
+
+<function><type><name>PyObject</name>*</type> <name>pysqlite_cursor_iternext</name><parameter_list>(<param><decl><type><name>pysqlite_Cursor</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>next_row_tuple</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>next_row</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>rc</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>!<call><name>pysqlite_check_thread</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>connection</name></name></expr></argument>)</argument_list></call> || !<call><name>pysqlite_check_connection</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>connection</name></name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+
+    <if>if <condition>(<expr>!<name><name>self</name>-&gt;<name>next_row</name></name></expr>)</condition><then> <block>{
+         <if>if <condition>(<expr><name><name>self</name>-&gt;<name>statement</name></name></expr>)</condition><then> <block>{
+            <expr_stmt><expr>(<name>void</name>)<call><name>pysqlite_statement_reset</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>self</name>-&gt;<name>statement</name></name> = <name>NULL</name></expr>;</expr_stmt>
+        }</block></then></if>
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><name>next_row_tuple</name> = <name><name>self</name>-&gt;<name>next_row</name></name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>next_row</name></name> = <name>NULL</name></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr><name><name>self</name>-&gt;<name>row_factory</name></name> != <name>Py_None</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>next_row</name> = <call><name>PyObject_CallFunction</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>row_factory</name></name></expr></argument>, <argument><expr>"OO"</expr></argument>, <argument><expr><name>self</name></expr></argument>, <argument><expr><name>next_row_tuple</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>next_row_tuple</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then> <else>else <block>{
+        <expr_stmt><expr><name>next_row</name> = <name>next_row_tuple</name></expr>;</expr_stmt>
+    }</block></else></if>
+
+    <if>if <condition>(<expr><name><name>self</name>-&gt;<name>statement</name></name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>rc</name> = <call><name>pysqlite_step</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name>-&gt;<name>st</name></name></expr></argument>, <argument><expr><name><name>self</name>-&gt;<name>connection</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>rc</name> != <name>SQLITE_DONE</name> &amp;&amp; <name>rc</name> != <name>SQLITE_ROW</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr>(<name>void</name>)<call><name>pysqlite_statement_reset</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>next_row</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>_pysqlite_seterror</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>connection</name>-&gt;<name>db</name></name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <return>return <expr><name>NULL</name></expr>;</return>
+        }</block></then></if>
+
+        <if>if <condition>(<expr><name>rc</name> == <name>SQLITE_ROW</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name><name>self</name>-&gt;<name>next_row</name></name> = <call><name>_pysqlite_fetch_one_row</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+    }</block></then></if>
+
+    <return>return <expr><name>next_row</name></expr>;</return>
+}</block></function>
+
+<function><type><name>PyObject</name>*</type> <name>pysqlite_cursor_fetchone</name><parameter_list>(<param><decl><type><name>pysqlite_Cursor</name>*</type> <name>self</name></decl></param>, <param><decl><type><name>PyObject</name>*</type> <name>args</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>row</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>row</name> = <call><name>pysqlite_cursor_iternext</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr>!<name>row</name> &amp;&amp; !<call><name>PyErr_Occurred</name><argument_list>()</argument_list></call></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>Py_None</name></expr>;</return>
+    }</block></then></if>
+
+    <return>return <expr><name>row</name></expr>;</return>
+}</block></function>
+
+<function><type><name>PyObject</name>*</type> <name>pysqlite_cursor_fetchmany</name><parameter_list>(<param><decl><type><name>pysqlite_Cursor</name>*</type> <name>self</name></decl></param>, <param><decl><type><name>PyObject</name>*</type> <name>args</name></decl></param>, <param><decl><type><name>PyObject</name>*</type> <name>kwargs</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><specifier>static</specifier> <name>char</name> *</type><name><name>kwlist</name><index>[]</index></name> <init>= <expr><block>{<expr>"size"</expr>, <expr><name>NULL</name></expr>, <expr><name>NULL</name></expr>}</block></expr></init></decl>;</decl_stmt>
+
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>row</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>list</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>maxrows</name> <init>= <expr><name><name>self</name>-&gt;<name>arraysize</name></name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>counter</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>!<call><name>PyArg_ParseTupleAndKeywords</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr><name>kwargs</name></expr></argument>, <argument><expr>"|i:fetchmany"</expr></argument>, <argument><expr><name>kwlist</name></expr></argument>, <argument><expr>&amp;<name>maxrows</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><name>list</name> = <call><name>PyList_New</name><argument_list>(<argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr>!<name>list</name></expr>)</condition><then> <block>{
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/* just make sure we enter the loop */</comment>
+    <expr_stmt><expr><name>row</name> = <name>Py_None</name></expr>;</expr_stmt>
+
+    <while>while <condition>(<expr><name>row</name></expr>)</condition> <block>{
+        <expr_stmt><expr><name>row</name> = <call><name>pysqlite_cursor_iternext</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>row</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>PyList_Append</name><argument_list>(<argument><expr><name>list</name></expr></argument>, <argument><expr><name>row</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>row</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then> <else>else <block>{
+            <break>break;</break>
+        }</block></else></if>
+
+        <if>if <condition>(<expr>++<name>counter</name> == <name>maxrows</name></expr>)</condition><then> <block>{
+            <break>break;</break>
+        }</block></then></if>
+    }</block></while>
+
+    <if>if <condition>(<expr><call><name>PyErr_Occurred</name><argument_list>()</argument_list></call></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>list</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then> <else>else <block>{
+        <return>return <expr><name>list</name></expr>;</return>
+    }</block></else></if>
+}</block></function>
+
+<function><type><name>PyObject</name>*</type> <name>pysqlite_cursor_fetchall</name><parameter_list>(<param><decl><type><name>pysqlite_Cursor</name>*</type> <name>self</name></decl></param>, <param><decl><type><name>PyObject</name>*</type> <name>args</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>row</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>list</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>list</name> = <call><name>PyList_New</name><argument_list>(<argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr>!<name>list</name></expr>)</condition><then> <block>{
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/* just make sure we enter the loop */</comment>
+    <expr_stmt><expr><name>row</name> = (<name>PyObject</name>*)<name>Py_None</name></expr>;</expr_stmt>
+
+    <while>while <condition>(<expr><name>row</name></expr>)</condition> <block>{
+        <expr_stmt><expr><name>row</name> = <call><name>pysqlite_cursor_iternext</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>row</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>PyList_Append</name><argument_list>(<argument><expr><name>list</name></expr></argument>, <argument><expr><name>row</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>row</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+    }</block></while>
+
+    <if>if <condition>(<expr><call><name>PyErr_Occurred</name><argument_list>()</argument_list></call></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>list</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then> <else>else <block>{
+        <return>return <expr><name>list</name></expr>;</return>
+    }</block></else></if>
+}</block></function>
+
+<function><type><name>PyObject</name>*</type> <name>pysqlite_noop</name><parameter_list>(<param><decl><type><name>pysqlite_Connection</name>*</type> <name>self</name></decl></param>, <param><decl><type><name>PyObject</name>*</type> <name>args</name></decl></param>)</parameter_list>
+<block>{
+    <comment type="block">/* don't care, return None */</comment>
+    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+
+<function><type><name>PyObject</name>*</type> <name>pysqlite_cursor_close</name><parameter_list>(<param><decl><type><name>pysqlite_Cursor</name>*</type> <name>self</name></decl></param>, <param><decl><type><name>PyObject</name>*</type> <name>args</name></decl></param>)</parameter_list>
+<block>{
+    <if>if <condition>(<expr>!<call><name>pysqlite_check_thread</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>connection</name></name></expr></argument>)</argument_list></call> || !<call><name>pysqlite_check_connection</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>connection</name></name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+
+    <if>if <condition>(<expr><name><name>self</name>-&gt;<name>statement</name></name></expr>)</condition><then> <block>{
+        <expr_stmt><expr>(<name>void</name>)<call><name>pysqlite_statement_reset</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>Py_CLEAR</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>statement</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyMethodDef</name></type> <name><name>cursor_methods</name><index>[]</index></name> <init>= <expr><block>{
+    <expr><block>{<expr>"execute"</expr>, <expr>(<name>PyCFunction</name>)<name>pysqlite_cursor_execute</name></expr>, <expr><name>METH_VARARGS</name></expr>,
+        <macro><name>PyDoc_STR</name><argument_list>(<argument>"Executes a SQL statement."</argument>)</argument_list></macro>}</block></expr>,
+    <expr><block>{<expr>"executemany"</expr>, <expr>(<name>PyCFunction</name>)<name>pysqlite_cursor_executemany</name></expr>, <expr><name>METH_VARARGS</name></expr>,
+        <macro><name>PyDoc_STR</name><argument_list>(<argument>"Repeatedly executes a SQL statement."</argument>)</argument_list></macro>}</block></expr>,
+    <expr><block>{<expr>"executescript"</expr>, <expr>(<name>PyCFunction</name>)<name>pysqlite_cursor_executescript</name></expr>, <expr><name>METH_VARARGS</name></expr>,
+        <macro><name>PyDoc_STR</name><argument_list>(<argument>"Executes a multiple SQL statements at once. Non-standard."</argument>)</argument_list></macro>}</block></expr>,
+    <expr><block>{<expr>"fetchone"</expr>, <expr>(<name>PyCFunction</name>)<name>pysqlite_cursor_fetchone</name></expr>, <expr><name>METH_NOARGS</name></expr>,
+        <macro><name>PyDoc_STR</name><argument_list>(<argument>"Fetches one row from the resultset."</argument>)</argument_list></macro>}</block></expr>,
+    <expr><block>{<expr>"fetchmany"</expr>, <expr>(<name>PyCFunction</name>)<name>pysqlite_cursor_fetchmany</name></expr>, <expr><name>METH_VARARGS</name>|<name>METH_KEYWORDS</name></expr>,
+        <macro><name>PyDoc_STR</name><argument_list>(<argument>"Fetches several rows from the resultset."</argument>)</argument_list></macro>}</block></expr>,
+    <expr><block>{<expr>"fetchall"</expr>, <expr>(<name>PyCFunction</name>)<name>pysqlite_cursor_fetchall</name></expr>, <expr><name>METH_NOARGS</name></expr>,
+        <macro><name>PyDoc_STR</name><argument_list>(<argument>"Fetches all rows from the resultset."</argument>)</argument_list></macro>}</block></expr>,
+    <expr><block>{<expr>"close"</expr>, <expr>(<name>PyCFunction</name>)<name>pysqlite_cursor_close</name></expr>, <expr><name>METH_NOARGS</name></expr>,
+        <macro><name>PyDoc_STR</name><argument_list>(<argument>"Closes the cursor."</argument>)</argument_list></macro>}</block></expr>,
+    <expr><block>{<expr>"setinputsizes"</expr>, <expr>(<name>PyCFunction</name>)<name>pysqlite_noop</name></expr>, <expr><name>METH_VARARGS</name></expr>,
+        <macro><name>PyDoc_STR</name><argument_list>(<argument>"Required by DB-API. Does nothing in pysqlite."</argument>)</argument_list></macro>}</block></expr>,
+    <expr><block>{<expr>"setoutputsize"</expr>, <expr>(<name>PyCFunction</name>)<name>pysqlite_noop</name></expr>, <expr><name>METH_VARARGS</name></expr>,
+        <macro><name>PyDoc_STR</name><argument_list>(<argument>"Required by DB-API. Does nothing in pysqlite."</argument>)</argument_list></macro>}</block></expr>,
+    <expr><block>{<expr><name>NULL</name></expr>, <expr><name>NULL</name></expr>}</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+
+<decl_stmt><decl><type><specifier>static</specifier> struct <name>PyMemberDef</name></type> <name><name>cursor_members</name><index>[]</index></name> <init>=
+<expr><block>{
+    <expr><block>{<expr>"connection"</expr>, <expr><name>T_OBJECT</name></expr>, <expr><call><name>offsetof</name><argument_list>(<argument><expr><name>pysqlite_Cursor</name></expr></argument>, <argument><expr><name>connection</name></expr></argument>)</argument_list></call></expr>, <expr><name>RO</name></expr>}</block></expr>,
+    <expr><block>{<expr>"description"</expr>, <expr><name>T_OBJECT</name></expr>, <expr><call><name>offsetof</name><argument_list>(<argument><expr><name>pysqlite_Cursor</name></expr></argument>, <argument><expr><name>description</name></expr></argument>)</argument_list></call></expr>, <expr><name>RO</name></expr>}</block></expr>,
+    <expr><block>{<expr>"arraysize"</expr>, <expr><name>T_INT</name></expr>, <expr><call><name>offsetof</name><argument_list>(<argument><expr><name>pysqlite_Cursor</name></expr></argument>, <argument><expr><name>arraysize</name></expr></argument>)</argument_list></call></expr>, <expr>0</expr>}</block></expr>,
+    <expr><block>{<expr>"lastrowid"</expr>, <expr><name>T_OBJECT</name></expr>, <expr><call><name>offsetof</name><argument_list>(<argument><expr><name>pysqlite_Cursor</name></expr></argument>, <argument><expr><name>lastrowid</name></expr></argument>)</argument_list></call></expr>, <expr><name>RO</name></expr>}</block></expr>,
+    <expr><block>{<expr>"rowcount"</expr>, <expr><name>T_LONG</name></expr>, <expr><call><name>offsetof</name><argument_list>(<argument><expr><name>pysqlite_Cursor</name></expr></argument>, <argument><expr><name>rowcount</name></expr></argument>)</argument_list></call></expr>, <expr><name>RO</name></expr>}</block></expr>,
+    <expr><block>{<expr>"row_factory"</expr>, <expr><name>T_OBJECT</name></expr>, <expr><call><name>offsetof</name><argument_list>(<argument><expr><name>pysqlite_Cursor</name></expr></argument>, <argument><expr><name>row_factory</name></expr></argument>)</argument_list></call></expr>, <expr>0</expr>}</block></expr>,
+    <expr><block>{<expr><name>NULL</name></expr>}</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>char</name></type> <name><name>cursor_doc</name><index>[]</index></name> <init>=
+<expr><call><name>PyDoc_STR</name><argument_list>(<argument><expr>"SQLite database cursor class."</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+<decl_stmt><decl><type><name>PyTypeObject</name></type> <name>pysqlite_CursorType</name> <init>= <expr><block>{
+        <macro><name>PyVarObject_HEAD_INIT</name><argument_list>(<argument>NULL</argument>, <argument>0</argument>)</argument_list></macro>
+        <expr><name>MODULE_NAME</name> ".Cursor"</expr>,                          <comment type="block">/* tp_name */</comment>
+        <expr><sizeof>sizeof<argument_list>(<argument><expr><name>pysqlite_Cursor</name></expr></argument>)</argument_list></sizeof></expr>,                        <comment type="block">/* tp_basicsize */</comment>
+        <expr>0</expr>,                                              <comment type="block">/* tp_itemsize */</comment>
+        <expr>(<name>destructor</name>)<name>pysqlite_cursor_dealloc</name></expr>,            <comment type="block">/* tp_dealloc */</comment>
+        <expr>0</expr>,                                              <comment type="block">/* tp_print */</comment>
+        <expr>0</expr>,                                              <comment type="block">/* tp_getattr */</comment>
+        <expr>0</expr>,                                              <comment type="block">/* tp_setattr */</comment>
+        <expr>0</expr>,                                              <comment type="block">/* tp_compare */</comment>
+        <expr>0</expr>,                                              <comment type="block">/* tp_repr */</comment>
+        <expr>0</expr>,                                              <comment type="block">/* tp_as_number */</comment>
+        <expr>0</expr>,                                              <comment type="block">/* tp_as_sequence */</comment>
+        <expr>0</expr>,                                              <comment type="block">/* tp_as_mapping */</comment>
+        <expr>0</expr>,                                              <comment type="block">/* tp_hash */</comment>
+        <expr>0</expr>,                                              <comment type="block">/* tp_call */</comment>
+        <expr>0</expr>,                                              <comment type="block">/* tp_str */</comment>
+        <expr>0</expr>,                                              <comment type="block">/* tp_getattro */</comment>
+        <expr>0</expr>,                                              <comment type="block">/* tp_setattro */</comment>
+        <expr>0</expr>,                                              <comment type="block">/* tp_as_buffer */</comment>
+        <expr><name>Py_TPFLAGS_DEFAULT</name>|<name>Py_TPFLAGS_HAVE_ITER</name>|<name>Py_TPFLAGS_BASETYPE</name></expr>, <comment type="block">/* tp_flags */</comment>
+        <expr><name>cursor_doc</name></expr>,                                     <comment type="block">/* tp_doc */</comment>
+        <expr>0</expr>,                                              <comment type="block">/* tp_traverse */</comment>
+        <expr>0</expr>,                                              <comment type="block">/* tp_clear */</comment>
+        <expr>0</expr>,                                              <comment type="block">/* tp_richcompare */</comment>
+        <expr>0</expr>,                                              <comment type="block">/* tp_weaklistoffset */</comment>
+        <expr>(<name>getiterfunc</name>)<name>pysqlite_cursor_getiter</name></expr>,           <comment type="block">/* tp_iter */</comment>
+        <expr>(<name>iternextfunc</name>)<name>pysqlite_cursor_iternext</name></expr>,         <comment type="block">/* tp_iternext */</comment>
+        <expr><name>cursor_methods</name></expr>,                                 <comment type="block">/* tp_methods */</comment>
+        <expr><name>cursor_members</name></expr>,                                 <comment type="block">/* tp_members */</comment>
+        <expr>0</expr>,                                              <comment type="block">/* tp_getset */</comment>
+        <expr>0</expr>,                                              <comment type="block">/* tp_base */</comment>
+        <expr>0</expr>,                                              <comment type="block">/* tp_dict */</comment>
+        <expr>0</expr>,                                              <comment type="block">/* tp_descr_get */</comment>
+        <expr>0</expr>,                                              <comment type="block">/* tp_descr_set */</comment>
+        <expr>0</expr>,                                              <comment type="block">/* tp_dictoffset */</comment>
+        <expr>(<name>initproc</name>)<name>pysqlite_cursor_init</name></expr>,                 <comment type="block">/* tp_init */</comment>
+        <expr>0</expr>,                                              <comment type="block">/* tp_alloc */</comment>
+        <expr>0</expr>,                                              <comment type="block">/* tp_new */</comment>
+        <expr>0</expr>                                               <comment type="block">/* tp_free */</comment>
+}</block></expr></init></decl>;</decl_stmt>
+
+<function><type><specifier>extern</specifier> <name>int</name></type> <name>pysqlite_cursor_setup_types</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>
+<block>{
+    <expr_stmt><expr><name><name>pysqlite_CursorType</name>.<name>tp_new</name></name> = <name>PyType_GenericNew</name></expr>;</expr_stmt>
+    <return>return <expr><call><name>PyType_Ready</name><argument_list>(<argument><expr>&amp;<name>pysqlite_CursorType</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+</unit>

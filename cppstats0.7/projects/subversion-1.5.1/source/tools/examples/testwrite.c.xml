@@ -1,0 +1,273 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/subversion-1.5.1/source/tools/examples/testwrite.c"><comment type="block">/*
+ * testwrite.c : test whether a user has commit access.
+ *
+ * ====================================================================
+ * Copyright (c) 2000-2005 CollabNet.  All rights reserved.
+ *
+ * This software is licensed as described in the file COPYING, which
+ * you should have received as part of this distribution.  The terms
+ * are also available at http://subversion.tigris.org/license-1.html.
+ * If newer versions of this license are posted there, you may use a
+ * newer version instead, at your option.
+ *
+ * This software consists of voluntary contributions made by many
+ * individuals.  For exact contribution history, see the revision
+ * history and logs, available at http://subversion.tigris.org/.
+ * ====================================================================
+ *
+ *  To compile on unix against Subversion and APR libraries, try
+ *  something like:
+ *
+ *  cc testwrite.c -o testwrite \
+ *  -I/usr/local/include/subversion-1 -I/usr/local/apache2/include \
+ *  -L/usr/local/apache2/lib -L/usr/local/lib \
+ *  -lsvn_client-1 -lsvn_ra-1 -lsvn_subr-1 -lsvn-fs-1 -lapr-0 -laprutil-0
+ *
+ */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_client.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_pools.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_config.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_fs.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_cmdline.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_path.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_time.h"</cpp:file></cpp:include>
+
+
+<comment type="block">/* Display a prompt and read a one-line response into the provided buffer,
+   removing a trailing newline if present. */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>prompt_and_read_line</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>prompt</name></decl></param>,
+                     <param><decl><type><name>char</name> *</type><name>buffer</name></decl></param>,
+                     <param><decl><type><name>size_t</name></type> <name>max</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>int</name></type> <name>len</name></decl>;</decl_stmt>
+  <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"%s: "</expr></argument>, <argument><expr><name>prompt</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><call><name>fgets</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>, <argument><expr><name>max</name></expr></argument>, <argument><expr><name>stdin</name></expr></argument>)</argument_list></call> == <name>NULL</name></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr>0</expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr>"error reading stdin"</expr></argument>)</argument_list></call></expr>;</return></then></if>
+  <expr_stmt><expr><name>len</name> = <call><name>strlen</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>len</name> &gt; 0 &amp;&amp; <name><name>buffer</name><index>[<expr><name>len</name>-1</expr>]</index></name> == '\n'</expr>)</condition><then>
+    <expr_stmt><expr><name><name>buffer</name><index>[<expr><name>len</name>-1</expr>]</index></name> = 0</expr>;</expr_stmt></then></if>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* A tiny callback function of type 'svn_auth_simple_prompt_func_t'. For
+   a much better example, see svn_cl__auth_simple_prompt in the official
+   svn cmdline client. */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>my_simple_prompt_callback</name> <parameter_list>(<param><decl><type><name>svn_auth_cred_simple_t</name> **</type><name>cred</name></decl></param>,
+                           <param><decl><type><name>void</name> *</type><name>baton</name></decl></param>,
+                           <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>realm</name></decl></param>,
+                           <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>username</name></decl></param>,
+                           <param><decl><type><name>svn_boolean_t</name></type> <name>may_save</name></decl></param>,
+                           <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_auth_cred_simple_t</name> *</type><name>ret</name> <init>= <expr><call><name>apr_pcalloc</name> <argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof <argument_list>(<argument><expr>*<name>ret</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>char</name></type> <name><name>answerbuf</name><index>[<expr>100</expr>]</index></name></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr><name>realm</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>printf</name> <argument_list>(<argument><expr>"Authentication realm: %s\n"</expr></argument>, <argument><expr><name>realm</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <if>if <condition>(<expr><name>username</name></expr>)</condition><then>
+    <expr_stmt><expr><name><name>ret</name>-&gt;<name>username</name></name> = <call><name>apr_pstrdup</name> <argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>username</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+  <else>else
+    <block>{
+      <expr_stmt><expr><call><name>SVN_ERR</name> <argument_list>(<argument><expr><call><name>prompt_and_read_line</name><argument_list>(<argument><expr>"Username"</expr></argument>, <argument><expr><name>answerbuf</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>answerbuf</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>ret</name>-&gt;<name>username</name></name> = <call><name>apr_pstrdup</name> <argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>answerbuf</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name> <argument_list>(<argument><expr><call><name>prompt_and_read_line</name><argument_list>(<argument><expr>"Password"</expr></argument>, <argument><expr><name>answerbuf</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>answerbuf</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>ret</name>-&gt;<name>password</name></name> = <call><name>apr_pstrdup</name> <argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>answerbuf</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr>*<name>cred</name> = <name>ret</name></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* A tiny callback function of type 'svn_auth_username_prompt_func_t'. For
+   a much better example, see svn_cl__auth_username_prompt in the official
+   svn cmdline client. */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>my_username_prompt_callback</name> <parameter_list>(<param><decl><type><name>svn_auth_cred_username_t</name> **</type><name>cred</name></decl></param>,
+                             <param><decl><type><name>void</name> *</type><name>baton</name></decl></param>,
+                             <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>realm</name></decl></param>,
+                             <param><decl><type><name>svn_boolean_t</name></type> <name>may_save</name></decl></param>,
+                             <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_auth_cred_username_t</name> *</type><name>ret</name> <init>= <expr><call><name>apr_pcalloc</name> <argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof <argument_list>(<argument><expr>*<name>ret</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>char</name></type> <name><name>answerbuf</name><index>[<expr>100</expr>]</index></name></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr><name>realm</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>printf</name> <argument_list>(<argument><expr>"Authentication realm: %s\n"</expr></argument>, <argument><expr><name>realm</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name> <argument_list>(<argument><expr><call><name>prompt_and_read_line</name><argument_list>(<argument><expr>"Username"</expr></argument>, <argument><expr><name>answerbuf</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>answerbuf</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>ret</name>-&gt;<name>username</name></name> = <call><name>apr_pstrdup</name> <argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>answerbuf</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr>*<name>cred</name> = <name>ret</name></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* A callback function used when the RA layer needs a handle to a
+   temporary file.  This is a reduced version of the callback used in
+   the official svn cmdline client. */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>open_tmp_file</name> <parameter_list>(<param><decl><type><name>apr_file_t</name> **</type><name>fp</name></decl></param>,
+               <param><decl><type><name>void</name> *</type><name>callback_baton</name></decl></param>,
+               <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>ignored_filename</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name> <argument_list>(<argument><expr><call><name>svn_io_temp_dir</name> <argument_list>(<argument><expr>&amp;<name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>path</name> = <call><name>svn_path_join</name> <argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr>"tempfile"</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Open a unique file, with delete-on-close set. */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name> <argument_list>(<argument><expr><call><name>svn_io_open_unique_file2</name> <argument_list>(<argument><expr><name>fp</name></expr></argument>, <argument><expr>&amp;<name>ignored_filename</name></expr></argument>,
+                                     <argument><expr><name>path</name></expr></argument>, <argument><expr>".tmp"</expr></argument>,
+                                     <argument><expr><name>svn_io_file_del_on_close</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* Called when a commit is successful. */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>my_commit_callback</name> <parameter_list>(<param><decl><type><name>svn_revnum_t</name></type> <name>new_revision</name></decl></param>,
+                      <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>date</name></decl></param>,
+                      <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>author</name></decl></param>,
+                      <param><decl><type><name>void</name> *</type><name>baton</name></decl></param>)</parameter_list>
+<block>{
+  <expr_stmt><expr><call><name>printf</name> <argument_list>(<argument><expr>"Upload complete.  Committed revision %ld.\n"</expr></argument>, <argument><expr><name>new_revision</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+
+<function><type><name>int</name></type>
+<name>main</name> <parameter_list>(<param><decl><type><name>int</name></type> <name>argc</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>argv</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_hash_t</name> *</type><name>dirents</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>upload_file</name></decl>, *<decl><type ref="prev"/><name>URL</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>parent_URL</name></decl>, *<decl><type ref="prev"/><name>basename</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_ra_plugin_t</name> *</type><name>ra_lib</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>void</name> *</type><name>session</name></decl>, *<decl><type ref="prev"/><name>ra_baton</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_revnum_t</name></type> <name>rev</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>svn_delta_editor_t</name> *</type><name>editor</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>void</name> *</type><name>edit_baton</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_dirent_t</name> *</type><name>dirent</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_ra_callbacks_t</name> *</type><name>cbtable</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_hash_t</name> *</type><name>cfg_hash</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_auth_baton_t</name> *</type><name>auth_baton</name></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr><name>argc</name> &lt;= 1</expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>printf</name> <argument_list>(<argument><expr>"Usage:  %s URL\n"</expr></argument>, <argument><expr><name><name>argv</name><index>[<expr>0</expr>]</index></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>printf</name> <argument_list>(<argument><expr>"    Tries to create an svn commit-transaction at URL.\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <return>return <expr><name>EXIT_FAILURE</name></expr>;</return>
+    }</block></then></if>
+  <expr_stmt><expr><name>URL</name> = <name><name>argv</name><index>[<expr>1</expr>]</index></name></expr>;</expr_stmt>
+
+  <comment type="block">/* Initialize the app.  Send all error messages to 'stderr'.  */</comment>
+  <if>if <condition>(<expr><call><name>svn_cmdline_init</name> <argument_list>(<argument><expr>"minimal_client"</expr></argument>, <argument><expr><name>stderr</name></expr></argument>)</argument_list></call> != <name>EXIT_SUCCESS</name></expr>)</condition><then>
+    <return>return <expr><name>EXIT_FAILURE</name></expr>;</return></then></if>
+
+  <comment type="block">/* Create top-level memory pool. Be sure to read the HACKING file to
+     understand how to properly use/free subpools. */</comment>
+  <expr_stmt><expr><name>pool</name> = <call><name>svn_pool_create</name> <argument_list>(<argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Initialize the FS library. */</comment>
+  <expr_stmt><expr><name>err</name> = <call><name>svn_fs_initialize</name> <argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>err</name></expr>)</condition><then> <goto>goto <name>hit_error</name>;</goto></then></if>
+
+  <comment type="block">/* Make sure the ~/.subversion run-time config files exist, and load. */</comment>
+  <expr_stmt><expr><name>err</name> = <call><name>svn_config_ensure</name> <argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>err</name></expr>)</condition><then> <goto>goto <name>hit_error</name>;</goto></then></if>
+
+  <expr_stmt><expr><name>err</name> = <call><name>svn_config_get_config</name> <argument_list>(<argument><expr>&amp;<name>cfg_hash</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>err</name></expr>)</condition><then> <goto>goto <name>hit_error</name>;</goto></then></if>
+
+  <comment type="block">/* Build an authentication baton. */</comment>
+  <block>{
+    <comment type="block">/* There are many different kinds of authentication back-end
+       "providers".  See svn_auth.h for a full overview. */</comment>
+    <decl_stmt><decl><type><name>svn_auth_provider_object_t</name> *</type><name>provider</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>providers</name>
+      <init>= <expr><call><name>apr_array_make</name> <argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>4</expr></argument>, <argument><expr><sizeof>sizeof <argument_list>(<argument><expr><name>svn_auth_provider_object_t</name> *</expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+    <expr_stmt><expr><call><name>svn_client_get_simple_prompt_provider</name> <argument_list>(<argument><expr>&amp;<name>provider</name></expr></argument>,
+                                           <argument><expr><name>my_simple_prompt_callback</name></expr></argument>,
+                                           <argument><expr><name>NULL</name></expr></argument>, <comment type="block">/* baton */</comment>
+                                           <argument><expr>2</expr></argument>, <comment type="block">/* retry limit */</comment> <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>APR_ARRAY_PUSH</name> <argument_list>(<argument><expr><name>providers</name></expr></argument>, <argument><expr><name>svn_auth_provider_object_t</name> *</expr></argument>)</argument_list></call> = <name>provider</name></expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>svn_client_get_username_prompt_provider</name> <argument_list>(<argument><expr>&amp;<name>provider</name></expr></argument>,
+                                             <argument><expr><name>my_username_prompt_callback</name></expr></argument>,
+                                             <argument><expr><name>NULL</name></expr></argument>, <comment type="block">/* baton */</comment>
+                                             <argument><expr>2</expr></argument>, <comment type="block">/* retry limit */</comment> <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>APR_ARRAY_PUSH</name> <argument_list>(<argument><expr><name>providers</name></expr></argument>, <argument><expr><name>svn_auth_provider_object_t</name> *</expr></argument>)</argument_list></call> = <name>provider</name></expr>;</expr_stmt>
+
+    <comment type="block">/* Register the auth-providers into the context's auth_baton. */</comment>
+    <expr_stmt><expr><call><name>svn_auth_open</name> <argument_list>(<argument><expr>&amp;<name>auth_baton</name></expr></argument>, <argument><expr><name>providers</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  }</block>
+
+  <comment type="block">/* Create a table of callbacks for the RA session, mostly nonexistent. */</comment>
+  <expr_stmt><expr><name>cbtable</name> = <call><name>apr_pcalloc</name> <argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>cbtable</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>cbtable</name>-&gt;<name>auth_baton</name></name> = <name>auth_baton</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>cbtable</name>-&gt;<name>open_tmp_file</name></name> = <name>open_tmp_file</name></expr>;</expr_stmt>
+
+  <comment type="block">/* Now do the real work. */</comment>
+
+  <comment type="block">/* Open an RA session to the parent URL, fetch current HEAD rev and
+     "lock" onto that revnum for the remainder of the session. */</comment>
+  <expr_stmt><expr><call><name>svn_path_split</name> <argument_list>(<argument><expr><name>URL</name></expr></argument>, <argument><expr>&amp;<name>parent_URL</name></expr></argument>, <argument><expr>&amp;<name>basename</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name>err</name> = <call><name>svn_ra_init_ra_libs</name> <argument_list>(<argument><expr>&amp;<name>ra_baton</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>err</name></expr>)</condition><then> <goto>goto <name>hit_error</name>;</goto></then></if>
+
+  <expr_stmt><expr><name>err</name> = <call><name>svn_ra_get_ra_library</name> <argument_list>(<argument><expr>&amp;<name>ra_lib</name></expr></argument>, <argument><expr><name>ra_baton</name></expr></argument>, <argument><expr><name>parent_URL</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>err</name></expr>)</condition><then> <goto>goto <name>hit_error</name>;</goto></then></if>
+
+  <expr_stmt><expr><name>err</name> = <call><name><name>ra_lib</name>-&gt;<name>open</name></name> <argument_list>(<argument><expr>&amp;<name>session</name></expr></argument>, <argument><expr><name>parent_URL</name></expr></argument>, <argument><expr><name>cbtable</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>cfg_hash</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>err</name></expr>)</condition><then> <goto>goto <name>hit_error</name>;</goto></then></if>
+
+  <comment type="block">/* Fetch a commit editor (it's anchored on the parent URL, because
+     the session is too.) */</comment>
+  <comment type="block">/* ### someday add an option for a user-written commit message?  */</comment>
+  <expr_stmt><expr><name>err</name> = <call><name><name>ra_lib</name>-&gt;<name>get_commit_editor</name></name> <argument_list>(<argument><expr><name>session</name></expr></argument>, <argument><expr>&amp;<name>editor</name></expr></argument>, <argument><expr>&amp;<name>edit_baton</name></expr></argument>,
+                                   <argument><expr>"File upload from 'svnput' program."</expr></argument>,
+                                   <argument><expr><name>my_commit_callback</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>err</name></expr>)</condition><then> <goto>goto <name>hit_error</name>;</goto></then></if>
+
+  <comment type="block">/* Drive the editor */</comment>
+  <block>{
+    <decl_stmt><decl><type><name>void</name> *</type><name>root_baton</name></decl>, *<decl><type ref="prev"/><name>file_baton</name></decl>, *<decl><type ref="prev"/><name>handler_baton</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>svn_txdelta_window_handler_t</name></type> <name>handler</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>svn_stream_t</name> *</type><name>contents</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_file_t</name> *</type><name>f</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>err</name> = <call><name><name>editor</name>-&gt;<name>open_root</name></name> <argument_list>(<argument><expr><name>edit_baton</name></expr></argument>, <argument><expr><name>rev</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>, <argument><expr>&amp;<name>root_baton</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>err</name></expr>)</condition><then> <goto>goto <name>hit_error</name>;</goto></then></if>
+
+    <expr_stmt><expr><name>err</name> = <call><name><name>editor</name>-&gt;<name>abort_edit</name></name> <argument_list>(<argument><expr><name>edit_baton</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>err</name></expr>)</condition><then> <goto>goto <name>hit_error</name>;</goto></then></if>
+  }</block>
+
+  <expr_stmt><expr><call><name>printf</name> <argument_list>(<argument><expr>"No problems creating commit transaction.\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><name>EXIT_SUCCESS</name></expr>;</return>
+
+ <label><name>hit_error</name>:</label>
+  <block>{
+    <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"Could not open a commit transaction.\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>svn_handle_error2</name> <argument_list>(<argument><expr><name>err</name></expr></argument>, <argument><expr><name>stderr</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr>"testwrite: "</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>EXIT_FAILURE</name></expr>;</return>
+  }</block>
+
+}</block></function>
+</unit>

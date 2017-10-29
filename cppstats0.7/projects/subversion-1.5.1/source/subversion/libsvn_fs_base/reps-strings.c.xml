@@ -1,0 +1,1581 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/subversion-1.5.1/source/subversion/libsvn_fs_base/reps-strings.c"><comment type="block">/* reps-strings.c : intepreting representations with respect to strings
+ *
+ * ====================================================================
+ * Copyright (c) 2000-2007 CollabNet.  All rights reserved.
+ *
+ * This software is licensed as described in the file COPYING, which
+ * you should have received as part of this distribution.  The terms
+ * are also available at http://subversion.tigris.org/license-1.html.
+ * If newer versions of this license are posted there, you may use a
+ * newer version instead, at your option.
+ *
+ * This software consists of voluntary contributions made by many
+ * individuals.  For exact contribution history, see the revision
+ * history and logs, available at http://subversion.tigris.org/.
+ * ====================================================================
+ */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;assert.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_md5.h&gt;</cpp:file></cpp:include>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>APU_WANT_DB</name></cpp:macro></cpp:define>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apu_want.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_fs.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_pools.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_md5.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"fs.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"err.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"trail.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"reps-strings.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"bdb/reps-table.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"bdb/strings-table.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"../libsvn_fs/fs-loader.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_private_config.h"</cpp:file></cpp:include>
+
+<escape char="0xc"/>
+<comment type="block">/*** Helper Functions ***/</comment>
+
+
+<comment type="block">/* Return non-zero iff REP is mutable under transaction TXN_ID. */</comment>
+<function><type><specifier>static</specifier> <name>svn_boolean_t</name></type> <name>rep_is_mutable</name><parameter_list>(<param><decl><type><name>representation_t</name> *</type><name>rep</name></decl></param>,
+                                    <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>txn_id</name></decl></param>)</parameter_list>
+<block>{
+  <if>if <condition>(<expr>(! <name><name>rep</name>-&gt;<name>txn_id</name></name>) || (<call><name>strcmp</name><argument_list>(<argument><expr><name><name>rep</name>-&gt;<name>txn_id</name></name></expr></argument>, <argument><expr><name>txn_id</name></expr></argument>)</argument_list></call> != 0)</expr>)</condition><then>
+    <return>return <expr><name>FALSE</name></expr>;</return></then></if>
+  <return>return <expr><name>TRUE</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* Helper macro that evaluates to an error message indicating that
+   the representation referred to by X has an unknown node kind. */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>UNKNOWN_NODE_KIND</name><parameter_list>(<param><type><name>x</name></type></param>)</parameter_list></cpp:macro>                                   \
+  <cpp:value>svn_error_createf                                            \
+    (SVN_ERR_FS_CORRUPT, NULL,                                 \
+     _("Unknown node kind for representation '%s'"), x)</cpp:value></cpp:define>
+
+<comment type="block">/* Return a `fulltext' representation, allocated in POOL, which
+ * references the string STR_KEY.
+ *
+ * If TXN_ID is non-zero and non-NULL, make the representation mutable
+ * under that TXN_ID.
+ *
+ * If STR_KEY is non-null, copy it into an allocation from POOL.
+ *
+ * If CHECKSUM is non-null, use it as the checksum for the new rep;
+ * else initialize the rep with an all-zero (i.e., always successful)
+ * checksum.
+ */</comment>
+<function><type><specifier>static</specifier> <name>representation_t</name> *</type>
+<name>make_fulltext_rep</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>str_key</name></decl></param>,
+                  <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>txn_id</name></decl></param>,
+                  <param><decl><type><specifier>const</specifier> <name>unsigned</name> <name>char</name> *</type><name>checksum</name></decl></param>,
+                  <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+
+<block>{
+  <decl_stmt><decl><type><name>representation_t</name> *</type><name>rep</name> <init>= <expr><call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>rep</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <if>if <condition>(<expr><name>txn_id</name> &amp;&amp; *<name>txn_id</name></expr>)</condition><then>
+    <expr_stmt><expr><name><name>rep</name>-&gt;<name>txn_id</name></name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>txn_id</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+  <expr_stmt><expr><name><name>rep</name>-&gt;<name>kind</name></name> = <name>rep_kind_fulltext</name></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name>checksum</name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name><name>rep</name>-&gt;<name>checksum</name></name></expr></argument>, <argument><expr><name>checksum</name></expr></argument>, <argument><expr><name>APR_MD5_DIGESTSIZE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+  <else>else
+    <expr_stmt><expr><call><name>memset</name><argument_list>(<argument><expr><name><name>rep</name>-&gt;<name>checksum</name></name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>APR_MD5_DIGESTSIZE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+
+  <expr_stmt><expr><name><name>rep</name>-&gt;<name>contents</name>.<name>fulltext</name>.<name>string_key</name></name>
+    = <name>str_key</name> ? <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>str_key</name></expr></argument>)</argument_list></call> : <name>NULL</name></expr>;</expr_stmt>
+  <return>return <expr><name>rep</name></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* Set *KEYS to an array of string keys gleaned from `delta'
+   representation REP.  Allocate *KEYS in POOL. */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>delta_string_keys</name><parameter_list>(<param><decl><type><name>apr_array_header_t</name> **</type><name>keys</name></decl></param>,
+                  <param><decl><type><specifier>const</specifier> <name>representation_t</name> *</type><name>rep</name></decl></param>,
+                  <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>key</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>chunks</name></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr><name><name>rep</name>-&gt;<name>kind</name></name> != <name>rep_kind_delta</name></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_create</name>
+      <argument_list>(<argument><expr><name>SVN_ERR_FS_GENERAL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+       <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Representation is not of type 'delta'"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <comment type="block">/* Set up a convenience variable. */</comment>
+  <expr_stmt><expr><name>chunks</name> = <name><name>rep</name>-&gt;<name>contents</name>.<name>delta</name>.<name>chunks</name></name></expr>;</expr_stmt>
+
+  <comment type="block">/* Initialize *KEYS to an empty array. */</comment>
+  <expr_stmt><expr>*<name>keys</name> = <call><name>apr_array_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name><name>chunks</name>-&gt;<name>nelts</name></name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>key</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr>! <name><name>chunks</name>-&gt;<name>nelts</name></name></expr>)</condition><then>
+    <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return></then></if>
+
+  <comment type="block">/* Now, push the string keys for each window into *KEYS */</comment>
+  <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name><name>chunks</name>-&gt;<name>nelts</name></name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>)
+    <block>{
+      <decl_stmt><decl><type><name>rep_delta_chunk_t</name> *</type><name>chunk</name> <init>= <expr><call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>chunks</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr><name>rep_delta_chunk_t</name> *</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+      <expr_stmt><expr><name>key</name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name><name>chunk</name>-&gt;<name>string_key</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>APR_ARRAY_PUSH</name><argument_list>(<argument><expr>*<name>keys</name></expr></argument>, <argument><expr>const <name>char</name> *</expr></argument>)</argument_list></call> = <name>key</name></expr>;</expr_stmt>
+    }</block></for>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* Delete the strings associated with array KEYS in FS as part of TRAIL.  */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>delete_strings</name><parameter_list>(<param><decl><type><name>apr_array_header_t</name> *</type><name>keys</name></decl></param>,
+               <param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+               <param><decl><type><name>trail_t</name> *</type><name>trail</name></decl></param>,
+               <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>str_key</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>subpool</name> <init>= <expr><call><name>svn_pool_create</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name><name>keys</name>-&gt;<name>nelts</name></name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>)
+    <block>{
+      <expr_stmt><expr><call><name>svn_pool_clear</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name>str_key</name> = <call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>keys</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr>const <name>char</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_bdb__string_delete</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>str_key</name></expr></argument>, <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></for>
+  <expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<escape char="0xc"/>
+<comment type="block">/*** Reading the contents from a representation. ***/</comment>
+
+<struct>struct <name>compose_handler_baton</name>
+<block>{
+  <comment type="block">/* The combined window, and the pool it's allocated from. */</comment>
+  <decl_stmt><decl><type><name>svn_txdelta_window_t</name> *</type><name>window</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>window_pool</name></decl>;</decl_stmt>
+
+  <comment type="block">/* If the incoming window was self-compressed, and the combined WINDOW
+     exists from previous iterations, SOURCE_BUF will point to the
+     expanded self-compressed window. */</comment>
+  <decl_stmt><decl><type><name>char</name> *</type><name>source_buf</name></decl>;</decl_stmt>
+
+  <comment type="block">/* The trail for this operation. WINDOW_POOL will be a child of
+     TRAIL-&gt;pool. No allocations will be made from TRAIL-&gt;pool itself. */</comment>
+  <decl_stmt><decl><type><name>trail_t</name> *</type><name>trail</name></decl>;</decl_stmt>
+
+  <comment type="block">/* TRUE when no more windows have to be read/combined. */</comment>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>done</name></decl>;</decl_stmt>
+
+  <comment type="block">/* TRUE if we've just started reading a new window. We need this
+     because the svndiff handler will push a NULL window at the end of
+     the stream, and we have to ignore that; but we must also know
+     when it's appropriate to push a NULL window at the combiner. */</comment>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>init</name></decl>;</decl_stmt>
+}</block>;</struct>
+
+
+<comment type="block">/* Handle one window. If BATON is emtpy, copy the WINDOW into it;
+   otherwise, combine WINDOW with the one in BATON, unless WINDOW
+   is self-compressed (i.e., does not copy from the source view),
+   in which case expand. */</comment>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>compose_handler</name><parameter_list>(<param><decl><type><name>svn_txdelta_window_t</name> *</type><name>window</name></decl></param>, <param><decl><type><name>void</name> *</type><name>baton</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>compose_handler_baton</name> *</type><name>cb</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+  <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr>!<name><name>cb</name>-&gt;<name>done</name></name> || <name>window</name> == <name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>cb</name>-&gt;<name>trail</name></name> &amp;&amp; <name><name>cb</name>-&gt;<name>trail</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr>!<name><name>cb</name>-&gt;<name>init</name></name> &amp;&amp; !<name>window</name></expr>)</condition><then>
+    <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return></then></if>
+
+  <comment type="block">/* We should never get here if we've already expanded a
+     self-compressed window. */</comment>
+  <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr>!<name><name>cb</name>-&gt;<name>source_buf</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name><name>cb</name>-&gt;<name>window</name></name></expr>)</condition><then>
+    <block>{
+      <if>if <condition>(<expr><name>window</name> &amp;&amp; (<name><name>window</name>-&gt;<name>sview_len</name></name> == 0 || <name><name>window</name>-&gt;<name>src_ops</name></name> == 0)</expr>)</condition><then>
+        <block>{
+          <comment type="block">/* This is a self-compressed window. Don't combine it with
+             the others, because the combiner may go quadratic. Instead,
+             expand it here and signal that the combination has
+             ended. */</comment>
+          <decl_stmt><decl><type><name>apr_size_t</name></type> <name>source_len</name> <init>= <expr><name><name>window</name>-&gt;<name>tview_len</name></name></expr></init></decl>;</decl_stmt>
+          <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>cb</name>-&gt;<name>window</name>-&gt;<name>sview_len</name></name> == <name>source_len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><name><name>cb</name>-&gt;<name>source_buf</name></name> = <call><name>apr_palloc</name><argument_list>(<argument><expr><name><name>cb</name>-&gt;<name>window_pool</name></name></expr></argument>, <argument><expr><name>source_len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><call><name>svn_txdelta_apply_instructions</name><argument_list>(<argument><expr><name>window</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                         <argument><expr><name><name>cb</name>-&gt;<name>source_buf</name></name></expr></argument>, <argument><expr>&amp;<name>source_len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><name><name>cb</name>-&gt;<name>done</name></name> = <name>TRUE</name></expr>;</expr_stmt>
+        }</block></then>
+      <else>else
+        <block>{
+          <comment type="block">/* Combine the incoming window with whatever's in the baton. */</comment>
+          <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>composite_pool</name> <init>= <expr><call><name>svn_pool_create</name><argument_list>(<argument><expr><name><name>cb</name>-&gt;<name>trail</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+          <decl_stmt><decl><type><name>svn_txdelta_window_t</name> *</type><name>composite</name></decl>;</decl_stmt>
+
+          <expr_stmt><expr><name>composite</name> = <call><name>svn_txdelta_compose_windows</name><argument_list>(<argument><expr><name>window</name></expr></argument>, <argument><expr><name><name>cb</name>-&gt;<name>window</name></name></expr></argument>,
+                                                  <argument><expr><name>composite_pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name><name>cb</name>-&gt;<name>window_pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><name><name>cb</name>-&gt;<name>window</name></name> = <name>composite</name></expr>;</expr_stmt>
+          <expr_stmt><expr><name><name>cb</name>-&gt;<name>window_pool</name></name> = <name>composite_pool</name></expr>;</expr_stmt>
+          <expr_stmt><expr><name><name>cb</name>-&gt;<name>done</name></name> = (<name><name>composite</name>-&gt;<name>sview_len</name></name> == 0 || <name><name>composite</name>-&gt;<name>src_ops</name></name> == 0)</expr>;</expr_stmt>
+        }</block></else></if>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>window</name></expr>)</condition><then>
+    <block>{
+      <comment type="block">/* Copy the (first) window into the baton. */</comment>
+      <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>window_pool</name> <init>= <expr><call><name>svn_pool_create</name><argument_list>(<argument><expr><name><name>cb</name>-&gt;<name>trail</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+      <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>cb</name>-&gt;<name>window_pool</name></name> == <name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>cb</name>-&gt;<name>window</name></name> = <call><name>svn_txdelta_window_dup</name><argument_list>(<argument><expr><name>window</name></expr></argument>, <argument><expr><name>window_pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>cb</name>-&gt;<name>window_pool</name></name> = <name>window_pool</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>cb</name>-&gt;<name>done</name></name> = (<name><name>window</name>-&gt;<name>sview_len</name></name> == 0 || <name><name>window</name>-&gt;<name>src_ops</name></name> == 0)</expr>;</expr_stmt>
+    }</block></then>
+  <else>else
+    <expr_stmt><expr><name><name>cb</name>-&gt;<name>done</name></name> = <name>TRUE</name></expr>;</expr_stmt></else></if></else></if>
+
+  <expr_stmt><expr><name><name>cb</name>-&gt;<name>init</name></name> = <name>FALSE</name></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<escape char="0xc"/>
+<comment type="block">/* Read one delta window from REP[CUR_CHUNK] and push it at the
+   composition handler. */</comment>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>get_one_window</name><parameter_list>(<param><decl><type>struct <name>compose_handler_baton</name> *</type><name>cb</name></decl></param>,
+               <param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+               <param><decl><type><name>representation_t</name> *</type><name>rep</name></decl></param>,
+               <param><decl><type><name>int</name></type> <name>cur_chunk</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_stream_t</name> *</type><name>wstream</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>char</name></type> <name><name>diffdata</name><index>[<expr>4096</expr>]</index></name></decl>;</decl_stmt>   <comment type="block">/* hunk of svndiff data */</comment>
+  <decl_stmt><decl><type><name>svn_filesize_t</name></type> <name>off</name></decl>;</decl_stmt>    <comment type="block">/* offset into svndiff data */</comment>
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>amt</name></decl>;</decl_stmt>        <comment type="block">/* how much svndiff data to/was read */</comment>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>str_key</name></decl>;</decl_stmt>
+
+  <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>chunks</name> <init>= <expr><name><name>rep</name>-&gt;<name>contents</name>.<name>delta</name>.<name>chunks</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>rep_delta_chunk_t</name> *</type><name>this_chunk</name></decl>, *<decl><type ref="prev"/><name>first_chunk</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name><name>cb</name>-&gt;<name>init</name></name> = <name>TRUE</name></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name><name>chunks</name>-&gt;<name>nelts</name></name> &lt;= <name>cur_chunk</name></expr>)</condition><then>
+    <return>return <expr><call><name>compose_handler</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>cb</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <comment type="block">/* Set up a window handling stream for the svndiff data. */</comment>
+  <expr_stmt><expr><name>wstream</name> = <call><name>svn_txdelta_parse_svndiff</name><argument_list>(<argument><expr><name>compose_handler</name></expr></argument>, <argument><expr><name>cb</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>,
+                                      <argument><expr><name><name>cb</name>-&gt;<name>trail</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* First things first:  send the "SVN"{version} header through the
+     stream.  ### For now, we will just use the version specified
+     in the first chunk, and then verify that no chunks have a
+     different version number than the one used.  In the future,
+     we might simply convert chunks that use a different version
+     of the diff format -- or, heck, a different format
+     altogether -- to the format/version of the first chunk.  */</comment>
+  <expr_stmt><expr><name>first_chunk</name> = <call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>chunks</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>rep_delta_chunk_t</name>*</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>diffdata</name><index>[<expr>0</expr>]</index></name> = 'S'</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>diffdata</name><index>[<expr>1</expr>]</index></name> = 'V'</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>diffdata</name><index>[<expr>2</expr>]</index></name> = 'N'</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>diffdata</name><index>[<expr>3</expr>]</index></name> = <call>(<name>char</name>) <argument_list>(<argument><expr><name><name>first_chunk</name>-&gt;<name>version</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>amt</name> = 4</expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_stream_write</name><argument_list>(<argument><expr><name>wstream</name></expr></argument>, <argument><expr><name>diffdata</name></expr></argument>, <argument><expr>&amp;<name>amt</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <comment type="block">/* FIXME: The stream write handler is borked; assert (amt == 4); */</comment>
+
+  <comment type="block">/* Get this string key which holds this window's data.
+     ### todo: make sure this is an `svndiff' DIFF skel here. */</comment>
+  <expr_stmt><expr><name>this_chunk</name> = <call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>chunks</name></expr></argument>, <argument><expr><name>cur_chunk</name></expr></argument>, <argument><expr><name>rep_delta_chunk_t</name>*</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>str_key</name> = <name><name>this_chunk</name>-&gt;<name>string_key</name></name></expr>;</expr_stmt>
+
+  <comment type="block">/* Run through the svndiff data, at least as far as necessary. */</comment>
+  <expr_stmt><expr><name>off</name> = 0</expr>;</expr_stmt>
+  <do>do
+    <block>{
+      <expr_stmt><expr><name>amt</name> = <sizeof>sizeof<argument_list>(<argument><expr><name>diffdata</name></expr></argument>)</argument_list></sizeof></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_bdb__string_read</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>str_key</name></expr></argument>, <argument><expr><name>diffdata</name></expr></argument>,
+                                      <argument><expr><name>off</name></expr></argument>, <argument><expr>&amp;<name>amt</name></expr></argument>, <argument><expr><name><name>cb</name>-&gt;<name>trail</name></name></expr></argument>,
+                                      <argument><expr><name><name>cb</name>-&gt;<name>trail</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name>off</name> += <name>amt</name></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_stream_write</name><argument_list>(<argument><expr><name>wstream</name></expr></argument>, <argument><expr><name>diffdata</name></expr></argument>, <argument><expr>&amp;<name>amt</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block>
+  while <condition>(<expr><name>amt</name> != 0</expr>)</condition>;</do>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_stream_close</name><argument_list>(<argument><expr><name>wstream</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr>!<name><name>cb</name>-&gt;<name>init</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>cb</name>-&gt;<name>window</name></name> != <name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>cb</name>-&gt;<name>window_pool</name></name> != <name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* Undeltify a range of data. DELTAS is the set of delta windows to
+   combine, FULLTEXT is the source text, CUR_CHUNK is the index of the
+   delta chunk we're starting from. OFFSET is the relative offset of
+   the requested data within the chunk; BUF and LEN are what we're
+   undeltifying to. */</comment>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>rep_undeltify_range</name><parameter_list>(<param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+                    <param><decl><type><name>apr_array_header_t</name> *</type><name>deltas</name></decl></param>,
+                    <param><decl><type><name>representation_t</name> *</type><name>fulltext</name></decl></param>,
+                    <param><decl><type><name>int</name></type> <name>cur_chunk</name></decl></param>,
+                    <param><decl><type><name>char</name> *</type><name>buf</name></decl></param>,
+                    <param><decl><type><name>apr_size_t</name></type> <name>offset</name></decl></param>,
+                    <param><decl><type><name>apr_size_t</name> *</type><name>len</name></decl></param>,
+                    <param><decl><type><name>trail_t</name> *</type><name>trail</name></decl></param>,
+                    <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>len_read</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+
+  <do>do
+    <block>{
+      <decl_stmt><decl><type>struct <name>compose_handler_baton</name></type> <name>cb</name> <init>= <expr><block>{ <expr>0</expr> }</block></expr></init></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>char</name> *</type><name>source_buf</name></decl>, *<decl><type ref="prev"/><name>target_buf</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>apr_size_t</name></type> <name>target_len</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>int</name></type> <name>cur_rep</name></decl>;</decl_stmt>
+
+      <expr_stmt><expr><name><name>cb</name>.<name>trail</name></name> = <name>trail</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>cb</name>.<name>done</name></name> = <name>FALSE</name></expr>;</expr_stmt>
+      <for>for (<init><expr><name>cur_rep</name> = 0</expr>;</init> <condition><expr>!<name><name>cb</name>.<name>done</name></name> &amp;&amp; <name>cur_rep</name> &lt; <name><name>deltas</name>-&gt;<name>nelts</name></name></expr>;</condition> <incr><expr>++<name>cur_rep</name></expr></incr>)
+        <block>{
+          <decl_stmt><decl><type><name>representation_t</name> *<specifier>const</specifier></type> <name>rep</name> <init>=
+            <expr><call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>deltas</name></expr></argument>, <argument><expr><name>cur_rep</name></expr></argument>, <argument><expr><name>representation_t</name>*</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>get_one_window</name><argument_list>(<argument><expr>&amp;<name>cb</name></expr></argument>, <argument><expr><name>fs</name></expr></argument>, <argument><expr><name>rep</name></expr></argument>, <argument><expr><name>cur_chunk</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></for>
+
+      <if>if <condition>(<expr>!<name><name>cb</name>.<name>window</name></name></expr>)</condition><then>
+          <comment type="block">/* That's it, no more source data is available. */</comment>
+          <break>break;</break></then></if>
+
+      <comment type="block">/* The source view length should not be 0 if there are source
+         copy ops in the window. */</comment>
+      <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>cb</name>.<name>window</name>-&gt;<name>sview_len</name></name> &gt; 0 || <name><name>cb</name>.<name>window</name>-&gt;<name>src_ops</name></name> == 0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <comment type="block">/* cb.window is the combined delta window. Read the source text
+         into a buffer. */</comment>
+      <if>if <condition>(<expr><name><name>cb</name>.<name>source_buf</name></name></expr>)</condition><then>
+        <block>{
+          <comment type="block">/* The combiner already created the source text from a
+             self-compressed window. */</comment>
+          <expr_stmt><expr><name>source_buf</name> = <name><name>cb</name>.<name>source_buf</name></name></expr>;</expr_stmt>
+        }</block></then>
+      <else>else <if>if <condition>(<expr><name>fulltext</name> &amp;&amp; <name><name>cb</name>.<name>window</name>-&gt;<name>sview_len</name></name> &gt; 0 &amp;&amp; <name><name>cb</name>.<name>window</name>-&gt;<name>src_ops</name></name> &gt; 0</expr>)</condition><then>
+        <block>{
+          <decl_stmt><decl><type><name>apr_size_t</name></type> <name>source_len</name> <init>= <expr><name><name>cb</name>.<name>window</name>-&gt;<name>sview_len</name></name></expr></init></decl>;</decl_stmt>
+          <expr_stmt><expr><name>source_buf</name> = <call><name>apr_palloc</name><argument_list>(<argument><expr><name><name>cb</name>.<name>window_pool</name></name></expr></argument>, <argument><expr><name>source_len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_bdb__string_read</name>
+                  <argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name><name>fulltext</name>-&gt;<name>contents</name>.<name>fulltext</name>.<name>string_key</name></name></expr></argument>,
+                   <argument><expr><name>source_buf</name></expr></argument>, <argument><expr><name><name>cb</name>.<name>window</name>-&gt;<name>sview_offset</name></name></expr></argument>, <argument><expr>&amp;<name>source_len</name></expr></argument>,
+                   <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <if>if <condition>(<expr><name>source_len</name> != <name><name>cb</name>.<name>window</name>-&gt;<name>sview_len</name></name></expr>)</condition><then>
+            <return>return <expr><call><name>svn_error_create</name>
+                <argument_list>(<argument><expr><name>SVN_ERR_FS_CORRUPT</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                 <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Svndiff source length inconsistency"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+        }</block></then>
+      <else>else
+        <block>{
+          <expr_stmt><expr><name>source_buf</name> = <name>NULL</name></expr>;</expr_stmt>    <comment type="block">/* Won't read anything from here. */</comment>
+        }</block></else></if></else></if>
+
+      <if>if <condition>(<expr><name>offset</name> &gt; 0</expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><name>target_len</name> = *<name>len</name> - <name>len_read</name> + <name>offset</name></expr>;</expr_stmt>
+          <expr_stmt><expr><name>target_buf</name> = <call><name>apr_palloc</name><argument_list>(<argument><expr><name><name>cb</name>.<name>window_pool</name></name></expr></argument>, <argument><expr><name>target_len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+      <else>else
+        <block>{
+          <expr_stmt><expr><name>target_len</name> = *<name>len</name> - <name>len_read</name></expr>;</expr_stmt>
+          <expr_stmt><expr><name>target_buf</name> = <name>buf</name></expr>;</expr_stmt>
+        }</block></else></if>
+
+      <expr_stmt><expr><call><name>svn_txdelta_apply_instructions</name><argument_list>(<argument><expr><name><name>cb</name>.<name>window</name></name></expr></argument>, <argument><expr><name>source_buf</name></expr></argument>,
+                                     <argument><expr><name>target_buf</name></expr></argument>, <argument><expr>&amp;<name>target_len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>offset</name> &gt; 0</expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>target_len</name> &gt; <name>offset</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><name>target_len</name> -= <name>offset</name></expr>;</expr_stmt>
+          <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr><name>target_buf</name> + <name>offset</name></expr></argument>, <argument><expr><name>target_len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><name>offset</name> = 0</expr>;</expr_stmt> <comment type="block">/* Read from the beginning of the next chunk. */</comment>
+        }</block></then></if>
+      <comment type="block">/* Don't need this window any more. */</comment>
+      <expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name><name>cb</name>.<name>window_pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name>len_read</name> += <name>target_len</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name>buf</name> += <name>target_len</name></expr>;</expr_stmt>
+      <expr_stmt><expr>++<name>cur_chunk</name></expr>;</expr_stmt>
+    }</block>
+  while <condition>(<expr><name>len_read</name> &lt; *<name>len</name></expr>)</condition>;</do>
+
+  <expr_stmt><expr>*<name>len</name> = <name>len_read</name></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<escape char="0xc"/>
+<comment type="block">/* Calculate the index of the chunk in REP that contains REP_OFFSET,
+   and find the relative CHUNK_OFFSET within the chunk.
+   Return -1 if offset is beyond the end of the represented data.
+   ### The basic assumption is that all delta windows are the same size
+   and aligned at the same offset, so this number is the same in all
+   dependent deltas.  Oh, and the chunks in REP must be ordered. */</comment>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>get_chunk_offset</name><parameter_list>(<param><decl><type><name>representation_t</name> *</type><name>rep</name></decl></param>,
+                 <param><decl><type><name>svn_filesize_t</name></type> <name>rep_offset</name></decl></param>,
+                 <param><decl><type><name>apr_size_t</name> *</type><name>chunk_offset</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>apr_array_header_t</name> *</type><name>chunks</name> <init>= <expr><name><name>rep</name>-&gt;<name>contents</name>.<name>delta</name>.<name>chunks</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>cur_chunk</name></decl>;</decl_stmt>
+  <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>chunks</name>-&gt;<name>nelts</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* ### Yes, this is a linear search.  I'll change this to bisection
+     the very second we notice it's slowing us down. */</comment>
+  <for>for (<init><expr><name>cur_chunk</name> = 0</expr>;</init> <condition><expr><name>cur_chunk</name> &lt; <name><name>chunks</name>-&gt;<name>nelts</name></name></expr>;</condition> <incr><expr>++<name>cur_chunk</name></expr></incr>)
+  <block>{
+    <decl_stmt><decl><type><specifier>const</specifier> <name>rep_delta_chunk_t</name> *<specifier>const</specifier></type> <name>this_chunk</name>
+      <init>= <expr><call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>chunks</name></expr></argument>, <argument><expr><name>cur_chunk</name></expr></argument>, <argument><expr><name>rep_delta_chunk_t</name>*</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>(<name><name>this_chunk</name>-&gt;<name>offset</name></name> + <name><name>this_chunk</name>-&gt;<name>size</name></name>) &gt; <name>rep_offset</name></expr>)</condition><then>
+      <block>{
+        <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>this_chunk</name>-&gt;<name>offset</name></name> &lt;= <name>rep_offset</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>rep_offset</name> - <name><name>this_chunk</name>-&gt;<name>offset</name></name> &lt; <name>SVN_MAX_OBJECT_SIZE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr>*<name>chunk_offset</name> = <call>(<name>apr_size_t</name>) <argument_list>(<argument><expr><name>rep_offset</name> - <name><name>this_chunk</name>-&gt;<name>offset</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>cur_chunk</name></expr>;</return>
+      }</block></then></if>
+  }</block></for>
+
+  <return>return <expr>-1</expr>;</return>
+}</block></function>
+
+<comment type="block">/* Copy into BUF *LEN bytes starting at OFFSET from the string
+   represented via REP_KEY in FS, as part of TRAIL.
+   The number of bytes actually copied is stored in *LEN.  */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>rep_read_range</name><parameter_list>(<param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+               <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>rep_key</name></decl></param>,
+               <param><decl><type><name>svn_filesize_t</name></type> <name>offset</name></decl></param>,
+               <param><decl><type><name>char</name> *</type><name>buf</name></decl></param>,
+               <param><decl><type><name>apr_size_t</name> *</type><name>len</name></decl></param>,
+               <param><decl><type><name>trail_t</name> *</type><name>trail</name></decl></param>,
+               <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>representation_t</name> *</type><name>rep</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>chunk_offset</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Read in our REP. */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_bdb__read_rep</name><argument_list>(<argument><expr>&amp;<name>rep</name></expr></argument>, <argument><expr><name>fs</name></expr></argument>, <argument><expr><name>rep_key</name></expr></argument>, <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name><name>rep</name>-&gt;<name>kind</name></name> == <name>rep_kind_fulltext</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_bdb__string_read</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name><name>rep</name>-&gt;<name>contents</name>.<name>fulltext</name>.<name>string_key</name></name></expr></argument>,
+                                      <argument><expr><name>buf</name></expr></argument>, <argument><expr><name>offset</name></expr></argument>, <argument><expr><name>len</name></expr></argument>, <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name><name>rep</name>-&gt;<name>kind</name></name> == <name>rep_kind_delta</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><specifier>const</specifier> <name>int</name></type> <name>cur_chunk</name> <init>= <expr><call><name>get_chunk_offset</name><argument_list>(<argument><expr><name>rep</name></expr></argument>, <argument><expr><name>offset</name></expr></argument>, <argument><expr>&amp;<name>chunk_offset</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+      <if>if <condition>(<expr><name>cur_chunk</name> &lt; 0</expr>)</condition><then>
+        <expr_stmt><expr>*<name>len</name> = 0</expr>;</expr_stmt></then>
+      <else>else
+        <block>{
+          <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name></decl>;</decl_stmt>
+          <comment type="block">/* Preserve for potential use in error message. */</comment>
+          <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>first_rep_key</name> <init>= <expr><name>rep_key</name></expr></init></decl>;</decl_stmt>
+          <comment type="block">/* Make a list of all the rep's we need to undeltify this range.
+             We'll have to read them within this trail anyway, so we might
+             as well do it once and up front. */</comment>
+          <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>reps</name> <init>=  <comment type="block">/* ### what constant here? */</comment>
+            <expr><call><name>apr_array_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>666</expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>rep</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+          <do>do
+            <block>{
+              <decl_stmt><decl><type><specifier>const</specifier> <name>rep_delta_chunk_t</name> *<specifier>const</specifier></type> <name>first_chunk</name>
+                <init>= <expr><call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name><name>rep</name>-&gt;<name>contents</name>.<name>delta</name>.<name>chunks</name></name></expr></argument>,
+                                <argument><expr>0</expr></argument>, <argument><expr><name>rep_delta_chunk_t</name>*</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+              <decl_stmt><decl><type><specifier>const</specifier> <name>rep_delta_chunk_t</name> *<specifier>const</specifier></type> <name>chunk</name>
+                <init>= <expr><call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name><name>rep</name>-&gt;<name>contents</name>.<name>delta</name>.<name>chunks</name></name></expr></argument>,
+                                <argument><expr><name>cur_chunk</name></expr></argument>, <argument><expr><name>rep_delta_chunk_t</name>*</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+              <comment type="block">/* Verify that this chunk is of the same version as the first. */</comment>
+              <if>if <condition>(<expr><name><name>first_chunk</name>-&gt;<name>version</name></name> != <name><name>chunk</name>-&gt;<name>version</name></name></expr>)</condition><then>
+                <return>return <expr><call><name>svn_error_createf</name>
+                  <argument_list>(<argument><expr><name>SVN_ERR_FS_CORRUPT</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                   <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Diff version inconsistencies in representation '%s'"</expr></argument>)</argument_list></call></expr></argument>,
+                   <argument><expr><name>rep_key</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+              <expr_stmt><expr><name>rep_key</name> = <name><name>chunk</name>-&gt;<name>rep_key</name></name></expr>;</expr_stmt>
+              <expr_stmt><expr><call><name>APR_ARRAY_PUSH</name><argument_list>(<argument><expr><name>reps</name></expr></argument>, <argument><expr><name>representation_t</name> *</expr></argument>)</argument_list></call> = <name>rep</name></expr>;</expr_stmt>
+              <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_bdb__read_rep</name><argument_list>(<argument><expr>&amp;<name>rep</name></expr></argument>, <argument><expr><name>fs</name></expr></argument>, <argument><expr><name>rep_key</name></expr></argument>,
+                                           <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block>
+          while <condition>(<expr><name><name>rep</name>-&gt;<name>kind</name></name> == <name>rep_kind_delta</name>
+                 &amp;&amp; <name><name>rep</name>-&gt;<name>contents</name>.<name>delta</name>.<name>chunks</name>-&gt;<name>nelts</name></name> &gt; <name>cur_chunk</name></expr>)</condition>;</do>
+
+          <comment type="block">/* Right. We've either just read the fulltext rep, or a rep that's
+             too short, in which case we'll undeltify without source data.*/</comment>
+          <if>if <condition>(<expr><name><name>rep</name>-&gt;<name>kind</name></name> != <name>rep_kind_delta</name> &amp;&amp; <name><name>rep</name>-&gt;<name>kind</name></name> != <name>rep_kind_fulltext</name></expr>)</condition><then>
+            <return>return <expr><call><name>UNKNOWN_NODE_KIND</name><argument_list>(<argument><expr><name>rep_key</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+          <if>if <condition>(<expr><name><name>rep</name>-&gt;<name>kind</name></name> == <name>rep_kind_delta</name></expr>)</condition><then>
+            <expr_stmt><expr><name>rep</name> = <name>NULL</name></expr>;</expr_stmt></then></if>         <comment type="block">/* Don't use source data */</comment>
+
+          <expr_stmt><expr><name>err</name> = <call><name>rep_undeltify_range</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>reps</name></expr></argument>, <argument><expr><name>rep</name></expr></argument>, <argument><expr><name>cur_chunk</name></expr></argument>, <argument><expr><name>buf</name></expr></argument>,
+                                    <argument><expr><name>chunk_offset</name></expr></argument>, <argument><expr><name>len</name></expr></argument>, <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <if>if <condition>(<expr><name>err</name></expr>)</condition><then>
+            <block>{
+              <if>if <condition>(<expr><name><name>err</name>-&gt;<name>apr_err</name></name> == <name>SVN_ERR_FS_CORRUPT</name></expr>)</condition><then>
+                <return>return <expr><call><name>svn_error_createf</name>
+                  <argument_list>(<argument><expr><name>SVN_ERR_FS_CORRUPT</name></expr></argument>, <argument><expr><name>err</name></expr></argument>,
+                   <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Corruption detected whilst reading delta chain from "
+                     "representation '%s' to '%s'"</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>first_rep_key</name></expr></argument>, <argument><expr><name>rep_key</name></expr></argument>)</argument_list></call></expr>;</return></then>
+              <else>else
+                <return>return <expr><name>err</name></expr>;</return></else></if>
+            }</block></then></if>
+        }</block></else></if>
+    }</block></then>
+  <else>else <comment type="block">/* unknown kind */</comment>
+    <return>return <expr><call><name>UNKNOWN_NODE_KIND</name><argument_list>(<argument><expr><name>rep_key</name></expr></argument>)</argument_list></call></expr>;</return></else></if></else></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_fs_base__get_mutable_rep</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>new_rep_key</name></decl></param>,
+                             <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>rep_key</name></decl></param>,
+                             <param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+                             <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>txn_id</name></decl></param>,
+                             <param><decl><type><name>trail_t</name> *</type><name>trail</name></decl></param>,
+                             <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>representation_t</name> *</type><name>rep</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>new_str</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+
+  <comment type="block">/* We were passed an existing REP_KEY, so examine it.  If it is
+     mutable already, then just return REP_KEY as the mutable result
+     key.  */</comment>
+  <if>if <condition>(<expr><name>rep_key</name> &amp;&amp; (<name><name>rep_key</name><index>[<expr>0</expr>]</index></name> != '\0')</expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_bdb__read_rep</name><argument_list>(<argument><expr>&amp;<name>rep</name></expr></argument>, <argument><expr><name>fs</name></expr></argument>, <argument><expr><name>rep_key</name></expr></argument>, <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><call><name>rep_is_mutable</name><argument_list>(<argument><expr><name>rep</name></expr></argument>, <argument><expr><name>txn_id</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr>*<name>new_rep_key</name> = <name>rep_key</name></expr>;</expr_stmt>
+          <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+        }</block></then></if>
+    }</block></then></if>
+
+  <comment type="block">/* Either we weren't provided a base key to examine, or the base key
+     we were provided was not mutable.  So, let's make a new
+     representation and return its key to the caller. */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_bdb__string_append</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr>&amp;<name>new_str</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>rep</name> = <call><name>make_fulltext_rep</name><argument_list>(<argument><expr><name>new_str</name></expr></argument>, <argument><expr><name>txn_id</name></expr></argument>,
+                          <argument><expr><call><name>svn_md5_empty_string_digest</name><argument_list>()</argument_list></call></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_bdb__write_new_rep</name><argument_list>(<argument><expr><name>new_rep_key</name></expr></argument>, <argument><expr><name>fs</name></expr></argument>, <argument><expr><name>rep</name></expr></argument>, <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_fs_base__delete_rep_if_mutable</name><parameter_list>(<param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+                                   <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>rep_key</name></decl></param>,
+                                   <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>txn_id</name></decl></param>,
+                                   <param><decl><type><name>trail_t</name> *</type><name>trail</name></decl></param>,
+                                   <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>representation_t</name> *</type><name>rep</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_bdb__read_rep</name><argument_list>(<argument><expr>&amp;<name>rep</name></expr></argument>, <argument><expr><name>fs</name></expr></argument>, <argument><expr><name>rep_key</name></expr></argument>, <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr>! <call><name>rep_is_mutable</name><argument_list>(<argument><expr><name>rep</name></expr></argument>, <argument><expr><name>txn_id</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return></then></if>
+
+  <if>if <condition>(<expr><name><name>rep</name>-&gt;<name>kind</name></name> == <name>rep_kind_fulltext</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_bdb__string_delete</name><argument_list>(<argument><expr><name>fs</name></expr></argument>,
+                                        <argument><expr><name><name>rep</name>-&gt;<name>contents</name>.<name>fulltext</name>.<name>string_key</name></name></expr></argument>,
+                                        <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name><name>rep</name>-&gt;<name>kind</name></name> == <name>rep_kind_delta</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>keys</name></decl>;</decl_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>delta_string_keys</name><argument_list>(<argument><expr>&amp;<name>keys</name></expr></argument>, <argument><expr><name>rep</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>delete_strings</name><argument_list>(<argument><expr><name>keys</name></expr></argument>, <argument><expr><name>fs</name></expr></argument>, <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else <comment type="block">/* unknown kind */</comment>
+    <return>return <expr><call><name>UNKNOWN_NODE_KIND</name><argument_list>(<argument><expr><name>rep_key</name></expr></argument>)</argument_list></call></expr>;</return></else></if></else></if>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_bdb__delete_rep</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>rep_key</name></expr></argument>, <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<escape char="0xc"/>
+<comment type="block">/*** Reading and writing data via representations. ***/</comment>
+
+<comment type="block">/** Reading. **/</comment>
+
+<struct>struct <name>rep_read_baton</name>
+<block>{
+  <comment type="block">/* The FS from which we're reading. */</comment>
+  <decl_stmt><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl>;</decl_stmt>
+
+  <comment type="block">/* The representation skel whose contents we want to read.  If this
+     is NULL, the rep has never had any contents, so all reads fetch 0
+     bytes.
+
+     Formerly, we cached the entire rep skel here, not just the key.
+     That way we didn't have to fetch the rep from the db every time
+     we want to read a little bit more of the file.  Unfortunately,
+     this has a problem: if, say, a file's representation changes
+     while we're reading (changes from fulltext to delta, for
+     example), we'll never know it.  So for correctness, we now
+     refetch the representation skel every time we want to read
+     another chunk.  */</comment>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>rep_key</name></decl>;</decl_stmt>
+
+  <comment type="block">/* How many bytes have been read already. */</comment>
+  <decl_stmt><decl><type><name>svn_filesize_t</name></type> <name>offset</name></decl>;</decl_stmt>
+
+  <comment type="block">/* If present, the read will be done as part of this trail, and the
+     trail's pool will be used.  Otherwise, see `pool' below.  */</comment>
+  <decl_stmt><decl><type><name>trail_t</name> *</type><name>trail</name></decl>;</decl_stmt>
+
+  <comment type="block">/* MD5 checksum.  Initialized when the baton is created, updated as
+     we read data, and finalized when the stream is closed. */</comment>
+  <decl_stmt><decl><type>struct <name>apr_md5_ctx_t</name></type> <name>md5_context</name></decl>;</decl_stmt>
+
+  <comment type="block">/* The length of the rep's contents (as fulltext, that is,
+     independent of how the rep actually stores the data.)  This is
+     retrieved when the baton is created, and used to determine when
+     we have read the last byte, at which point we compare checksums.
+
+     Getting this at baton creation time makes interleaved reads and
+     writes on the same rep in the same trail impossible.  But we're
+     not doing that, and probably no one ever should.  And anyway if
+     they do, they should see problems immediately. */</comment>
+  <decl_stmt><decl><type><name>svn_filesize_t</name></type> <name>size</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Set to FALSE when the baton is created, TRUE when the md5_context
+     is digestified. */</comment>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>checksum_finalized</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Used for temporary allocations, iff `trail' (above) is null.  */</comment>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl>;</decl_stmt>
+
+}</block>;</struct>
+
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>rep_read_get_baton</name><parameter_list>(<param><decl><type>struct <name>rep_read_baton</name> **</type><name>rb_p</name></decl></param>,
+                   <param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+                   <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>rep_key</name></decl></param>,
+                   <param><decl><type><name>svn_boolean_t</name></type> <name>use_trail_for_reads</name></decl></param>,
+                   <param><decl><type><name>trail_t</name> *</type><name>trail</name></decl></param>,
+                   <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>rep_read_baton</name> *</type><name>b</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name>b</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>b</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>apr_md5_init</name><argument_list>(<argument><expr>&amp;(<name><name>b</name>-&gt;<name>md5_context</name></name>)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name>rep_key</name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_base__rep_contents_size</name><argument_list>(<argument><expr>&amp;(<name><name>b</name>-&gt;<name>size</name></name>)</expr></argument>, <argument><expr><name>fs</name></expr></argument>, <argument><expr><name>rep_key</name></expr></argument>,
+                                           <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+  <else>else
+    <expr_stmt><expr><name><name>b</name>-&gt;<name>size</name></name> = 0</expr>;</expr_stmt></else></if>
+
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>checksum_finalized</name></name> = <name>FALSE</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>fs</name></name> = <name>fs</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>trail</name></name> = <name>use_trail_for_reads</name> ? <name>trail</name> : <name>NULL</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>pool</name></name> = <name>pool</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>rep_key</name></name> = <name>rep_key</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>offset</name></name> = 0</expr>;</expr_stmt>
+
+  <expr_stmt><expr>*<name>rb_p</name> = <name>b</name></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<escape char="0xc"/>
+<comment type="block">/*** Retrieving data. ***/</comment>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_fs_base__rep_contents_size</name><parameter_list>(<param><decl><type><name>svn_filesize_t</name> *</type><name>size_p</name></decl></param>,
+                               <param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+                               <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>rep_key</name></decl></param>,
+                               <param><decl><type><name>trail_t</name> *</type><name>trail</name></decl></param>,
+                               <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>representation_t</name> *</type><name>rep</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_bdb__read_rep</name><argument_list>(<argument><expr>&amp;<name>rep</name></expr></argument>, <argument><expr><name>fs</name></expr></argument>, <argument><expr><name>rep_key</name></expr></argument>, <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name><name>rep</name>-&gt;<name>kind</name></name> == <name>rep_kind_fulltext</name></expr>)</condition><then>
+    <block>{
+      <comment type="block">/* Get the size by asking Berkeley for the string's length. */</comment>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_bdb__string_size</name><argument_list>(<argument><expr><name>size_p</name></expr></argument>, <argument><expr><name>fs</name></expr></argument>,
+                                      <argument><expr><name><name>rep</name>-&gt;<name>contents</name>.<name>fulltext</name>.<name>string_key</name></name></expr></argument>,
+                                      <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name><name>rep</name>-&gt;<name>kind</name></name> == <name>rep_kind_delta</name></expr>)</condition><then>
+    <block>{
+      <comment type="block">/* Get the size by finding the last window pkg in the delta and
+         adding its offset to its size.  This way, we won't even be
+         messed up by overlapping windows, as long as the window pkgs
+         are still ordered. */</comment>
+      <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>chunks</name> <init>= <expr><name><name>rep</name>-&gt;<name>contents</name>.<name>delta</name>.<name>chunks</name></name></expr></init></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>rep_delta_chunk_t</name> *</type><name>last_chunk</name></decl>;</decl_stmt>
+
+      <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>chunks</name>-&gt;<name>nelts</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name>last_chunk</name> = <call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>chunks</name></expr></argument>, <argument><expr><name><name>chunks</name>-&gt;<name>nelts</name></name> - 1</expr></argument>,
+                                 <argument><expr><name>rep_delta_chunk_t</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr>*<name>size_p</name> = <name><name>last_chunk</name>-&gt;<name>offset</name></name> + <name><name>last_chunk</name>-&gt;<name>size</name></name></expr>;</expr_stmt>
+    }</block></then>
+  <else>else <comment type="block">/* unknown kind */</comment>
+    <return>return <expr><call><name>UNKNOWN_NODE_KIND</name><argument_list>(<argument><expr><name>rep_key</name></expr></argument>)</argument_list></call></expr>;</return></else></if></else></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_fs_base__rep_contents_checksum</name><parameter_list>(<param><decl><type><name>unsigned</name> <name>char</name></type> <name><name>digest</name><index>[]</index></name></decl></param>,
+                                   <param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+                                   <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>rep_key</name></decl></param>,
+                                   <param><decl><type><name>trail_t</name> *</type><name>trail</name></decl></param>,
+                                   <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>representation_t</name> *</type><name>rep</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_bdb__read_rep</name><argument_list>(<argument><expr>&amp;<name>rep</name></expr></argument>, <argument><expr><name>fs</name></expr></argument>, <argument><expr><name>rep_key</name></expr></argument>, <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>digest</name></expr></argument>, <argument><expr><name><name>rep</name>-&gt;<name>checksum</name></name></expr></argument>, <argument><expr><name>APR_MD5_DIGESTSIZE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_fs_base__rep_contents</name><parameter_list>(<param><decl><type><name>svn_string_t</name> *</type><name>str</name></decl></param>,
+                          <param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+                          <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>rep_key</name></decl></param>,
+                          <param><decl><type><name>trail_t</name> *</type><name>trail</name></decl></param>,
+                          <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_filesize_t</name></type> <name>contents_size</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>len</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>char</name> *</type><name>data</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_base__rep_contents_size</name><argument_list>(<argument><expr>&amp;<name>contents_size</name></expr></argument>, <argument><expr><name>fs</name></expr></argument>, <argument><expr><name>rep_key</name></expr></argument>,
+                                         <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* What if the contents are larger than we can handle? */</comment>
+  <if>if <condition>(<expr><name>contents_size</name> &gt; <name>SVN_MAX_OBJECT_SIZE</name></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_createf</name>
+      <argument_list>(<argument><expr><name>SVN_ERR_FS_GENERAL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+       <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Rep contents are too large: "
+         "got %s, limit is %s"</expr></argument>)</argument_list></call></expr></argument>,
+       <argument><expr><call><name>apr_psprintf</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>"%" <name>SVN_FILESIZE_T_FMT</name></expr></argument>, <argument><expr><name>contents_size</name></expr></argument>)</argument_list></call></expr></argument>,
+       <argument><expr><call><name>apr_psprintf</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>"%" <name>APR_SIZE_T_FMT</name></expr></argument>, <argument><expr><name>SVN_MAX_OBJECT_SIZE</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then>
+  <else>else
+    <expr_stmt><expr><name><name>str</name>-&gt;<name>len</name></name> = (<name>apr_size_t</name>) <name>contents_size</name></expr>;</expr_stmt></else></if>
+
+  <expr_stmt><expr><name>data</name> = <call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name><name>str</name>-&gt;<name>len</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>str</name>-&gt;<name>data</name></name> = <name>data</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name>len</name> = <name><name>str</name>-&gt;<name>len</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>rep_read_range</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>rep_key</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>data</name></expr></argument>, <argument><expr>&amp;<name>len</name></expr></argument>, <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Paranoia. */</comment>
+  <if>if <condition>(<expr><name>len</name> != <name><name>str</name>-&gt;<name>len</name></name></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_createf</name>
+      <argument_list>(<argument><expr><name>SVN_ERR_FS_CORRUPT</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+       <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Failure reading rep '%s'"</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>rep_key</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <comment type="block">/* Just the standard paranoia. */</comment>
+  <block>{
+    <decl_stmt><decl><type><name>representation_t</name> *</type><name>rep</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_md5_ctx_t</name></type> <name>md5_context</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>unsigned</name> <name>char</name></type> <name><name>checksum</name><index>[<expr><name>APR_MD5_DIGESTSIZE</name></expr>]</index></name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><call><name>apr_md5_init</name><argument_list>(<argument><expr>&amp;<name>md5_context</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>apr_md5_update</name><argument_list>(<argument><expr>&amp;<name>md5_context</name></expr></argument>, <argument><expr><name><name>str</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name><name>str</name>-&gt;<name>len</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>apr_md5_final</name><argument_list>(<argument><expr><name>checksum</name></expr></argument>, <argument><expr>&amp;<name>md5_context</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_bdb__read_rep</name><argument_list>(<argument><expr>&amp;<name>rep</name></expr></argument>, <argument><expr><name>fs</name></expr></argument>, <argument><expr><name>rep_key</name></expr></argument>, <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr>! <call><name>svn_md5_digests_match</name><argument_list>(<argument><expr><name>checksum</name></expr></argument>, <argument><expr><name><name>rep</name>-&gt;<name>checksum</name></name></expr></argument>)</argument_list></call></expr>)</condition><then>
+      <return>return <expr><call><name>svn_error_createf</name>
+        <argument_list>(<argument><expr><name>SVN_ERR_FS_CORRUPT</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+         <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Checksum mismatch on rep '%s':\n"
+           "   expected:  %s\n"
+           "     actual:  %s\n"</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>rep_key</name></expr></argument>,
+         <argument><expr><call><name>svn_md5_digest_to_cstring_display</name><argument_list>(<argument><expr><name><name>rep</name>-&gt;<name>checksum</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>,
+         <argument><expr><call><name>svn_md5_digest_to_cstring_display</name><argument_list>(<argument><expr><name>checksum</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+  }</block>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<struct>struct <name>read_rep_args</name>
+<block>{
+  <decl_stmt><decl><type>struct <name>rep_read_baton</name> *</type><name>rb</name></decl>;</decl_stmt>   <comment type="block">/* The data source.             */</comment>
+  <decl_stmt><decl><type><name>char</name> *</type><name>buf</name></decl>;</decl_stmt>                   <comment type="block">/* Where to put what we read.   */</comment>
+  <decl_stmt><decl><type><name>apr_size_t</name> *</type><name>len</name></decl>;</decl_stmt>             <comment type="block">/* How much to read / was read. */</comment>
+}</block>;</struct>
+
+
+<comment type="block">/* BATON is of type `read_rep_args':
+
+   Read into BATON-&gt;rb-&gt;buf the *(BATON-&gt;len) bytes starting at
+   BATON-&gt;rb-&gt;offset from the data represented at BATON-&gt;rb-&gt;rep_key
+   in BATON-&gt;rb-&gt;fs, as part of TRAIL.
+
+   Afterwards, *(BATON-&gt;len) is the number of bytes actually read, and
+   BATON-&gt;rb-&gt;offset is incremented by that amount.
+
+   If BATON-&gt;rb-&gt;rep_key is null, this is assumed to mean the file's
+   contents have no representation, i.e., the file has no contents.
+   In that case, if BATON-&gt;rb-&gt;offset &gt; 0, return the error
+   SVN_ERR_FS_FILE_CONTENTS_CHANGED, else just set *(BATON-&gt;len) to
+   zero and return.  */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>txn_body_read_rep</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>, <param><decl><type><name>trail_t</name> *</type><name>trail</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>read_rep_args</name> *</type><name>args</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr><name><name>args</name>-&gt;<name>rb</name>-&gt;<name>rep_key</name></name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>rep_read_range</name><argument_list>(<argument><expr><name><name>args</name>-&gt;<name>rb</name>-&gt;<name>fs</name></name></expr></argument>,
+                             <argument><expr><name><name>args</name>-&gt;<name>rb</name>-&gt;<name>rep_key</name></name></expr></argument>,
+                             <argument><expr><name><name>args</name>-&gt;<name>rb</name>-&gt;<name>offset</name></name></expr></argument>,
+                             <argument><expr><name><name>args</name>-&gt;<name>buf</name></name></expr></argument>,
+                             <argument><expr><name><name>args</name>-&gt;<name>len</name></name></expr></argument>,
+                             <argument><expr><name>trail</name></expr></argument>,
+                             <argument><expr><name><name>trail</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name><name>args</name>-&gt;<name>rb</name>-&gt;<name>offset</name></name> += *(<name><name>args</name>-&gt;<name>len</name></name>)</expr>;</expr_stmt>
+
+      <comment type="block">/* We calculate the checksum just once, the moment we see the
+       * last byte of data.  But we can't assume there was a short
+       * read.  The caller may have known the length of the data and
+       * requested exactly that amount, so there would never be a
+       * short read.  (That's why the read baton has to know the
+       * length of the data in advance.)
+       *
+       * On the other hand, some callers invoke the stream reader in a
+       * loop whose termination condition is that the read returned
+       * zero bytes of data -- which usually results in the read
+       * function being called one more time *after* the call that got
+       * a short read (indicating end-of-stream).
+       *
+       * The conditions below ensure that we compare checksums even
+       * when there is no short read associated with the last byte of
+       * data, while also ensuring that it's harmless to repeatedly
+       * read 0 bytes from the stream.
+       */</comment>
+      <if>if <condition>(<expr>! <name><name>args</name>-&gt;<name>rb</name>-&gt;<name>checksum_finalized</name></name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>apr_md5_update</name><argument_list>(<argument><expr>&amp;(<name><name>args</name>-&gt;<name>rb</name>-&gt;<name>md5_context</name></name>)</expr></argument>, <argument><expr><name><name>args</name>-&gt;<name>buf</name></name></expr></argument>, <argument><expr>*(<name><name>args</name>-&gt;<name>len</name></name>)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+          <if>if <condition>(<expr><name><name>args</name>-&gt;<name>rb</name>-&gt;<name>offset</name></name> == <name><name>args</name>-&gt;<name>rb</name>-&gt;<name>size</name></name></expr>)</condition><then>
+            <block>{
+              <decl_stmt><decl><type><name>representation_t</name> *</type><name>rep</name></decl>;</decl_stmt>
+              <decl_stmt><decl><type><name>unsigned</name> <name>char</name></type> <name><name>checksum</name><index>[<expr><name>APR_MD5_DIGESTSIZE</name></expr>]</index></name></decl>;</decl_stmt>
+
+              <expr_stmt><expr><call><name>apr_md5_final</name><argument_list>(<argument><expr><name>checksum</name></expr></argument>, <argument><expr>&amp;(<name><name>args</name>-&gt;<name>rb</name>-&gt;<name>md5_context</name></name>)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+              <expr_stmt><expr><name><name>args</name>-&gt;<name>rb</name>-&gt;<name>checksum_finalized</name></name> = <name>TRUE</name></expr>;</expr_stmt>
+
+              <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_bdb__read_rep</name><argument_list>(<argument><expr>&amp;<name>rep</name></expr></argument>, <argument><expr><name><name>args</name>-&gt;<name>rb</name>-&gt;<name>fs</name></name></expr></argument>,
+                                           <argument><expr><name><name>args</name>-&gt;<name>rb</name>-&gt;<name>rep_key</name></name></expr></argument>,
+                                           <argument><expr><name>trail</name></expr></argument>, <argument><expr><name><name>trail</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+              <if>if <condition>(<expr>! <call><name>svn_md5_digests_match</name><argument_list>(<argument><expr><name>checksum</name></expr></argument>, <argument><expr><name><name>rep</name>-&gt;<name>checksum</name></name></expr></argument>)</argument_list></call></expr>)</condition><then>
+                <return>return <expr><call><name>svn_error_createf</name>
+                  <argument_list>(<argument><expr><name>SVN_ERR_FS_CORRUPT</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                   <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Checksum mismatch on rep '%s':\n"
+                     "   expected:  %s\n"
+                     "     actual:  %s\n"</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name><name>args</name>-&gt;<name>rb</name>-&gt;<name>rep_key</name></name></expr></argument>,
+                   <argument><expr><call><name>svn_md5_digest_to_cstring_display</name><argument_list>(<argument><expr><name><name>rep</name>-&gt;<name>checksum</name></name></expr></argument>,
+                                                     <argument><expr><name><name>trail</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr></argument>,
+                   <argument><expr><call><name>svn_md5_digest_to_cstring_display</name><argument_list>(<argument><expr><name>checksum</name></expr></argument>, <argument><expr><name><name>trail</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+            }</block></then></if>
+        }</block></then></if>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name><name>args</name>-&gt;<name>rb</name>-&gt;<name>offset</name></name> &gt; 0</expr>)</condition><then>
+    <block>{
+      <return>return
+        <expr><call><name>svn_error_create</name>
+        <argument_list>(<argument><expr><name>SVN_ERR_FS_REP_CHANGED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+         <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Null rep, but offset past zero already"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then>
+  <else>else
+    <expr_stmt><expr>*(<name><name>args</name>-&gt;<name>len</name></name>) = 0</expr>;</expr_stmt></else></if></else></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>rep_read_contents</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>, <param><decl><type><name>char</name> *</type><name>buf</name></decl></param>, <param><decl><type><name>apr_size_t</name> *</type><name>len</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>rep_read_baton</name> *</type><name>rb</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type>struct <name>read_rep_args</name></type> <name>args</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name><name>args</name>.<name>rb</name></name> = <name>rb</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>args</name>.<name>buf</name></name> = <name>buf</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>args</name>.<name>len</name></name> = <name>len</name></expr>;</expr_stmt>
+
+  <comment type="block">/* If we got a trail, use it; else make one. */</comment>
+  <if>if <condition>(<expr><name><name>rb</name>-&gt;<name>trail</name></name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>txn_body_read_rep</name><argument_list>(<argument><expr>&amp;<name>args</name></expr></argument>, <argument><expr><name><name>rb</name>-&gt;<name>trail</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+  <else>else
+    <block>{
+      <comment type="block">/* Hey, guess what?  trails don't clear their own subpools.  In
+         the case of reading from the db, any returned data should
+         live in our pre-allocated buffer, so the whole operation can
+         happen within a single malloc/free cycle.  This prevents us
+         from creating millions of unnecessary trail subpools when
+         reading a big file. */</comment>
+      <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>subpool</name> <init>= <expr><call><name>svn_pool_create</name><argument_list>(<argument><expr><name><name>rb</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_base__retry_txn</name><argument_list>(<argument><expr><name><name>rb</name>-&gt;<name>fs</name></name></expr></argument>,
+                                     <argument><expr><name>txn_body_read_rep</name></expr></argument>,
+                                     <argument><expr>&amp;<name>args</name></expr></argument>,
+                                     <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/** Writing. **/</comment>
+
+
+<struct>struct <name>rep_write_baton</name>
+<block>{
+  <comment type="block">/* The FS in which we're writing. */</comment>
+  <decl_stmt><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl>;</decl_stmt>
+
+  <comment type="block">/* The representation skel whose contents we want to write. */</comment>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>rep_key</name></decl>;</decl_stmt>
+
+  <comment type="block">/* The transaction id under which this write action will take
+     place. */</comment>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>txn_id</name></decl>;</decl_stmt>
+
+  <comment type="block">/* If present, do the write as part of this trail, and use trail's
+     pool.  Otherwise, see `pool' below.  */</comment>
+  <decl_stmt><decl><type><name>trail_t</name> *</type><name>trail</name></decl>;</decl_stmt>
+
+  <comment type="block">/* MD5 checksum.  Initialized when the baton is created, updated as
+     we write data, and finalized and stored when the stream is
+     closed. */</comment>
+  <decl_stmt><decl><type>struct <name>apr_md5_ctx_t</name></type> <name>md5_context</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>unsigned</name> <name>char</name></type> <name><name>md5_digest</name><index>[<expr><name>APR_MD5_DIGESTSIZE</name></expr>]</index></name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>finalized</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Used for temporary allocations, iff `trail' (above) is null.  */</comment>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl>;</decl_stmt>
+
+}</block>;</struct>
+
+
+<function><type><specifier>static</specifier> struct <name>rep_write_baton</name> *</type>
+<name>rep_write_get_baton</name><parameter_list>(<param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+                    <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>rep_key</name></decl></param>,
+                    <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>txn_id</name></decl></param>,
+                    <param><decl><type><name>trail_t</name> *</type><name>trail</name></decl></param>,
+                    <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>rep_write_baton</name> *</type><name>b</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name>b</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>b</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>apr_md5_init</name><argument_list>(<argument><expr>&amp;(<name><name>b</name>-&gt;<name>md5_context</name></name>)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>fs</name></name> = <name>fs</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>trail</name></name> = <name>trail</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>pool</name></name> = <name>pool</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>rep_key</name></name> = <name>rep_key</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>txn_id</name></name> = <name>txn_id</name></expr>;</expr_stmt>
+  <return>return <expr><name>b</name></expr>;</return>
+}</block></function>
+
+
+
+<comment type="block">/* Write LEN bytes from BUF into the end of the string represented via
+   REP_KEY in FS, as part of TRAIL.  If the representation is not
+   mutable, return the error SVN_FS_REP_NOT_MUTABLE. */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>rep_write</name><parameter_list>(<param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+          <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>rep_key</name></decl></param>,
+          <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>buf</name></decl></param>,
+          <param><decl><type><name>apr_size_t</name></type> <name>len</name></decl></param>,
+          <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>txn_id</name></decl></param>,
+          <param><decl><type><name>trail_t</name> *</type><name>trail</name></decl></param>,
+          <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>representation_t</name> *</type><name>rep</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_bdb__read_rep</name><argument_list>(<argument><expr>&amp;<name>rep</name></expr></argument>, <argument><expr><name>fs</name></expr></argument>, <argument><expr><name>rep_key</name></expr></argument>, <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr>! <call><name>rep_is_mutable</name><argument_list>(<argument><expr><name>rep</name></expr></argument>, <argument><expr><name>txn_id</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_createf</name>
+      <argument_list>(<argument><expr><name>SVN_ERR_FS_REP_NOT_MUTABLE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+       <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Rep '%s' is not mutable"</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>rep_key</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <if>if <condition>(<expr><name><name>rep</name>-&gt;<name>kind</name></name> == <name>rep_kind_fulltext</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_bdb__string_append</name>
+              <argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr>&amp;(<name><name>rep</name>-&gt;<name>contents</name>.<name>fulltext</name>.<name>string_key</name></name>)</expr></argument>, <argument><expr><name>len</name></expr></argument>, <argument><expr><name>buf</name></expr></argument>,
+               <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name><name>rep</name>-&gt;<name>kind</name></name> == <name>rep_kind_delta</name></expr>)</condition><then>
+    <block>{
+      <comment type="block">/* There should never be a case when we have a mutable
+         non-fulltext rep.  The only code that creates mutable reps is
+         in this file, and it creates them fulltext. */</comment>
+      <return>return <expr><call><name>svn_error_createf</name>
+        <argument_list>(<argument><expr><name>SVN_ERR_FS_CORRUPT</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+         <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Rep '%s' both mutable and non-fulltext"</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>rep_key</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then>
+  <else>else <comment type="block">/* unknown kind */</comment>
+    <return>return <expr><call><name>UNKNOWN_NODE_KIND</name><argument_list>(<argument><expr><name>rep_key</name></expr></argument>)</argument_list></call></expr>;</return></else></if></else></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<struct>struct <name>write_rep_args</name>
+<block>{
+  <decl_stmt><decl><type>struct <name>rep_write_baton</name> *</type><name>wb</name></decl>;</decl_stmt>   <comment type="block">/* Destination.       */</comment>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>buf</name></decl>;</decl_stmt>              <comment type="block">/* Data.              */</comment>
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>len</name></decl>;</decl_stmt>               <comment type="block">/* How much to write. */</comment>
+}</block>;</struct>
+
+
+<comment type="block">/* BATON is of type `write_rep_args':
+   Append onto BATON-&gt;wb-&gt;rep_key's contents BATON-&gt;len bytes of
+   data from BATON-&gt;wb-&gt;buf, in BATON-&gt;rb-&gt;fs, as part of TRAIL.
+
+   If the representation is not mutable, return the error
+   SVN_FS_REP_NOT_MUTABLE.  */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>txn_body_write_rep</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>, <param><decl><type><name>trail_t</name> *</type><name>trail</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>write_rep_args</name> *</type><name>args</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>rep_write</name><argument_list>(<argument><expr><name><name>args</name>-&gt;<name>wb</name>-&gt;<name>fs</name></name></expr></argument>,
+                    <argument><expr><name><name>args</name>-&gt;<name>wb</name>-&gt;<name>rep_key</name></name></expr></argument>,
+                    <argument><expr><name><name>args</name>-&gt;<name>buf</name></name></expr></argument>,
+                    <argument><expr><name><name>args</name>-&gt;<name>len</name></name></expr></argument>,
+                    <argument><expr><name><name>args</name>-&gt;<name>wb</name>-&gt;<name>txn_id</name></name></expr></argument>,
+                    <argument><expr><name>trail</name></expr></argument>,
+                    <argument><expr><name><name>trail</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>apr_md5_update</name><argument_list>(<argument><expr>&amp;(<name><name>args</name>-&gt;<name>wb</name>-&gt;<name>md5_context</name></name>)</expr></argument>, <argument><expr><name><name>args</name>-&gt;<name>buf</name></name></expr></argument>, <argument><expr><name><name>args</name>-&gt;<name>len</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>rep_write_contents</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>,
+                   <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>buf</name></decl></param>,
+                   <param><decl><type><name>apr_size_t</name> *</type><name>len</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>rep_write_baton</name> *</type><name>wb</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type>struct <name>write_rep_args</name></type> <name>args</name></decl>;</decl_stmt>
+
+  <comment type="block">/* We toss LEN's indirectness because if not all the bytes are
+     written, it's an error, so we wouldn't be reporting anything back
+     through *LEN anyway. */</comment>
+  <expr_stmt><expr><name><name>args</name>.<name>wb</name></name> = <name>wb</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>args</name>.<name>buf</name></name> = <name>buf</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>args</name>.<name>len</name></name> = *<name>len</name></expr>;</expr_stmt>
+
+  <comment type="block">/* If we got a trail, use it; else make one. */</comment>
+  <if>if <condition>(<expr><name><name>wb</name>-&gt;<name>trail</name></name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>txn_body_write_rep</name><argument_list>(<argument><expr>&amp;<name>args</name></expr></argument>, <argument><expr><name><name>wb</name>-&gt;<name>trail</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+  <else>else
+    <block>{
+      <comment type="block">/* Hey, guess what?  trails don't clear their own subpools.  In
+         the case of simply writing the rep to the db, we're *certain*
+         that there's no data coming back to us that needs to be
+         preserved... so the whole operation can happen within a
+         single malloc/free cycle.  This prevents us from creating
+         millions of unnecessary trail subpools when writing a big
+         file. */</comment>
+      <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>subpool</name> <init>= <expr><call><name>svn_pool_create</name><argument_list>(<argument><expr><name><name>wb</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_base__retry_txn</name><argument_list>(<argument><expr><name><name>wb</name>-&gt;<name>fs</name></name></expr></argument>,
+                                     <argument><expr><name>txn_body_write_rep</name></expr></argument>,
+                                     <argument><expr>&amp;<name>args</name></expr></argument>,
+                                     <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* Helper for rep_write_close_contents(); see that doc string for
+   more.  BATON is of type `struct rep_write_baton'. */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>txn_body_write_close_rep</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>, <param><decl><type><name>trail_t</name> *</type><name>trail</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>rep_write_baton</name> *</type><name>wb</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>representation_t</name> *</type><name>rep</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_bdb__read_rep</name><argument_list>(<argument><expr>&amp;<name>rep</name></expr></argument>, <argument><expr><name><name>wb</name>-&gt;<name>fs</name></name></expr></argument>, <argument><expr><name><name>wb</name>-&gt;<name>rep_key</name></name></expr></argument>,
+                               <argument><expr><name>trail</name></expr></argument>, <argument><expr><name><name>trail</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name><name>rep</name>-&gt;<name>checksum</name></name></expr></argument>, <argument><expr><name><name>wb</name>-&gt;<name>md5_digest</name></name></expr></argument>, <argument><expr><name>APR_MD5_DIGESTSIZE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_bdb__write_rep</name><argument_list>(<argument><expr><name><name>wb</name>-&gt;<name>fs</name></name></expr></argument>, <argument><expr><name><name>wb</name>-&gt;<name>rep_key</name></name></expr></argument>, <argument><expr><name>rep</name></expr></argument>,
+                                <argument><expr><name>trail</name></expr></argument>, <argument><expr><name><name>trail</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* BATON is of type `struct rep_write_baton'.
+ *
+ * Finalize BATON-&gt;md5_context and store the resulting digest under
+ * BATON-&gt;rep_key.
+ */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>rep_write_close_contents</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>rep_write_baton</name> *</type><name>wb</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+
+  <comment type="block">/* ### Thought: if we fixed apr-util MD5 contexts to allow repeated
+     digestification, then we wouldn't need a stream close function at
+     all -- instead, we could update the stored checksum each time a
+     write occurred, which would have the added advantage of making
+     interleaving reads and writes work.  Currently, they'd fail with
+     a checksum mismatch, it just happens that our code never tries to
+     do that anyway. */</comment>
+
+  <if>if <condition>(<expr>! <name><name>wb</name>-&gt;<name>finalized</name></name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>apr_md5_final</name><argument_list>(<argument><expr><name><name>wb</name>-&gt;<name>md5_digest</name></name></expr></argument>, <argument><expr>&amp;<name><name>wb</name>-&gt;<name>md5_context</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>wb</name>-&gt;<name>finalized</name></name> = <name>TRUE</name></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <comment type="block">/* If we got a trail, use it; else make one. */</comment>
+  <if>if <condition>(<expr><name><name>wb</name>-&gt;<name>trail</name></name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>txn_body_write_close_rep</name><argument_list>(<argument><expr><name>wb</name></expr></argument>, <argument><expr><name><name>wb</name>-&gt;<name>trail</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else
+    <block>{
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_base__retry_txn</name><argument_list>(<argument><expr><name><name>wb</name>-&gt;<name>fs</name></name></expr></argument>,
+                                     <argument><expr><name>txn_body_write_close_rep</name></expr></argument>,
+                                     <argument><expr><name>wb</name></expr></argument>,
+                                     <argument><expr><name><name>wb</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/** Public read and write stream constructors. **/</comment>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_fs_base__rep_contents_read_stream</name><parameter_list>(<param><decl><type><name>svn_stream_t</name> **</type><name>rs_p</name></decl></param>,
+                                      <param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+                                      <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>rep_key</name></decl></param>,
+                                      <param><decl><type><name>svn_boolean_t</name></type> <name>use_trail_for_reads</name></decl></param>,
+                                      <param><decl><type><name>trail_t</name> *</type><name>trail</name></decl></param>,
+                                      <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>rep_read_baton</name> *</type><name>rb</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>rep_read_get_baton</name><argument_list>(<argument><expr>&amp;<name>rb</name></expr></argument>, <argument><expr><name>fs</name></expr></argument>, <argument><expr><name>rep_key</name></expr></argument>, <argument><expr><name>use_trail_for_reads</name></expr></argument>,
+                             <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr>*<name>rs_p</name> = <call><name>svn_stream_create</name><argument_list>(<argument><expr><name>rb</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>svn_stream_set_read</name><argument_list>(<argument><expr>*<name>rs_p</name></expr></argument>, <argument><expr><name>rep_read_contents</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* Clear the contents of REP_KEY, so that it represents the empty
+   string, as part of TRAIL.  TXN_ID is the id of the Subversion
+   transaction under which this occurs.  If REP_KEY is not mutable,
+   return the error SVN_ERR_FS_REP_NOT_MUTABLE.  */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>rep_contents_clear</name><parameter_list>(<param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+                   <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>rep_key</name></decl></param>,
+                   <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>txn_id</name></decl></param>,
+                   <param><decl><type><name>trail_t</name> *</type><name>trail</name></decl></param>,
+                   <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>representation_t</name> *</type><name>rep</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>str_key</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_bdb__read_rep</name><argument_list>(<argument><expr>&amp;<name>rep</name></expr></argument>, <argument><expr><name>fs</name></expr></argument>, <argument><expr><name>rep_key</name></expr></argument>, <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Make sure it's mutable. */</comment>
+  <if>if <condition>(<expr>! <call><name>rep_is_mutable</name><argument_list>(<argument><expr><name>rep</name></expr></argument>, <argument><expr><name>txn_id</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_createf</name>
+      <argument_list>(<argument><expr><name>SVN_ERR_FS_REP_NOT_MUTABLE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+       <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Rep '%s' is not mutable"</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>rep_key</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>rep</name>-&gt;<name>kind</name></name> == <name>rep_kind_fulltext</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* If rep has no string, just return success.  Else, clear the
+     underlying string.  */</comment>
+  <expr_stmt><expr><name>str_key</name> = <name><name>rep</name>-&gt;<name>contents</name>.<name>fulltext</name>.<name>string_key</name></name></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>str_key</name> &amp;&amp; *<name>str_key</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_bdb__string_clear</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>str_key</name></expr></argument>, <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name><name>rep</name>-&gt;<name>checksum</name></name></expr></argument>, <argument><expr><call><name>svn_md5_empty_string_digest</name><argument_list>()</argument_list></call></expr></argument>,
+             <argument><expr><name>APR_MD5_DIGESTSIZE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_bdb__write_rep</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>rep_key</name></expr></argument>, <argument><expr><name>rep</name></expr></argument>, <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_fs_base__rep_contents_write_stream</name><parameter_list>(<param><decl><type><name>svn_stream_t</name> **</type><name>ws_p</name></decl></param>,
+                                       <param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+                                       <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>rep_key</name></decl></param>,
+                                       <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>txn_id</name></decl></param>,
+                                       <param><decl><type><name>svn_boolean_t</name></type> <name>use_trail_for_writes</name></decl></param>,
+                                       <param><decl><type><name>trail_t</name> *</type><name>trail</name></decl></param>,
+                                       <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>rep_write_baton</name> *</type><name>wb</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Clear the current rep contents (free mutability check!). */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>rep_contents_clear</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>rep_key</name></expr></argument>, <argument><expr><name>txn_id</name></expr></argument>, <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Now, generate the write baton and stream. */</comment>
+  <expr_stmt><expr><name>wb</name> = <call><name>rep_write_get_baton</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>rep_key</name></expr></argument>, <argument><expr><name>txn_id</name></expr></argument>,
+                           <argument><expr><name>use_trail_for_writes</name> ? <name>trail</name> : <name>NULL</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr>*<name>ws_p</name> = <call><name>svn_stream_create</name><argument_list>(<argument><expr><name>wb</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>svn_stream_set_write</name><argument_list>(<argument><expr>*<name>ws_p</name></expr></argument>, <argument><expr><name>rep_write_contents</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>svn_stream_set_close</name><argument_list>(<argument><expr>*<name>ws_p</name></expr></argument>, <argument><expr><name>rep_write_close_contents</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<escape char="0xc"/>
+<comment type="block">/*** Deltified storage. ***/</comment>
+
+<comment type="block">/* Baton for svn_write_fn_t write_string_set(). */</comment>
+<struct>struct <name>write_svndiff_strings_baton</name>
+<block>{
+  <comment type="block">/* The fs where lives the string we're writing. */</comment>
+  <decl_stmt><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl>;</decl_stmt>
+
+  <comment type="block">/* The key of the string we're writing to.  Typically this is
+     initialized to NULL, so svn_fs_base__string_append() can fill in a
+     value. */</comment>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>key</name></decl>;</decl_stmt>
+
+  <comment type="block">/* The amount of txdelta data written to the current
+     string-in-progress. */</comment>
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>size</name></decl>;</decl_stmt>
+
+  <comment type="block">/* The amount of svndiff header information we've written thus far
+     to the strings table. */</comment>
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>header_read</name></decl>;</decl_stmt>
+
+  <comment type="block">/* The version number of the svndiff data written.  ### You'd better
+     not count on this being populated after the first chunk is sent
+     through the interface, since it lives at the 4th byte of the
+     stream. */</comment>
+  <decl_stmt><decl><type><name>apr_byte_t</name></type> <name>version</name></decl>;</decl_stmt>
+
+  <comment type="block">/* The trail we're writing in. */</comment>
+  <decl_stmt><decl><type><name>trail_t</name> *</type><name>trail</name></decl>;</decl_stmt>
+
+}</block>;</struct>
+
+
+<comment type="block">/* Function of type `svn_write_fn_t', for writing to a collection of
+   strings; BATON is `struct write_svndiff_strings_baton *'.
+
+   On the first call, BATON-&gt;key is null.  A new string key in
+   BATON-&gt;fs is chosen and stored in BATON-&gt;key; each call appends
+   *LEN bytes from DATA onto the string.  *LEN is never changed; if
+   the write fails to write all *LEN bytes, an error is returned.
+   BATON-&gt;size is used to track the total amount of data written via
+   this handler, and must be reset by the caller to 0 when appropriate.  */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>write_svndiff_strings</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>data</name></decl></param>, <param><decl><type><name>apr_size_t</name> *</type><name>len</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>write_svndiff_strings_baton</name> *</type><name>wb</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>buf</name> <init>= <expr><name>data</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>nheader</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+
+  <comment type="block">/* If we haven't stripped all the header information from this
+     stream yet, keep stripping.  If someone sends a first window
+     through here that's shorter than 4 bytes long, this will probably
+     cause a nuclear reactor meltdown somewhere in the American
+     midwest.  */</comment>
+  <if>if <condition>(<expr><name><name>wb</name>-&gt;<name>header_read</name></name> &lt; 4</expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><name>nheader</name> = 4 - <name><name>wb</name>-&gt;<name>header_read</name></name></expr>;</expr_stmt>
+      <expr_stmt><expr>*<name>len</name> -= <name>nheader</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name>buf</name> += <name>nheader</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>wb</name>-&gt;<name>header_read</name></name> += <name>nheader</name></expr>;</expr_stmt>
+
+      <comment type="block">/* If we have *now* read the full 4-byte header, check that
+         least byte for the version number of the svndiff format. */</comment>
+      <if>if <condition>(<expr><name><name>wb</name>-&gt;<name>header_read</name></name> == 4</expr>)</condition><then>
+        <expr_stmt><expr><name><name>wb</name>-&gt;<name>version</name></name> = *(<name>buf</name> - 1)</expr>;</expr_stmt></then></if>
+    }</block></then></if>
+
+  <comment type="block">/* Append to the current string we're writing (or create a new one
+     if WB-&gt;key is NULL). */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_bdb__string_append</name><argument_list>(<argument><expr><name><name>wb</name>-&gt;<name>fs</name></name></expr></argument>, <argument><expr>&amp;(<name><name>wb</name>-&gt;<name>key</name></name>)</expr></argument>, <argument><expr>*<name>len</name></expr></argument>,
+                                    <argument><expr><name>buf</name></expr></argument>, <argument><expr><name><name>wb</name>-&gt;<name>trail</name></name></expr></argument>, <argument><expr><name><name>wb</name>-&gt;<name>trail</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Make sure we (still) have a key. */</comment>
+  <if>if <condition>(<expr><name><name>wb</name>-&gt;<name>key</name></name> == <name>NULL</name></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_FS_GENERAL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                            <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Failed to get new string key"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <comment type="block">/* Restore *LEN to the value it *would* have been were it not for
+     header stripping. */</comment>
+  <expr_stmt><expr>*<name>len</name> += <name>nheader</name></expr>;</expr_stmt>
+
+  <comment type="block">/* Increment our running total of bytes written to this string. */</comment>
+  <expr_stmt><expr><name><name>wb</name>-&gt;<name>size</name></name> += *<name>len</name></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<typedef>typedef <type><struct>struct <name>window_write_t</name>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>key</name></decl>;</decl_stmt> <comment type="block">/* string key for this window */</comment>
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>svndiff_len</name></decl>;</decl_stmt> <comment type="block">/* amount of svndiff data written to the string */</comment>
+  <decl_stmt><decl><type><name>svn_filesize_t</name></type> <name>text_off</name></decl>;</decl_stmt> <comment type="block">/* offset of fulltext represented by this window */</comment>
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>text_len</name></decl>;</decl_stmt> <comment type="block">/* amount of fulltext data represented by this window */</comment>
+
+}</block></struct></type> <name>window_write_t</name>;</typedef>
+
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_fs_base__rep_deltify</name><parameter_list>(<param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+                         <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>target</name></decl></param>,
+                         <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>source</name></decl></param>,
+                         <param><decl><type><name>trail_t</name> *</type><name>trail</name></decl></param>,
+                         <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>base_fs_data_t</name> *</type><name>bfd</name> <init>= <expr><name><name>fs</name>-&gt;<name>fsap_data</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_stream_t</name> *</type><name>source_stream</name></decl>;</decl_stmt> <comment type="block">/* stream to read the source */</comment>
+  <decl_stmt><decl><type><name>svn_stream_t</name> *</type><name>target_stream</name></decl>;</decl_stmt> <comment type="block">/* stream to read the target */</comment>
+  <decl_stmt><decl><type><name>svn_txdelta_stream_t</name> *</type><name>txdelta_stream</name></decl>;</decl_stmt> <comment type="block">/* stream to read delta windows  */</comment>
+
+  <comment type="block">/* window-y things, and an array to track them */</comment>
+  <decl_stmt><decl><type><name>window_write_t</name> *</type><name>ww</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>windows</name></decl>;</decl_stmt>
+
+  <comment type="block">/* stream to write new (deltified) target data and its baton */</comment>
+  <decl_stmt><decl><type><name>svn_stream_t</name> *</type><name>new_target_stream</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type>struct <name>write_svndiff_strings_baton</name></type> <name>new_target_baton</name></decl>;</decl_stmt>
+
+  <comment type="block">/* window handler/baton for writing to above stream */</comment>
+  <decl_stmt><decl><type><name>svn_txdelta_window_handler_t</name></type> <name>new_target_handler</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>void</name> *</type><name>new_target_handler_baton</name></decl>;</decl_stmt>
+
+  <comment type="block">/* yes, we do windows */</comment>
+  <decl_stmt><decl><type><name>svn_txdelta_window_t</name> *</type><name>window</name></decl>;</decl_stmt>
+
+  <comment type="block">/* The current offset into the fulltext that our window is about to
+     write.  This doubles, after all windows are written, as the
+     total size of the svndiff data for the deltification process. */</comment>
+  <decl_stmt><decl><type><name>svn_filesize_t</name></type> <name>tview_off</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+
+  <comment type="block">/* The total amount of diff data written while deltifying. */</comment>
+  <decl_stmt><decl><type><name>svn_filesize_t</name></type> <name>diffsize</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+
+  <comment type="block">/* TARGET's original string keys */</comment>
+  <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>orig_str_keys</name></decl>;</decl_stmt>
+
+  <comment type="block">/* The digest for the representation's fulltext contents. */</comment>
+  <decl_stmt><decl><type><name>unsigned</name> <name>char</name></type> <name><name>rep_digest</name><index>[<expr><name>APR_MD5_DIGESTSIZE</name></expr>]</index></name></decl>;</decl_stmt>
+
+  <comment type="block">/* MD5 digest */</comment>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>unsigned</name> <name>char</name> *</type><name>digest</name></decl>;</decl_stmt>
+
+  <comment type="block">/* pool for holding the windows */</comment>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>wpool</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Paranoia: never allow a rep to be deltified against itself,
+     because then there would be no fulltext reachable in the delta
+     chain, and badness would ensue.  */</comment>
+  <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>target</name></expr></argument>, <argument><expr><name>source</name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_createf</name>
+      <argument_list>(<argument><expr><name>SVN_ERR_FS_CORRUPT</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+       <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Attempt to deltify '%s' against itself"</expr></argument>)</argument_list></call></expr></argument>,
+       <argument><expr><name>target</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <comment type="block">/* Set up a handler for the svndiff data, which will write each
+     window to its own string in the `strings' table. */</comment>
+  <expr_stmt><expr><name><name>new_target_baton</name>.<name>fs</name></name> = <name>fs</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>new_target_baton</name>.<name>trail</name></name> = <name>trail</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>new_target_baton</name>.<name>header_read</name></name> = <name>FALSE</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name>new_target_stream</name> = <call><name>svn_stream_create</name><argument_list>(<argument><expr>&amp;<name>new_target_baton</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>svn_stream_set_write</name><argument_list>(<argument><expr><name>new_target_stream</name></expr></argument>, <argument><expr><name>write_svndiff_strings</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Get streams to our source and target text data. */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_base__rep_contents_read_stream</name><argument_list>(<argument><expr>&amp;<name>source_stream</name></expr></argument>, <argument><expr><name>fs</name></expr></argument>, <argument><expr><name>source</name></expr></argument>,
+                                                <argument><expr><name>TRUE</name></expr></argument>, <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_base__rep_contents_read_stream</name><argument_list>(<argument><expr>&amp;<name>target_stream</name></expr></argument>, <argument><expr><name>fs</name></expr></argument>, <argument><expr><name>target</name></expr></argument>,
+                                                <argument><expr><name>TRUE</name></expr></argument>, <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Setup a stream to convert the textdelta data into svndiff windows. */</comment>
+  <expr_stmt><expr><call><name>svn_txdelta</name><argument_list>(<argument><expr>&amp;<name>txdelta_stream</name></expr></argument>, <argument><expr><name>source_stream</name></expr></argument>, <argument><expr><name>target_stream</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name><name>bfd</name>-&gt;<name>format</name></name> &gt;= <name>SVN_FS_BASE__MIN_SVNDIFF1_FORMAT</name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>svn_txdelta_to_svndiff2</name><argument_list>(<argument><expr>&amp;<name>new_target_handler</name></expr></argument>, <argument><expr>&amp;<name>new_target_handler_baton</name></expr></argument>,
+                            <argument><expr><name>new_target_stream</name></expr></argument>, <argument><expr>1</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+  <else>else
+    <expr_stmt><expr><call><name>svn_txdelta_to_svndiff2</name><argument_list>(<argument><expr>&amp;<name>new_target_handler</name></expr></argument>, <argument><expr>&amp;<name>new_target_handler_baton</name></expr></argument>,
+                            <argument><expr><name>new_target_stream</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+
+  <comment type="block">/* subpool for the windows */</comment>
+  <expr_stmt><expr><name>wpool</name> = <call><name>svn_pool_create</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Now, loop, manufacturing and dispatching windows of svndiff data. */</comment>
+  <expr_stmt><expr><name>windows</name> = <call><name>apr_array_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>1</expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>ww</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <do>do
+    <block>{
+      <comment type="block">/* Reset some baton variables. */</comment>
+      <expr_stmt><expr><name><name>new_target_baton</name>.<name>size</name></name> = 0</expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>new_target_baton</name>.<name>key</name></name> = <name>NULL</name></expr>;</expr_stmt>
+
+      <comment type="block">/* Free the window. */</comment>
+      <expr_stmt><expr><call><name>svn_pool_clear</name><argument_list>(<argument><expr><name>wpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <comment type="block">/* Fetch the next window of txdelta data. */</comment>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_txdelta_next_window</name><argument_list>(<argument><expr>&amp;<name>window</name></expr></argument>, <argument><expr><name>txdelta_stream</name></expr></argument>, <argument><expr><name>wpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <comment type="block">/* Send off this package to be written as svndiff data. */</comment>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>new_target_handler</name><argument_list>(<argument><expr><name>window</name></expr></argument>, <argument><expr><name>new_target_handler_baton</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>window</name></expr>)</condition><then>
+        <block>{
+          <comment type="block">/* Add a new window description to our array. */</comment>
+          <expr_stmt><expr><name>ww</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>ww</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><name><name>ww</name>-&gt;<name>key</name></name> = <name><name>new_target_baton</name>.<name>key</name></name></expr>;</expr_stmt>
+          <expr_stmt><expr><name><name>ww</name>-&gt;<name>svndiff_len</name></name> = <name><name>new_target_baton</name>.<name>size</name></name></expr>;</expr_stmt>
+          <expr_stmt><expr><name><name>ww</name>-&gt;<name>text_off</name></name> = <name>tview_off</name></expr>;</expr_stmt>
+          <expr_stmt><expr><name><name>ww</name>-&gt;<name>text_len</name></name> = <name><name>window</name>-&gt;<name>tview_len</name></name></expr>;</expr_stmt>
+          <expr_stmt><expr><call><name>APR_ARRAY_PUSH</name><argument_list>(<argument><expr><name>windows</name></expr></argument>, <argument><expr><name>window_write_t</name> *</expr></argument>)</argument_list></call> = <name>ww</name></expr>;</expr_stmt>
+
+          <comment type="block">/* Update our recordkeeping variables. */</comment>
+          <expr_stmt><expr><name>tview_off</name> += <name><name>window</name>-&gt;<name>tview_len</name></name></expr>;</expr_stmt>
+          <expr_stmt><expr><name>diffsize</name> += <name><name>ww</name>-&gt;<name>svndiff_len</name></name></expr>;</expr_stmt>
+        }</block></then></if>
+
+    }</block> while <condition>(<expr><name>window</name></expr>)</condition>;</do>
+
+  <expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name>wpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Having processed all the windows, we can query the MD5 digest
+     from the stream.  */</comment>
+  <expr_stmt><expr><name>digest</name> = <call><name>svn_txdelta_md5_digest</name><argument_list>(<argument><expr><name>txdelta_stream</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr>! <name>digest</name></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_createf</name>
+      <argument_list>(<argument><expr><name>SVN_ERR_DELTA_MD5_CHECKSUM_ABSENT</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+       <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Failed to calculate MD5 digest for '%s'"</expr></argument>)</argument_list></call></expr></argument>,
+       <argument><expr><name>source</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <comment type="block">/* Construct a list of the strings used by the old representation so
+     that we can delete them later.  While we are here, if the old
+     representation was a fulltext, check to make sure the delta we're
+     replacing it with is actually smaller.  (Don't perform this check
+     if we're replacing a delta; in that case, we're going for a time
+     optimization, not a space optimization.)  */</comment>
+  <block>{
+    <decl_stmt><decl><type><name>representation_t</name> *</type><name>old_rep</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>str_key</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_bdb__read_rep</name><argument_list>(<argument><expr>&amp;<name>old_rep</name></expr></argument>, <argument><expr><name>fs</name></expr></argument>, <argument><expr><name>target</name></expr></argument>, <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name><name>old_rep</name>-&gt;<name>kind</name></name> == <name>rep_kind_fulltext</name></expr>)</condition><then>
+      <block>{
+        <decl_stmt><decl><type><name>svn_filesize_t</name></type> <name>old_size</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+
+        <expr_stmt><expr><name>str_key</name> = <name><name>old_rep</name>-&gt;<name>contents</name>.<name>fulltext</name>.<name>string_key</name></name></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_bdb__string_size</name><argument_list>(<argument><expr>&amp;<name>old_size</name></expr></argument>, <argument><expr><name>fs</name></expr></argument>, <argument><expr><name>str_key</name></expr></argument>,
+                                        <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><name>orig_str_keys</name> = <call><name>apr_array_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>1</expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>str_key</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>APR_ARRAY_PUSH</name><argument_list>(<argument><expr><name>orig_str_keys</name></expr></argument>, <argument><expr>const <name>char</name> *</expr></argument>)</argument_list></call> = <name>str_key</name></expr>;</expr_stmt>
+
+        <comment type="block">/* If the new data is NOT an space optimization, destroy the
+           string(s) we created, and get outta here. */</comment>
+        <if>if <condition>(<expr><name>diffsize</name> &gt;= <name>old_size</name></expr>)</condition><then>
+          <block>{
+            <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+            <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name><name>windows</name>-&gt;<name>nelts</name></name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>)
+              <block>{
+                <expr_stmt><expr><name>ww</name> = <call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>windows</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr><name>window_write_t</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_bdb__string_delete</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name><name>ww</name>-&gt;<name>key</name></name></expr></argument>, <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+              }</block></for>
+            <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+          }</block></then></if>
+      }</block></then>
+    <else>else <if>if <condition>(<expr><name><name>old_rep</name>-&gt;<name>kind</name></name> == <name>rep_kind_delta</name></expr>)</condition><then>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>delta_string_keys</name><argument_list>(<argument><expr>&amp;<name>orig_str_keys</name></expr></argument>, <argument><expr><name>old_rep</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+    <else>else <comment type="block">/* unknown kind */</comment>
+      <return>return <expr><call><name>UNKNOWN_NODE_KIND</name><argument_list>(<argument><expr><name>target</name></expr></argument>)</argument_list></call></expr>;</return></else></if></else></if>
+
+    <comment type="block">/* Save the checksum, since the new rep needs it. */</comment>
+    <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>rep_digest</name></expr></argument>, <argument><expr><name><name>old_rep</name>-&gt;<name>checksum</name></name></expr></argument>, <argument><expr><name>APR_MD5_DIGESTSIZE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  }</block>
+
+  <comment type="block">/* Hook the new strings we wrote into the rest of the filesystem by
+     building a new representation to replace our old one. */</comment>
+  <block>{
+    <decl_stmt><decl><type><name>representation_t</name></type> <name>new_rep</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>rep_delta_chunk_t</name> *</type><name>chunk</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>chunks</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name><name>new_rep</name>.<name>kind</name></name> = <name>rep_kind_delta</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>new_rep</name>.<name>txn_id</name></name> = <name>NULL</name></expr>;</expr_stmt>
+
+    <comment type="block">/* Migrate the old rep's checksum to the new rep. */</comment>
+    <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name><name>new_rep</name>.<name>checksum</name></name></expr></argument>, <argument><expr><name>rep_digest</name></expr></argument>, <argument><expr><name>APR_MD5_DIGESTSIZE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>chunks</name> = <call><name>apr_array_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name><name>windows</name>-&gt;<name>nelts</name></name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>chunk</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* Loop through the windows we wrote, creating and adding new
+       chunks to the representation. */</comment>
+    <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name><name>windows</name>-&gt;<name>nelts</name></name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>)
+      <block>{
+        <expr_stmt><expr><name>ww</name> = <call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>windows</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr><name>window_write_t</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <comment type="block">/* Allocate a chunk and its window */</comment>
+        <expr_stmt><expr><name>chunk</name> = <call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>chunk</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>chunk</name>-&gt;<name>offset</name></name> = <name><name>ww</name>-&gt;<name>text_off</name></name></expr>;</expr_stmt>
+
+        <comment type="block">/* Populate the window */</comment>
+        <expr_stmt><expr><name><name>chunk</name>-&gt;<name>version</name></name> = <name><name>new_target_baton</name>.<name>version</name></name></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>chunk</name>-&gt;<name>string_key</name></name> = <name><name>ww</name>-&gt;<name>key</name></name></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>chunk</name>-&gt;<name>size</name></name> = <name><name>ww</name>-&gt;<name>text_len</name></name></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>chunk</name>-&gt;<name>rep_key</name></name> = <name>source</name></expr>;</expr_stmt>
+
+        <comment type="block">/* Add this chunk to the array. */</comment>
+        <expr_stmt><expr><call><name>APR_ARRAY_PUSH</name><argument_list>(<argument><expr><name>chunks</name></expr></argument>, <argument><expr><name>rep_delta_chunk_t</name> *</expr></argument>)</argument_list></call> = <name>chunk</name></expr>;</expr_stmt>
+      }</block></for>
+
+    <comment type="block">/* Put the chunks array into the representation. */</comment>
+    <expr_stmt><expr><name><name>new_rep</name>.<name>contents</name>.<name>delta</name>.<name>chunks</name></name> = <name>chunks</name></expr>;</expr_stmt>
+
+    <comment type="block">/* Write out the new representation. */</comment>
+    <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_bdb__write_rep</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>target</name></expr></argument>, <argument><expr>&amp;<name>new_rep</name></expr></argument>, <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* Delete the original pre-deltified strings. */</comment>
+    <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>delete_strings</name><argument_list>(<argument><expr><name>orig_str_keys</name></expr></argument>, <argument><expr><name>fs</name></expr></argument>, <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  }</block>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+</unit>

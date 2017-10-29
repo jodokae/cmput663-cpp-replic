@@ -1,0 +1,457 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/cpython-2.6.1/source/Modules/_sqlite/module.c"><comment type="block">/* module.c - the module itself
+ *
+ * Copyright (C) 2004-2007 Gerhard Häring &lt;gh@ghaering.de&gt;
+ *
+ * This file is part of pysqlite.
+ *
+ * This software is provided 'as-is', without any express or implied
+ * warranty.  In no event will the authors be held liable for any damages
+ * arising from the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose,
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"connection.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"statement.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"cursor.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"cache.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"prepare_protocol.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"microprotocols.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"row.h"</cpp:file></cpp:include>
+
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>SQLITE_VERSION_NUMBER</name> &gt;= 3003003</expr></cpp:if>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>HAVE_SHARED_CACHE</name></cpp:macro></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<comment type="block">/* static objects at module-level */</comment>
+
+<decl_stmt><decl><type><name>PyObject</name>*</type> <name>pysqlite_Error</name></decl>, *<decl><type ref="prev"/><name>pysqlite_Warning</name></decl>, *<decl><type ref="prev"/><name>pysqlite_InterfaceError</name></decl>, *<decl><type ref="prev"/><name>pysqlite_DatabaseError</name></decl>,
+    *<decl><type ref="prev"/><name>pysqlite_InternalError</name></decl>, *<decl><type ref="prev"/><name>pysqlite_OperationalError</name></decl>, *<decl><type ref="prev"/><name>pysqlite_ProgrammingError</name></decl>,
+    *<decl><type ref="prev"/><name>pysqlite_IntegrityError</name></decl>, *<decl><type ref="prev"/><name>pysqlite_DataError</name></decl>, *<decl><type ref="prev"/><name>pysqlite_NotSupportedError</name></decl>, *<decl><type ref="prev"/><name>pysqlite_OptimizedUnicode</name></decl>;</decl_stmt>
+
+<decl_stmt><decl><type><name>PyObject</name>*</type> <name>converters</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>_enable_callback_tracebacks</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>pysqlite_BaseTypeAdapted</name></decl>;</decl_stmt>
+
+<function><type><specifier>static</specifier> <name>PyObject</name>*</type> <name>module_connect</name><parameter_list>(<param><decl><type><name>PyObject</name>*</type> <name>self</name></decl></param>, <param><decl><type><name>PyObject</name>*</type> <name>args</name></decl></param>, <param><decl><type><name>PyObject</name>*</type>
+        <name>kwargs</name></decl></param>)</parameter_list>
+<block>{
+    <comment type="block">/* Python seems to have no way of extracting a single keyword-arg at
+     * C-level, so this code is redundant with the one in connection_init in
+     * connection.c and must always be copied from there ... */</comment>
+
+    <decl_stmt><decl><type><specifier>static</specifier> <name>char</name> *</type><name><name>kwlist</name><index>[]</index></name> <init>= <expr><block>{<expr>"database"</expr>, <expr>"timeout"</expr>, <expr>"detect_types"</expr>, <expr>"isolation_level"</expr>, <expr>"check_same_thread"</expr>, <expr>"factory"</expr>, <expr>"cached_statements"</expr>, <expr><name>NULL</name></expr>, <expr><name>NULL</name></expr>}</block></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>database</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>detect_types</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>isolation_level</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>factory</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>check_same_thread</name> <init>= <expr>1</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>cached_statements</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>double</name></type> <name>timeout</name> <init>= <expr>5.0</expr></init></decl>;</decl_stmt>
+
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>result</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>!<call><name>PyArg_ParseTupleAndKeywords</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr><name>kwargs</name></expr></argument>, <argument><expr>"O|diOiOi"</expr></argument>, <argument><expr><name>kwlist</name></expr></argument>,
+                                     <argument><expr>&amp;<name>database</name></expr></argument>, <argument><expr>&amp;<name>timeout</name></expr></argument>, <argument><expr>&amp;<name>detect_types</name></expr></argument>, <argument><expr>&amp;<name>isolation_level</name></expr></argument>, <argument><expr>&amp;<name>check_same_thread</name></expr></argument>, <argument><expr>&amp;<name>factory</name></expr></argument>, <argument><expr>&amp;<name>cached_statements</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <block>{
+        <return>return <expr><name>NULL</name></expr>;</return> 
+    }</block></then></if>
+
+    <if>if <condition>(<expr><name>factory</name> == <name>NULL</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>factory</name> = (<name>PyObject</name>*)&amp;<name>pysqlite_ConnectionType</name></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <expr_stmt><expr><name>result</name> = <call><name>PyObject_Call</name><argument_list>(<argument><expr><name>factory</name></expr></argument>, <argument><expr><name>args</name></expr></argument>, <argument><expr><name>kwargs</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <return>return <expr><name>result</name></expr>;</return>
+}</block></function>
+
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>module_connect_doc</name></expr></argument>,
+<argument><expr>"connect(database[, timeout, isolation_level, detect_types, factory])\n\
+\n\
+Opens a connection to the SQLite database file *database*. You can use\n\
+\":memory:\" to open a database connection to a database that resides in\n\
+RAM instead of on disk."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<function><type><specifier>static</specifier> <name>PyObject</name>*</type> <name>module_complete</name><parameter_list>(<param><decl><type><name>PyObject</name>*</type> <name>self</name></decl></param>, <param><decl><type><name>PyObject</name>*</type> <name>args</name></decl></param>, <param><decl><type><name>PyObject</name>*</type>
+        <name>kwargs</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><specifier>static</specifier> <name>char</name> *</type><name><name>kwlist</name><index>[]</index></name> <init>= <expr><block>{<expr>"statement"</expr>, <expr><name>NULL</name></expr>, <expr><name>NULL</name></expr>}</block></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name>*</type> <name>statement</name></decl>;</decl_stmt>
+
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>result</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>!<call><name>PyArg_ParseTupleAndKeywords</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr><name>kwargs</name></expr></argument>, <argument><expr>"s"</expr></argument>, <argument><expr><name>kwlist</name></expr></argument>, <argument><expr>&amp;<name>statement</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <block>{
+        <return>return <expr><name>NULL</name></expr>;</return> 
+    }</block></then></if>
+
+    <if>if <condition>(<expr><call><name>sqlite3_complete</name><argument_list>(<argument><expr><name>statement</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>result</name> = <name>Py_True</name></expr>;</expr_stmt>
+    }</block></then> <else>else <block>{
+        <expr_stmt><expr><name>result</name> = <name>Py_False</name></expr>;</expr_stmt>
+    }</block></else></if>
+
+    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>result</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <return>return <expr><name>result</name></expr>;</return>
+}</block></function>
+
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>module_complete_doc</name></expr></argument>,
+<argument><expr>"complete_statement(sql)\n\
+\n\
+Checks if a string contains a complete SQL statement. Non-standard."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>HAVE_SHARED_CACHE</name></cpp:ifdef>
+<function><type><specifier>static</specifier> <name>PyObject</name>*</type> <name>module_enable_shared_cache</name><parameter_list>(<param><decl><type><name>PyObject</name>*</type> <name>self</name></decl></param>, <param><decl><type><name>PyObject</name>*</type> <name>args</name></decl></param>, <param><decl><type><name>PyObject</name>*</type>
+        <name>kwargs</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><specifier>static</specifier> <name>char</name> *</type><name><name>kwlist</name><index>[]</index></name> <init>= <expr><block>{<expr>"do_enable"</expr>, <expr><name>NULL</name></expr>, <expr><name>NULL</name></expr>}</block></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>do_enable</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>rc</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>!<call><name>PyArg_ParseTupleAndKeywords</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr><name>kwargs</name></expr></argument>, <argument><expr>"i"</expr></argument>, <argument><expr><name>kwlist</name></expr></argument>, <argument><expr>&amp;<name>do_enable</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <block>{
+        <return>return <expr><name>NULL</name></expr>;</return> 
+    }</block></then></if>
+
+    <expr_stmt><expr><name>rc</name> = <call><name>sqlite3_enable_shared_cache</name><argument_list>(<argument><expr><name>do_enable</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr><name>rc</name> != <name>SQLITE_OK</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>pysqlite_OperationalError</name></expr></argument>, <argument><expr>"Changing the shared_cache flag failed"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then> <else>else <block>{
+        <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>Py_None</name></expr>;</return>
+    }</block></else></if>
+}</block></function>
+
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>module_enable_shared_cache_doc</name></expr></argument>,
+<argument><expr>"enable_shared_cache(do_enable)\n\
+\n\
+Enable or disable shared cache mode for the calling thread.\n\
+Experimental/Non-standard."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* HAVE_SHARED_CACHE */</comment>
+
+<function><type><specifier>static</specifier> <name>PyObject</name>*</type> <name>module_register_adapter</name><parameter_list>(<param><decl><type><name>PyObject</name>*</type> <name>self</name></decl></param>, <param><decl><type><name>PyObject</name>*</type> <name>args</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>PyTypeObject</name>*</type> <name>type</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>caster</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>rc</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"OO"</expr></argument>, <argument><expr>&amp;<name>type</name></expr></argument>, <argument><expr>&amp;<name>caster</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/* a basic type is adapted; there's a performance optimization if that's not the case
+     * (99 % of all usages) */</comment>
+    <if>if <condition>(<expr><name>type</name> == &amp;<name>PyInt_Type</name> || <name>type</name> == &amp;<name>PyLong_Type</name> || <name>type</name> == &amp;<name>PyFloat_Type</name>
+            || <name>type</name> == &amp;<name>PyString_Type</name> || <name>type</name> == &amp;<name>PyUnicode_Type</name> || <name>type</name> == &amp;<name>PyBuffer_Type</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>pysqlite_BaseTypeAdapted</name> = 1</expr>;</expr_stmt>
+    }</block></then></if>
+
+    <expr_stmt><expr><name>rc</name> = <call><name>pysqlite_microprotocols_add</name><argument_list>(<argument><expr><name>type</name></expr></argument>, <argument><expr>(<name>PyObject</name>*)&amp;<name>pysqlite_PrepareProtocolType</name></expr></argument>, <argument><expr><name>caster</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>rc</name> == -1</expr>)</condition><then>
+        <return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>module_register_adapter_doc</name></expr></argument>,
+<argument><expr>"register_adapter(type, callable)\n\
+\n\
+Registers an adapter with pysqlite's adapter registry. Non-standard."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<function><type><specifier>static</specifier> <name>PyObject</name>*</type> <name>module_register_converter</name><parameter_list>(<param><decl><type><name>PyObject</name>*</type> <name>self</name></decl></param>, <param><decl><type><name>PyObject</name>*</type> <name>args</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>orig_name</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>name</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>callable</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name>*</type> <name>retval</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"SO"</expr></argument>, <argument><expr>&amp;<name>orig_name</name></expr></argument>, <argument><expr>&amp;<name>callable</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/* convert the name to upper case */</comment>
+    <expr_stmt><expr><name>name</name> = <call><name>PyObject_CallMethod</name><argument_list>(<argument><expr><name>orig_name</name></expr></argument>, <argument><expr>"upper"</expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr>!<name>name</name></expr>)</condition><then> <block>{
+        <goto>goto <name>error</name>;</goto>
+    }</block></then></if>
+
+    <if>if <condition>(<expr><call><name>PyDict_SetItem</name><argument_list>(<argument><expr><name>converters</name></expr></argument>, <argument><expr><name>name</name></expr></argument>, <argument><expr><name>callable</name></expr></argument>)</argument_list></call> != 0</expr>)</condition><then> <block>{
+        <goto>goto <name>error</name>;</goto>
+    }</block></then></if>
+
+    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name>retval</name> = <name>Py_None</name></expr>;</expr_stmt>
+<label><name>error</name>:</label>
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>retval</name></expr>;</return>
+}</block></function>
+
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>module_register_converter_doc</name></expr></argument>,
+<argument><expr>"register_converter(typename, callable)\n\
+\n\
+Registers a converter with pysqlite. Non-standard."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<function><type><specifier>static</specifier> <name>PyObject</name>*</type> <name>enable_callback_tracebacks</name><parameter_list>(<param><decl><type><name>PyObject</name>*</type> <name>self</name></decl></param>, <param><decl><type><name>PyObject</name>*</type> <name>args</name></decl></param>)</parameter_list>
+<block>{
+    <if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"i"</expr></argument>, <argument><expr>&amp;<name>_enable_callback_tracebacks</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>enable_callback_tracebacks_doc</name></expr></argument>,
+<argument><expr>"enable_callback_tracebacks(flag)\n\
+\n\
+Enable or disable callback functions throwing errors to stderr."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<function><type><specifier>static</specifier> <name>void</name></type> <name>converters_init</name><parameter_list>(<param><decl><type><name>PyObject</name>*</type> <name>dict</name></decl></param>)</parameter_list>
+<block>{
+    <expr_stmt><expr><name>converters</name> = <call><name>PyDict_New</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr>!<name>converters</name></expr>)</condition><then> <block>{
+        <return>return;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><call><name>PyDict_SetItemString</name><argument_list>(<argument><expr><name>dict</name></expr></argument>, <argument><expr>"converters"</expr></argument>, <argument><expr><name>converters</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyMethodDef</name></type> <name><name>module_methods</name><index>[]</index></name> <init>= <expr><block>{
+    <expr><block>{<expr>"connect"</expr>,  <expr>(<name>PyCFunction</name>)<name>module_connect</name></expr>,
+     <expr><name>METH_VARARGS</name> | <name>METH_KEYWORDS</name></expr>, <expr><name>module_connect_doc</name></expr>}</block></expr>,
+    <expr><block>{<expr>"complete_statement"</expr>,  <expr>(<name>PyCFunction</name>)<name>module_complete</name></expr>,
+     <expr><name>METH_VARARGS</name> | <name>METH_KEYWORDS</name></expr>, <expr><name>module_complete_doc</name></expr>}</block></expr>,
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>HAVE_SHARED_CACHE</name></cpp:ifdef>
+    <expr><block>{<expr>"enable_shared_cache"</expr>,  <expr>(<name>PyCFunction</name>)<name>module_enable_shared_cache</name></expr>,
+     <expr><name>METH_VARARGS</name> | <name>METH_KEYWORDS</name></expr>, <expr><name>module_enable_shared_cache_doc</name></expr>}</block></expr>,
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+    <expr><block>{<expr>"register_adapter"</expr>, <expr>(<name>PyCFunction</name>)<name>module_register_adapter</name></expr>,
+     <expr><name>METH_VARARGS</name></expr>, <expr><name>module_register_adapter_doc</name></expr>}</block></expr>,
+    <expr><block>{<expr>"register_converter"</expr>, <expr>(<name>PyCFunction</name>)<name>module_register_converter</name></expr>,
+     <expr><name>METH_VARARGS</name></expr>, <expr><name>module_register_converter_doc</name></expr>}</block></expr>,
+    <expr><block>{<expr>"adapt"</expr>,  <expr>(<name>PyCFunction</name>)<name>pysqlite_adapt</name></expr>, <expr><name>METH_VARARGS</name></expr>,
+     <expr><name>pysqlite_adapt_doc</name></expr>}</block></expr>,
+    <expr><block>{<expr>"enable_callback_tracebacks"</expr>,  <expr>(<name>PyCFunction</name>)<name>enable_callback_tracebacks</name></expr>,
+     <expr><name>METH_VARARGS</name></expr>, <expr><name>enable_callback_tracebacks_doc</name></expr>}</block></expr>,
+    <expr><block>{<expr><name>NULL</name></expr>, <expr><name>NULL</name></expr>}</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+
+<struct>struct <name>_IntConstantPair</name> <block>{
+    <decl_stmt><decl><type><name>char</name>*</type> <name>constant_name</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>constant_value</name></decl>;</decl_stmt>
+}</block>;</struct>
+
+<typedef>typedef <type>struct <name>_IntConstantPair</name></type> <name>IntConstantPair</name>;</typedef>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>IntConstantPair</name></type> <name><name>_int_constants</name><index>[]</index></name> <init>= <expr><block>{
+    <expr><block>{<expr>"PARSE_DECLTYPES"</expr>, <expr><name>PARSE_DECLTYPES</name></expr>}</block></expr>,
+    <expr><block>{<expr>"PARSE_COLNAMES"</expr>, <expr><name>PARSE_COLNAMES</name></expr>}</block></expr>,
+
+    <expr><block>{<expr>"SQLITE_OK"</expr>, <expr><name>SQLITE_OK</name></expr>}</block></expr>,
+    <expr><block>{<expr>"SQLITE_DENY"</expr>, <expr><name>SQLITE_DENY</name></expr>}</block></expr>,
+    <expr><block>{<expr>"SQLITE_IGNORE"</expr>, <expr><name>SQLITE_IGNORE</name></expr>}</block></expr>,
+    <expr><block>{<expr>"SQLITE_CREATE_INDEX"</expr>, <expr><name>SQLITE_CREATE_INDEX</name></expr>}</block></expr>,
+    <expr><block>{<expr>"SQLITE_CREATE_TABLE"</expr>, <expr><name>SQLITE_CREATE_TABLE</name></expr>}</block></expr>,
+    <expr><block>{<expr>"SQLITE_CREATE_TEMP_INDEX"</expr>, <expr><name>SQLITE_CREATE_TEMP_INDEX</name></expr>}</block></expr>,
+    <expr><block>{<expr>"SQLITE_CREATE_TEMP_TABLE"</expr>, <expr><name>SQLITE_CREATE_TEMP_TABLE</name></expr>}</block></expr>,
+    <expr><block>{<expr>"SQLITE_CREATE_TEMP_TRIGGER"</expr>, <expr><name>SQLITE_CREATE_TEMP_TRIGGER</name></expr>}</block></expr>,
+    <expr><block>{<expr>"SQLITE_CREATE_TEMP_VIEW"</expr>, <expr><name>SQLITE_CREATE_TEMP_VIEW</name></expr>}</block></expr>,
+    <expr><block>{<expr>"SQLITE_CREATE_TRIGGER"</expr>, <expr><name>SQLITE_CREATE_TRIGGER</name></expr>}</block></expr>,
+    <expr><block>{<expr>"SQLITE_CREATE_VIEW"</expr>, <expr><name>SQLITE_CREATE_VIEW</name></expr>}</block></expr>,
+    <expr><block>{<expr>"SQLITE_DELETE"</expr>, <expr><name>SQLITE_DELETE</name></expr>}</block></expr>,
+    <expr><block>{<expr>"SQLITE_DROP_INDEX"</expr>, <expr><name>SQLITE_DROP_INDEX</name></expr>}</block></expr>,
+    <expr><block>{<expr>"SQLITE_DROP_TABLE"</expr>, <expr><name>SQLITE_DROP_TABLE</name></expr>}</block></expr>,
+    <expr><block>{<expr>"SQLITE_DROP_TEMP_INDEX"</expr>, <expr><name>SQLITE_DROP_TEMP_INDEX</name></expr>}</block></expr>,
+    <expr><block>{<expr>"SQLITE_DROP_TEMP_TABLE"</expr>, <expr><name>SQLITE_DROP_TEMP_TABLE</name></expr>}</block></expr>,
+    <expr><block>{<expr>"SQLITE_DROP_TEMP_TRIGGER"</expr>, <expr><name>SQLITE_DROP_TEMP_TRIGGER</name></expr>}</block></expr>,
+    <expr><block>{<expr>"SQLITE_DROP_TEMP_VIEW"</expr>, <expr><name>SQLITE_DROP_TEMP_VIEW</name></expr>}</block></expr>,
+    <expr><block>{<expr>"SQLITE_DROP_TRIGGER"</expr>, <expr><name>SQLITE_DROP_TRIGGER</name></expr>}</block></expr>,
+    <expr><block>{<expr>"SQLITE_DROP_VIEW"</expr>, <expr><name>SQLITE_DROP_VIEW</name></expr>}</block></expr>,
+    <expr><block>{<expr>"SQLITE_INSERT"</expr>, <expr><name>SQLITE_INSERT</name></expr>}</block></expr>,
+    <expr><block>{<expr>"SQLITE_PRAGMA"</expr>, <expr><name>SQLITE_PRAGMA</name></expr>}</block></expr>,
+    <expr><block>{<expr>"SQLITE_READ"</expr>, <expr><name>SQLITE_READ</name></expr>}</block></expr>,
+    <expr><block>{<expr>"SQLITE_SELECT"</expr>, <expr><name>SQLITE_SELECT</name></expr>}</block></expr>,
+    <expr><block>{<expr>"SQLITE_TRANSACTION"</expr>, <expr><name>SQLITE_TRANSACTION</name></expr>}</block></expr>,
+    <expr><block>{<expr>"SQLITE_UPDATE"</expr>, <expr><name>SQLITE_UPDATE</name></expr>}</block></expr>,
+    <expr><block>{<expr>"SQLITE_ATTACH"</expr>, <expr><name>SQLITE_ATTACH</name></expr>}</block></expr>,
+    <expr><block>{<expr>"SQLITE_DETACH"</expr>, <expr><name>SQLITE_DETACH</name></expr>}</block></expr>,
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>SQLITE_VERSION_NUMBER</name> &gt;= 3002001</expr></cpp:if>
+    <expr><block>{<expr>"SQLITE_ALTER_TABLE"</expr>, <expr><name>SQLITE_ALTER_TABLE</name></expr>}</block></expr>,
+    <expr><block>{<expr>"SQLITE_REINDEX"</expr>, <expr><name>SQLITE_REINDEX</name></expr>}</block></expr>,
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>SQLITE_VERSION_NUMBER</name> &gt;= 3003000</expr></cpp:if>
+    <expr><block>{<expr>"SQLITE_ANALYZE"</expr>, <expr><name>SQLITE_ANALYZE</name></expr>}</block></expr>,
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+    <expr><block>{<expr>(<name>char</name>*)<name>NULL</name></expr>, <expr>0</expr>}</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+
+<function><type><name>PyMODINIT_FUNC</name></type> <name>init_sqlite3</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>PyObject</name> *</type><name>module</name></decl>, *<decl><type ref="prev"/><name>dict</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name> *</type><name>tmp_obj</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>module</name> = <call><name>Py_InitModule</name><argument_list>(<argument><expr>"_sqlite3"</expr></argument>, <argument><expr><name>module_methods</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr>!<name>module</name> ||
+        (<call><name>pysqlite_row_setup_types</name><argument_list>()</argument_list></call> &lt; 0) ||
+        (<call><name>pysqlite_cursor_setup_types</name><argument_list>()</argument_list></call> &lt; 0) ||
+        (<call><name>pysqlite_connection_setup_types</name><argument_list>()</argument_list></call> &lt; 0) ||
+        (<call><name>pysqlite_cache_setup_types</name><argument_list>()</argument_list></call> &lt; 0) ||
+        (<call><name>pysqlite_statement_setup_types</name><argument_list>()</argument_list></call> &lt; 0) ||
+        (<call><name>pysqlite_prepare_protocol_setup_types</name><argument_list>()</argument_list></call> &lt; 0)</expr>
+       )</condition><then> <block>{
+        <return>return;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr>&amp;<name>pysqlite_ConnectionType</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>PyModule_AddObject</name><argument_list>(<argument><expr><name>module</name></expr></argument>, <argument><expr>"Connection"</expr></argument>, <argument><expr>(<name>PyObject</name>*) &amp;<name>pysqlite_ConnectionType</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr>&amp;<name>pysqlite_CursorType</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>PyModule_AddObject</name><argument_list>(<argument><expr><name>module</name></expr></argument>, <argument><expr>"Cursor"</expr></argument>, <argument><expr>(<name>PyObject</name>*) &amp;<name>pysqlite_CursorType</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr>&amp;<name>pysqlite_CacheType</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>PyModule_AddObject</name><argument_list>(<argument><expr><name>module</name></expr></argument>, <argument><expr>"Statement"</expr></argument>, <argument><expr>(<name>PyObject</name>*)&amp;<name>pysqlite_StatementType</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr>&amp;<name>pysqlite_StatementType</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>PyModule_AddObject</name><argument_list>(<argument><expr><name>module</name></expr></argument>, <argument><expr>"Cache"</expr></argument>, <argument><expr>(<name>PyObject</name>*) &amp;<name>pysqlite_CacheType</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr>&amp;<name>pysqlite_PrepareProtocolType</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>PyModule_AddObject</name><argument_list>(<argument><expr><name>module</name></expr></argument>, <argument><expr>"PrepareProtocol"</expr></argument>, <argument><expr>(<name>PyObject</name>*) &amp;<name>pysqlite_PrepareProtocolType</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr>&amp;<name>pysqlite_RowType</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>PyModule_AddObject</name><argument_list>(<argument><expr><name>module</name></expr></argument>, <argument><expr>"Row"</expr></argument>, <argument><expr>(<name>PyObject</name>*) &amp;<name>pysqlite_RowType</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr>!(<name>dict</name> = <call><name>PyModule_GetDict</name><argument_list>(<argument><expr><name>module</name></expr></argument>)</argument_list></call>)</expr>)</condition><then> <block>{
+        <goto>goto <name>error</name>;</goto>
+    }</block></then></if>
+
+    <comment type="block">/*** Create DB-API Exception hierarchy */</comment>
+
+    <if>if <condition>(<expr>!(<name>pysqlite_Error</name> = <call><name>PyErr_NewException</name><argument_list>(<argument><expr><name>MODULE_NAME</name> ".Error"</expr></argument>, <argument><expr><name>PyExc_StandardError</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call>)</expr>)</condition><then> <block>{
+        <goto>goto <name>error</name>;</goto>
+    }</block></then></if>
+    <expr_stmt><expr><call><name>PyDict_SetItemString</name><argument_list>(<argument><expr><name>dict</name></expr></argument>, <argument><expr>"Error"</expr></argument>, <argument><expr><name>pysqlite_Error</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr>!(<name>pysqlite_Warning</name> = <call><name>PyErr_NewException</name><argument_list>(<argument><expr><name>MODULE_NAME</name> ".Warning"</expr></argument>, <argument><expr><name>PyExc_StandardError</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call>)</expr>)</condition><then> <block>{
+        <goto>goto <name>error</name>;</goto>
+    }</block></then></if>
+    <expr_stmt><expr><call><name>PyDict_SetItemString</name><argument_list>(<argument><expr><name>dict</name></expr></argument>, <argument><expr>"Warning"</expr></argument>, <argument><expr><name>pysqlite_Warning</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* Error subclasses */</comment>
+
+    <if>if <condition>(<expr>!(<name>pysqlite_InterfaceError</name> = <call><name>PyErr_NewException</name><argument_list>(<argument><expr><name>MODULE_NAME</name> ".InterfaceError"</expr></argument>, <argument><expr><name>pysqlite_Error</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call>)</expr>)</condition><then> <block>{
+        <goto>goto <name>error</name>;</goto>
+    }</block></then></if>
+    <expr_stmt><expr><call><name>PyDict_SetItemString</name><argument_list>(<argument><expr><name>dict</name></expr></argument>, <argument><expr>"InterfaceError"</expr></argument>, <argument><expr><name>pysqlite_InterfaceError</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr>!(<name>pysqlite_DatabaseError</name> = <call><name>PyErr_NewException</name><argument_list>(<argument><expr><name>MODULE_NAME</name> ".DatabaseError"</expr></argument>, <argument><expr><name>pysqlite_Error</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call>)</expr>)</condition><then> <block>{
+        <goto>goto <name>error</name>;</goto>
+    }</block></then></if>
+    <expr_stmt><expr><call><name>PyDict_SetItemString</name><argument_list>(<argument><expr><name>dict</name></expr></argument>, <argument><expr>"DatabaseError"</expr></argument>, <argument><expr><name>pysqlite_DatabaseError</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* pysqlite_DatabaseError subclasses */</comment>
+
+    <if>if <condition>(<expr>!(<name>pysqlite_InternalError</name> = <call><name>PyErr_NewException</name><argument_list>(<argument><expr><name>MODULE_NAME</name> ".InternalError"</expr></argument>, <argument><expr><name>pysqlite_DatabaseError</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call>)</expr>)</condition><then> <block>{
+        <goto>goto <name>error</name>;</goto>
+    }</block></then></if>
+    <expr_stmt><expr><call><name>PyDict_SetItemString</name><argument_list>(<argument><expr><name>dict</name></expr></argument>, <argument><expr>"InternalError"</expr></argument>, <argument><expr><name>pysqlite_InternalError</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr>!(<name>pysqlite_OperationalError</name> = <call><name>PyErr_NewException</name><argument_list>(<argument><expr><name>MODULE_NAME</name> ".OperationalError"</expr></argument>, <argument><expr><name>pysqlite_DatabaseError</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call>)</expr>)</condition><then> <block>{
+        <goto>goto <name>error</name>;</goto>
+    }</block></then></if>
+    <expr_stmt><expr><call><name>PyDict_SetItemString</name><argument_list>(<argument><expr><name>dict</name></expr></argument>, <argument><expr>"OperationalError"</expr></argument>, <argument><expr><name>pysqlite_OperationalError</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr>!(<name>pysqlite_ProgrammingError</name> = <call><name>PyErr_NewException</name><argument_list>(<argument><expr><name>MODULE_NAME</name> ".ProgrammingError"</expr></argument>, <argument><expr><name>pysqlite_DatabaseError</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call>)</expr>)</condition><then> <block>{
+        <goto>goto <name>error</name>;</goto>
+    }</block></then></if>
+    <expr_stmt><expr><call><name>PyDict_SetItemString</name><argument_list>(<argument><expr><name>dict</name></expr></argument>, <argument><expr>"ProgrammingError"</expr></argument>, <argument><expr><name>pysqlite_ProgrammingError</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr>!(<name>pysqlite_IntegrityError</name> = <call><name>PyErr_NewException</name><argument_list>(<argument><expr><name>MODULE_NAME</name> ".IntegrityError"</expr></argument>, <argument><expr><name>pysqlite_DatabaseError</name></expr></argument>,<argument><expr><name>NULL</name></expr></argument>)</argument_list></call>)</expr>)</condition><then> <block>{
+        <goto>goto <name>error</name>;</goto>
+    }</block></then></if>
+    <expr_stmt><expr><call><name>PyDict_SetItemString</name><argument_list>(<argument><expr><name>dict</name></expr></argument>, <argument><expr>"IntegrityError"</expr></argument>, <argument><expr><name>pysqlite_IntegrityError</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr>!(<name>pysqlite_DataError</name> = <call><name>PyErr_NewException</name><argument_list>(<argument><expr><name>MODULE_NAME</name> ".DataError"</expr></argument>, <argument><expr><name>pysqlite_DatabaseError</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call>)</expr>)</condition><then> <block>{
+        <goto>goto <name>error</name>;</goto>
+    }</block></then></if>
+    <expr_stmt><expr><call><name>PyDict_SetItemString</name><argument_list>(<argument><expr><name>dict</name></expr></argument>, <argument><expr>"DataError"</expr></argument>, <argument><expr><name>pysqlite_DataError</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr>!(<name>pysqlite_NotSupportedError</name> = <call><name>PyErr_NewException</name><argument_list>(<argument><expr><name>MODULE_NAME</name> ".NotSupportedError"</expr></argument>, <argument><expr><name>pysqlite_DatabaseError</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call>)</expr>)</condition><then> <block>{
+        <goto>goto <name>error</name>;</goto>
+    }</block></then></if>
+    <expr_stmt><expr><call><name>PyDict_SetItemString</name><argument_list>(<argument><expr><name>dict</name></expr></argument>, <argument><expr>"NotSupportedError"</expr></argument>, <argument><expr><name>pysqlite_NotSupportedError</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* We just need "something" unique for pysqlite_OptimizedUnicode. It does not really
+     * need to be a string subclass. Just anything that can act as a special
+     * marker for us. So I pulled PyCell_Type out of my magic hat.
+     */</comment>
+    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr>(<name>PyObject</name>*)&amp;<name>PyCell_Type</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name>pysqlite_OptimizedUnicode</name> = (<name>PyObject</name>*)&amp;<name>PyCell_Type</name></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>PyDict_SetItemString</name><argument_list>(<argument><expr><name>dict</name></expr></argument>, <argument><expr>"OptimizedUnicode"</expr></argument>, <argument><expr><name>pysqlite_OptimizedUnicode</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* Set integer constants */</comment>
+    <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name><name>_int_constants</name><index>[<expr><name>i</name></expr>]</index></name>.<name>constant_name</name> != 0</expr>;</condition> <incr><expr><name>i</name>++</expr></incr>) <block>{
+        <expr_stmt><expr><name>tmp_obj</name> = <call><name>PyInt_FromLong</name><argument_list>(<argument><expr><name><name>_int_constants</name><index>[<expr><name>i</name></expr>]</index></name>.<name>constant_value</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr>!<name>tmp_obj</name></expr>)</condition><then> <block>{
+            <goto>goto <name>error</name>;</goto>
+        }</block></then></if>
+        <expr_stmt><expr><call><name>PyDict_SetItemString</name><argument_list>(<argument><expr><name>dict</name></expr></argument>, <argument><expr><name><name>_int_constants</name><index>[<expr><name>i</name></expr>]</index></name>.<name>constant_name</name></expr></argument>, <argument><expr><name>tmp_obj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>tmp_obj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></for>
+
+    <if>if <condition>(<expr>!(<name>tmp_obj</name> = <call><name>PyString_FromString</name><argument_list>(<argument><expr><name>PYSQLITE_VERSION</name></expr></argument>)</argument_list></call>)</expr>)</condition><then> <block>{
+        <goto>goto <name>error</name>;</goto>
+    }</block></then></if>
+    <expr_stmt><expr><call><name>PyDict_SetItemString</name><argument_list>(<argument><expr><name>dict</name></expr></argument>, <argument><expr>"version"</expr></argument>, <argument><expr><name>tmp_obj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>tmp_obj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr>!(<name>tmp_obj</name> = <call><name>PyString_FromString</name><argument_list>(<argument><expr><call><name>sqlite3_libversion</name><argument_list>()</argument_list></call></expr></argument>)</argument_list></call>)</expr>)</condition><then> <block>{
+        <goto>goto <name>error</name>;</goto>
+    }</block></then></if>
+    <expr_stmt><expr><call><name>PyDict_SetItemString</name><argument_list>(<argument><expr><name>dict</name></expr></argument>, <argument><expr>"sqlite_version"</expr></argument>, <argument><expr><name>tmp_obj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>tmp_obj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* initialize microprotocols layer */</comment>
+    <expr_stmt><expr><call><name>pysqlite_microprotocols_init</name><argument_list>(<argument><expr><name>dict</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* initialize the default converters */</comment>
+    <expr_stmt><expr><call><name>converters_init</name><argument_list>(<argument><expr><name>dict</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>_enable_callback_tracebacks</name> = 0</expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>pysqlite_BaseTypeAdapted</name> = 0</expr>;</expr_stmt>
+
+    <comment type="block">/* Original comment from _bsddb.c in the Python core. This is also still
+     * needed nowadays for Python 2.3/2.4.
+     * 
+     * PyEval_InitThreads is called here due to a quirk in python 1.5
+     * - 2.2.1 (at least) according to Russell Williamson &lt;merel@wt.net&gt;:
+     * The global interpreter lock is not initialized until the first
+     * thread is created using thread.start_new_thread() or fork() is
+     * called.  that would cause the ALLOW_THREADS here to segfault due
+     * to a null pointer reference if no threads or child processes
+     * have been created.  This works around that and is a no-op if
+     * threads have already been initialized.
+     *  (see pybsddb-users mailing list post on 2002-08-07)
+     */</comment>
+    <expr_stmt><expr><call><name>PyEval_InitThreads</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+
+<label><name>error</name>:</label>
+    <if>if <condition>(<expr><call><name>PyErr_Occurred</name><argument_list>()</argument_list></call></expr>)</condition><then>
+    <block>{
+        <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ImportError</name></expr></argument>, <argument><expr><name>MODULE_NAME</name> ": init failed"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+}</block></function>
+</unit>

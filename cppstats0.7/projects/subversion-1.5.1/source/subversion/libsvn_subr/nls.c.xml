@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/subversion-1.5.1/source/subversion/libsvn_subr/nls.c"><comment type="block">/*
+ * nls.c :  Helpers for NLS programs.
+ *
+ * ====================================================================
+ * Copyright (c) 2000-2005 CollabNet.  All rights reserved.
+ *
+ * This software is licensed as described in the file COPYING, which
+ * you should have received as part of this distribution.  The terms
+ * are also available at http://subversion.tigris.org/license-1.html.
+ * If newer versions of this license are posted there, you may use a
+ * newer version instead, at your option.
+ *
+ * This software consists of voluntary contributions made by many
+ * individuals.  For exact contribution history, see the revision
+ * history and logs, available at http://subversion.tigris.org/.
+ * ====================================================================
+ */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;stdlib.h&gt;</cpp:file></cpp:include>
+
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>WIN32</name></cpp:ifndef>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;sys/types.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;sys/stat.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;fcntl.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;unistd.h&gt;</cpp:file></cpp:include>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_errno.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_nls.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_error.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_pools.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_path.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_private_config.h"</cpp:file></cpp:include>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>WIN32</name></cpp:ifdef>
+<comment type="block">/* FIXME: We're using an internal APR header here, which means we
+   have to build Subversion with APR sources. This being Win32-only,
+   that should be fine for now, but a better solution must be found in
+   combination with issue #850. */</comment>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;arch/win32/apr_arch_utf8.h&gt;</cpp:file></cpp:include>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_nls_init</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name> <init>= <expr><name>SVN_NO_ERROR</name></expr></init></decl>;</decl_stmt>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>ENABLE_NLS</name></cpp:ifdef>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>WIN32</name></cpp:ifdef>
+  <block>{
+    <decl_stmt><decl><type><name>WCHAR</name></type> <name><name>ucs2_path</name><index>[<expr><name>MAX_PATH</name></expr>]</index></name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name>*</type> <name>utf8_path</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name>*</type> <name>internal_path</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_pool_t</name>*</type> <name>pool</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_status_t</name></type> <name>apr_err</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_size_t</name></type> <name>inwords</name></decl>, <decl><type ref="prev"/><name>outbytes</name></decl>, <decl><type ref="prev"/><name>outlength</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><call><name>apr_pool_create</name><argument_list>(<argument><expr>&amp;<name>pool</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <comment type="block">/* get exe name - our locale info will be in '../share/locale' */</comment>
+    <expr_stmt><expr><name>inwords</name> = <call><name>GetModuleFileNameW</name><argument_list>(<argument><expr>0</expr></argument>, <argument><expr><name>ucs2_path</name></expr></argument>,
+                                 <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>ucs2_path</name></expr></argument>)</argument_list></sizeof> / <sizeof>sizeof<argument_list>(<argument><expr><name><name>ucs2_path</name><index>[<expr>0</expr>]</index></name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr>! <name>inwords</name></expr>)</condition><then>
+      <block>{
+        <comment type="block">/* We must be on a Win9x machine, so attempt to get an ANSI path,
+           and convert it to Unicode. */</comment>
+        <decl_stmt><decl><type><name>CHAR</name></type> <name><name>ansi_path</name><index>[<expr><name>MAX_PATH</name></expr>]</index></name></decl>;</decl_stmt>
+
+        <if>if <condition>(<expr><call><name>GetModuleFileNameA</name><argument_list>(<argument><expr>0</expr></argument>, <argument><expr><name>ansi_path</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>ansi_path</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>)</condition><then>
+          <block>{
+            <expr_stmt><expr><name>inwords</name> =
+              <call><name>MultiByteToWideChar</name><argument_list>(<argument><expr><name>CP_ACP</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>ansi_path</name></expr></argument>, <argument><expr>-1</expr></argument>, <argument><expr><name>ucs2_path</name></expr></argument>,
+                                  <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>ucs2_path</name></expr></argument>)</argument_list></sizeof> / <sizeof>sizeof<argument_list>(<argument><expr><name><name>ucs2_path</name><index>[<expr>0</expr>]</index></name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <if>if <condition>(<expr>! <name>inwords</name></expr>)</condition><then> <block>{
+              <expr_stmt><expr><name>err</name> =
+                <call><name>svn_error_createf</name><argument_list>(<argument><expr><name>APR_EINVAL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                  <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Can't convert string to UCS-2: '%s'"</expr></argument>)</argument_list></call></expr></argument>,
+                                  <argument><expr><name>ansi_path</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></then></if>
+          }</block></then>
+        <else>else
+          <block>{
+            <expr_stmt><expr><name>err</name> = <call><name>svn_error_create</name><argument_list>(<argument><expr><name>APR_EINVAL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                   <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Can't get module file name"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          }</block></else></if>
+      }</block></then></if>
+
+    <if>if <condition>(<expr>! <name>err</name></expr>)</condition><then>
+      <block>{
+        <expr_stmt><expr><name>outbytes</name> = <name>outlength</name> = 3 * (<name>inwords</name> + 1)</expr>;</expr_stmt>
+        <expr_stmt><expr><name>utf8_path</name> = <call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>outlength</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><name>apr_err</name> = <call><name>apr_conv_ucs2_to_utf8</name><argument_list>(<argument><expr><name>ucs2_path</name></expr></argument>, <argument><expr>&amp;<name>inwords</name></expr></argument>,
+                                        <argument><expr><name>utf8_path</name></expr></argument>, <argument><expr>&amp;<name>outbytes</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr>!<name>apr_err</name> &amp;&amp; (<name>inwords</name> &gt; 0 || <name>outbytes</name> == 0)</expr>)</condition><then>
+          <expr_stmt><expr><name>apr_err</name> = <name>APR_INCOMPLETE</name></expr>;</expr_stmt></then></if>
+        <if>if <condition>(<expr><name>apr_err</name></expr>)</condition><then>
+          <block>{
+            <expr_stmt><expr><name>err</name> = <call><name>svn_error_createf</name><argument_list>(<argument><expr><name>apr_err</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                    <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Can't convert module path "
+                                      "to UTF-8 from UCS-2: '%s'"</expr></argument>)</argument_list></call></expr></argument>,
+                                    <argument><expr><name>ucs2_path</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          }</block></then>
+        <else>else
+          <block>{
+            <expr_stmt><expr><name><name>utf8_path</name><index>[<expr><name>outlength</name> - <name>outbytes</name></expr>]</index></name> = '\0'</expr>;</expr_stmt>
+            <expr_stmt><expr><name>internal_path</name> = <call><name>svn_path_internal_style</name><argument_list>(<argument><expr><name>utf8_path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <comment type="block">/* get base path name */</comment>
+            <expr_stmt><expr><name>internal_path</name> = <call><name>svn_path_dirname</name><argument_list>(<argument><expr><name>internal_path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name>internal_path</name> = <call><name>svn_path_join</name><argument_list>(<argument><expr><name>internal_path</name></expr></argument>,
+                                          <argument><expr><name>SVN_LOCALE_RELATIVE_PATH</name></expr></argument>,
+                                          <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>bindtextdomain</name><argument_list>(<argument><expr><name>PACKAGE_NAME</name></expr></argument>, <argument><expr><name>internal_path</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          }</block></else></if>
+      }</block></then></if>
+    <expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  }</block>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+  <expr_stmt><expr><call><name>bindtextdomain</name><argument_list>(<argument><expr><name>PACKAGE_NAME</name></expr></argument>, <argument><expr><name>SVN_LOCALE_DIR</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>HAVE_BIND_TEXTDOMAIN_CODESET</name></cpp:ifdef>
+  <expr_stmt><expr><call><name>bind_textdomain_codeset</name><argument_list>(<argument><expr><name>PACKAGE_NAME</name></expr></argument>, <argument><expr>"UTF-8"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+  <return>return <expr><name>err</name></expr>;</return>
+}</block></function>
+</unit>

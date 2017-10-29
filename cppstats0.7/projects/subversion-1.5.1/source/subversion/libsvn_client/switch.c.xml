@@ -1,0 +1,269 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/subversion-1.5.1/source/subversion/libsvn_client/switch.c"><comment type="block">/*
+ * switch.c:  implement 'switch' feature via WC &amp; RA interfaces.
+ *
+ * ====================================================================
+ * Copyright (c) 2000-2007 CollabNet.  All rights reserved.
+ *
+ * This software is licensed as described in the file COPYING, which
+ * you should have received as part of this distribution.  The terms
+ * are also available at http://subversion.tigris.org/license-1.html.
+ * If newer versions of this license are posted there, you may use a
+ * newer version instead, at your option.
+ *
+ * This software consists of voluntary contributions made by many
+ * individuals.  For exact contribution history, see the revision
+ * history and logs, available at http://subversion.tigris.org/.
+ * ====================================================================
+ */</comment>
+
+<comment type="block">/* ==================================================================== */</comment>
+
+
+<escape char="0xc"/>
+<comment type="block">/*** Includes. ***/</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;assert.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_client.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_error.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_time.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_path.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_config.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_pools.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"client.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_private_config.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"private/svn_wc_private.h"</cpp:file></cpp:include>
+
+<escape char="0xc"/>
+<comment type="block">/*** Code. ***/</comment>
+
+<comment type="block">/* This feature is essentially identical to 'svn update' (see
+   ./update.c), but with two differences:
+
+     - the reporter-&gt;finish_report() routine needs to make the server
+       run delta_dirs() on two *different* paths, rather than on two
+       identical paths.
+
+     - after the update runs, we need to more than just
+       ensure_uniform_revision;  we need to rewrite all the entries'
+       URL attributes.
+*/</comment>
+
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_client__switch_internal</name><parameter_list>(<param><decl><type><name>svn_revnum_t</name> *</type><name>result_rev</name></decl></param>,
+                            <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+                            <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>switch_url</name></decl></param>,
+                            <param><decl><type><specifier>const</specifier> <name>svn_opt_revision_t</name> *</type><name>peg_revision</name></decl></param>,
+                            <param><decl><type><specifier>const</specifier> <name>svn_opt_revision_t</name> *</type><name>revision</name></decl></param>,
+                            <param><decl><type><name>svn_depth_t</name></type> <name>depth</name></decl></param>,
+                            <param><decl><type><name>svn_boolean_t</name></type> <name>depth_is_sticky</name></decl></param>,
+                            <param><decl><type><name>svn_boolean_t</name> *</type><name>timestamp_sleep</name></decl></param>,
+                            <param><decl><type><name>svn_boolean_t</name></type> <name>ignore_externals</name></decl></param>,
+                            <param><decl><type><name>svn_boolean_t</name></type> <name>allow_unver_obstructions</name></decl></param>,
+                            <param><decl><type><name>svn_client_ctx_t</name> *</type><name>ctx</name></decl></param>,
+                            <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>svn_ra_reporter3_t</name> *</type><name>reporter</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>void</name> *</type><name>report_baton</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>svn_wc_entry_t</name> *</type><name>entry</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>URL</name></decl>, *<decl><type ref="prev"/><name>anchor</name></decl>, *<decl><type ref="prev"/><name>target</name></decl>, *<decl><type ref="prev"/><name>source_root</name></decl>, *<decl><type ref="prev"/><name>switch_rev_url</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_ra_session_t</name> *</type><name>ra_session</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_revnum_t</name></type> <name>revnum</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name> <init>= <expr><name>SVN_NO_ERROR</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_wc_adm_access_t</name> *</type><name>adm_access</name></decl>, *<decl><type ref="prev"/><name>dir_access</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>diff3_cmd</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>use_commit_times</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>sleep_here</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name> *</type><name>use_sleep</name> <init>= <expr><name>timestamp_sleep</name> ? <name>timestamp_sleep</name> : &amp;<name>sleep_here</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>svn_delta_editor_t</name> *</type><name>switch_editor</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>void</name> *</type><name>switch_edit_baton</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_wc_traversal_info_t</name> *</type><name>traversal_info</name> <init>= <expr><call><name>svn_wc_init_traversal_info</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>preserved_exts_str</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>preserved_exts</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>server_supports_depth</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_config_t</name> *</type><name>cfg</name> <init>= <expr><name><name>ctx</name>-&gt;<name>config</name></name> ? <call><name>apr_hash_get</name><argument_list>(<argument><expr><name><name>ctx</name>-&gt;<name>config</name></name></expr></argument>,
+                                                 <argument><expr><name>SVN_CONFIG_CATEGORY_CONFIG</name></expr></argument>,
+                                                 <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>)</argument_list></call>
+                                  : <name>NULL</name></expr></init></decl>;</decl_stmt>
+
+  <comment type="block">/* An unknown depth can't be sticky. */</comment>
+  <if>if <condition>(<expr><name>depth</name> == <name>svn_depth_unknown</name></expr>)</condition><then>
+    <expr_stmt><expr><name>depth_is_sticky</name> = <name>FALSE</name></expr>;</expr_stmt></then></if>
+  
+  <comment type="block">/* Get the external diff3, if any. */</comment>
+  <expr_stmt><expr><call><name>svn_config_get</name><argument_list>(<argument><expr><name>cfg</name></expr></argument>, <argument><expr>&amp;<name>diff3_cmd</name></expr></argument>, <argument><expr><name>SVN_CONFIG_SECTION_HELPERS</name></expr></argument>,
+                 <argument><expr><name>SVN_CONFIG_OPTION_DIFF3_CMD</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* See if the user wants last-commit timestamps instead of current ones. */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_config_get_bool</name><argument_list>(<argument><expr><name>cfg</name></expr></argument>, <argument><expr>&amp;<name>use_commit_times</name></expr></argument>,
+                              <argument><expr><name>SVN_CONFIG_SECTION_MISCELLANY</name></expr></argument>,
+                              <argument><expr><name>SVN_CONFIG_OPTION_USE_COMMIT_TIMES</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* See which files the user wants to preserve the extension of when
+     conflict files are made. */</comment>
+  <expr_stmt><expr><call><name>svn_config_get</name><argument_list>(<argument><expr><name>cfg</name></expr></argument>, <argument><expr>&amp;<name>preserved_exts_str</name></expr></argument>, <argument><expr><name>SVN_CONFIG_SECTION_MISCELLANY</name></expr></argument>,
+                 <argument><expr><name>SVN_CONFIG_OPTION_PRESERVED_CF_EXTS</name></expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>preserved_exts</name> = *<name>preserved_exts_str</name>
+    ? <call><name>svn_cstring_split</name><argument_list>(<argument><expr><name>preserved_exts_str</name></expr></argument>, <argument><expr>"\n\r\t\v "</expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call>
+    : <name>NULL</name></expr>;</expr_stmt>
+
+  <comment type="block">/* Sanity check.  Without these, the switch is meaningless. */</comment>
+  <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>path</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>switch_url</name> &amp;&amp; (<name><name>switch_url</name><index>[<expr>0</expr>]</index></name> != '\0')</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* ### Need to lock the whole target tree to invalidate wcprops. Does
+     non-recursive switch really need to invalidate the whole tree? */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_wc_adm_open_anchor</name><argument_list>(<argument><expr>&amp;<name>adm_access</name></expr></argument>, <argument><expr>&amp;<name>dir_access</name></expr></argument>, <argument><expr>&amp;<name>target</name></expr></argument>, <argument><expr><name>path</name></expr></argument>,
+                                 <argument><expr><name>TRUE</name></expr></argument>, <argument><expr>-1</expr></argument>, <argument><expr><name><name>ctx</name>-&gt;<name>cancel_func</name></name></expr></argument>,
+                                 <argument><expr><name><name>ctx</name>-&gt;<name>cancel_baton</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>anchor</name> = <call><name>svn_wc_adm_access_path</name><argument_list>(<argument><expr><name>adm_access</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_wc__entry_versioned</name><argument_list>(<argument><expr>&amp;<name>entry</name></expr></argument>, <argument><expr><name>anchor</name></expr></argument>, <argument><expr><name>adm_access</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr>! <name><name>entry</name>-&gt;<name>url</name></name></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_ENTRY_MISSING_URL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                             <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Directory '%s' has no URL"</expr></argument>)</argument_list></call></expr></argument>,
+                             <argument><expr><call><name>svn_path_local_style</name><argument_list>(<argument><expr><name>anchor</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <expr_stmt><expr><name>URL</name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name><name>entry</name>-&gt;<name>url</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Open an RA session to 'source' URL */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_client__ra_session_from_path</name><argument_list>(<argument><expr>&amp;<name>ra_session</name></expr></argument>, <argument><expr>&amp;<name>revnum</name></expr></argument>, 
+                                           <argument><expr>&amp;<name>switch_rev_url</name></expr></argument>,
+                                           <argument><expr><name>switch_url</name></expr></argument>, <argument><expr><name>adm_access</name></expr></argument>,
+                                           <argument><expr><name>peg_revision</name></expr></argument>, <argument><expr><name>revision</name></expr></argument>,
+                                           <argument><expr><name>ctx</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_ra_get_repos_root2</name><argument_list>(<argument><expr><name>ra_session</name></expr></argument>, <argument><expr>&amp;<name>source_root</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Disallow a switch operation to change the repository root of the
+     target. */</comment>
+  <if>if <condition>(<expr>! <call><name>svn_path_is_ancestor</name><argument_list>(<argument><expr><name>source_root</name></expr></argument>, <argument><expr><name>URL</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_createf</name>
+      <argument_list>(<argument><expr><name>SVN_ERR_WC_INVALID_SWITCH</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+       <argument><expr><call><name>_</name><argument_list>(<argument><expr>"'%s'\n"
+         "is not the same repository as\n"
+         "'%s'"</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>URL</name></expr></argument>, <argument><expr><name>source_root</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_ra_reparent</name><argument_list>(<argument><expr><name>ra_session</name></expr></argument>, <argument><expr><name>URL</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Fetch the switch (update) editor.  If REVISION is invalid, that's
+     okay; the RA driver will call editor-&gt;set_target_revision() later on. */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_wc_get_switch_editor3</name><argument_list>(<argument><expr>&amp;<name>revnum</name></expr></argument>, <argument><expr><name>adm_access</name></expr></argument>, <argument><expr><name>target</name></expr></argument>,
+                                    <argument><expr><name>switch_rev_url</name></expr></argument>, <argument><expr><name>use_commit_times</name></expr></argument>, <argument><expr><name>depth</name></expr></argument>, 
+                                    <argument><expr><name>depth_is_sticky</name></expr></argument>, <argument><expr><name>allow_unver_obstructions</name></expr></argument>,
+                                    <argument><expr><name><name>ctx</name>-&gt;<name>notify_func2</name></name></expr></argument>, <argument><expr><name><name>ctx</name>-&gt;<name>notify_baton2</name></name></expr></argument>,
+                                    <argument><expr><name><name>ctx</name>-&gt;<name>cancel_func</name></name></expr></argument>, <argument><expr><name><name>ctx</name>-&gt;<name>cancel_baton</name></name></expr></argument>,
+                                    <argument><expr><name><name>ctx</name>-&gt;<name>conflict_func</name></name></expr></argument>, <argument><expr><name><name>ctx</name>-&gt;<name>conflict_baton</name></name></expr></argument>,
+                                    <argument><expr><name>diff3_cmd</name></expr></argument>, <argument><expr><name>preserved_exts</name></expr></argument>,
+                                    <argument><expr>&amp;<name>switch_editor</name></expr></argument>, <argument><expr>&amp;<name>switch_edit_baton</name></expr></argument>,
+                                    <argument><expr><name>traversal_info</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Tell RA to do an update of URL+TARGET to REVISION; if we pass an
+     invalid revnum, that means RA will use the latest revision. */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_ra_do_switch2</name><argument_list>(<argument><expr><name>ra_session</name></expr></argument>, <argument><expr>&amp;<name>reporter</name></expr></argument>, <argument><expr>&amp;<name>report_baton</name></expr></argument>, <argument><expr><name>revnum</name></expr></argument>,
+                            <argument><expr><name>target</name></expr></argument>, <argument><expr><name>depth</name></expr></argument>, <argument><expr><name>switch_rev_url</name></expr></argument>,
+                            <argument><expr><name>switch_editor</name></expr></argument>, <argument><expr><name>switch_edit_baton</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_ra_has_capability</name><argument_list>(<argument><expr><name>ra_session</name></expr></argument>, <argument><expr>&amp;<name>server_supports_depth</name></expr></argument>,
+                                <argument><expr><name>SVN_RA_CAPABILITY_DEPTH</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Drive the reporter structure, describing the revisions within
+     PATH.  When we call reporter-&gt;finish_report, the update_editor
+     will be driven by svn_repos_dir_delta2.
+
+     We pass NULL for traversal_info because this is a switch, not an
+     update, and therefore we don't want to handle any externals
+     except the ones directly affected by the switch. */</comment>
+  <expr_stmt><expr><name>err</name> = <call><name>svn_wc_crawl_revisions3</name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr><name>dir_access</name></expr></argument>, <argument><expr><name>reporter</name></expr></argument>, <argument><expr><name>report_baton</name></expr></argument>,
+                                <argument><expr><name>TRUE</name></expr></argument>, <argument><expr><name>depth</name></expr></argument>, <argument><expr>(! <name>server_supports_depth</name>)</expr></argument>,
+                                <argument><expr><name>use_commit_times</name></expr></argument>,
+                                <argument><expr><name><name>ctx</name>-&gt;<name>notify_func2</name></name></expr></argument>, <argument><expr><name><name>ctx</name>-&gt;<name>notify_baton2</name></name></expr></argument>,
+                                <argument><expr><name>NULL</name></expr></argument>, <comment type="block">/* no traversal info */</comment>
+                                <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name>err</name></expr>)</condition><then>
+    <block>{
+      <comment type="block">/* Don't rely on the error handling to handle the sleep later, do
+         it now */</comment>
+      <expr_stmt><expr><call><name>svn_sleep_for_timestamps</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+      <return>return <expr><name>err</name></expr>;</return>
+    }</block></then></if>
+  <expr_stmt><expr>*<name>use_sleep</name> = <name>TRUE</name></expr>;</expr_stmt>
+
+  <comment type="block">/* We handle externals after the switch is complete, so that
+     handling external items (and any errors therefrom) doesn't delay
+     the primary operation. */</comment>
+  <if>if <condition>(<expr><call><name>SVN_DEPTH_IS_RECURSIVE</name><argument_list>(<argument><expr><name>depth</name></expr></argument>)</argument_list></call> &amp;&amp; (! <name>ignore_externals</name>)</expr>)</condition><then>
+    <expr_stmt><expr><name>err</name> = <call><name>svn_client__handle_externals</name><argument_list>(<argument><expr><name>traversal_info</name></expr></argument>, <argument><expr><name>switch_url</name></expr></argument>, <argument><expr><name>path</name></expr></argument>,
+                                       <argument><expr><name>source_root</name></expr></argument>, <argument><expr><name>depth</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>use_sleep</name></expr></argument>,
+                                       <argument><expr><name>ctx</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <comment type="block">/* Sleep to ensure timestamp integrity (we do this regardless of
+     errors in the actual switch operation(s)). */</comment>
+  <if>if <condition>(<expr><name>sleep_here</name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>svn_sleep_for_timestamps</name><argument_list>()</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <comment type="block">/* Return errors we might have sustained. */</comment>
+  <if>if <condition>(<expr><name>err</name></expr>)</condition><then>
+    <return>return <expr><name>err</name></expr>;</return></then></if>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_wc_adm_close</name><argument_list>(<argument><expr><name>adm_access</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Let everyone know we're finished here. */</comment>
+  <if>if <condition>(<expr><name><name>ctx</name>-&gt;<name>notify_func2</name></name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>svn_wc_notify_t</name> *</type><name>notify</name>
+        <init>= <expr><call><name>svn_wc_create_notify</name><argument_list>(<argument><expr><name>anchor</name></expr></argument>, <argument><expr><name>svn_wc_notify_update_completed</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+      <expr_stmt><expr><name><name>notify</name>-&gt;<name>kind</name></name> = <name>svn_node_none</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>notify</name>-&gt;<name>content_state</name></name> = <name><name>notify</name>-&gt;<name>prop_state</name></name>
+        = <name>svn_wc_notify_state_inapplicable</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>notify</name>-&gt;<name>lock_state</name></name> = <name>svn_wc_notify_lock_state_inapplicable</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>notify</name>-&gt;<name>revision</name></name> = <name>revnum</name></expr>;</expr_stmt>
+      <expr_stmt><expr><call>(*<name><name>ctx</name>-&gt;<name>notify_func2</name></name>)<argument_list>(<argument><expr><name><name>ctx</name>-&gt;<name>notify_baton2</name></name></expr></argument>, <argument><expr><name>notify</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <comment type="block">/* If the caller wants the result revision, give it to them. */</comment>
+  <if>if <condition>(<expr><name>result_rev</name></expr>)</condition><then>
+    <expr_stmt><expr>*<name>result_rev</name> = <name>revnum</name></expr>;</expr_stmt></then></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_client_switch2</name><parameter_list>(<param><decl><type><name>svn_revnum_t</name> *</type><name>result_rev</name></decl></param>,
+                   <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+                   <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>switch_url</name></decl></param>,
+                   <param><decl><type><specifier>const</specifier> <name>svn_opt_revision_t</name> *</type><name>peg_revision</name></decl></param>,
+                   <param><decl><type><specifier>const</specifier> <name>svn_opt_revision_t</name> *</type><name>revision</name></decl></param>,
+                   <param><decl><type><name>svn_depth_t</name></type> <name>depth</name></decl></param>,
+                   <param><decl><type><name>svn_boolean_t</name></type> <name>depth_is_sticky</name></decl></param>,
+                   <param><decl><type><name>svn_boolean_t</name></type> <name>ignore_externals</name></decl></param>,
+                   <param><decl><type><name>svn_boolean_t</name></type> <name>allow_unver_obstructions</name></decl></param>,
+                   <param><decl><type><name>svn_client_ctx_t</name> *</type><name>ctx</name></decl></param>,
+                   <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <return>return <expr><call><name>svn_client__switch_internal</name><argument_list>(<argument><expr><name>result_rev</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>switch_url</name></expr></argument>,
+                                     <argument><expr><name>peg_revision</name></expr></argument>, <argument><expr><name>revision</name></expr></argument>, <argument><expr><name>depth</name></expr></argument>, 
+                                     <argument><expr><name>depth_is_sticky</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>ignore_externals</name></expr></argument>,
+                                     <argument><expr><name>allow_unver_obstructions</name></expr></argument>, <argument><expr><name>ctx</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_client_switch</name><parameter_list>(<param><decl><type><name>svn_revnum_t</name> *</type><name>result_rev</name></decl></param>,
+                  <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+                  <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>switch_url</name></decl></param>,
+                  <param><decl><type><specifier>const</specifier> <name>svn_opt_revision_t</name> *</type><name>revision</name></decl></param>,
+                  <param><decl><type><name>svn_boolean_t</name></type> <name>recurse</name></decl></param>,
+                  <param><decl><type><name>svn_client_ctx_t</name> *</type><name>ctx</name></decl></param>,
+                  <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_opt_revision_t</name></type> <name>peg_revision</name></decl>;</decl_stmt>
+  <expr_stmt><expr><name><name>peg_revision</name>.<name>kind</name></name> = <name>svn_opt_revision_unspecified</name></expr>;</expr_stmt>
+  <return>return <expr><call><name>svn_client__switch_internal</name><argument_list>(<argument><expr><name>result_rev</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>switch_url</name></expr></argument>,
+                                     <argument><expr>&amp;<name>peg_revision</name></expr></argument>, <argument><expr><name>revision</name></expr></argument>,
+                                     <argument><expr><call><name>SVN_DEPTH_INFINITY_OR_FILES</name><argument_list>(<argument><expr><name>recurse</name></expr></argument>)</argument_list></call></expr></argument>,
+                                     <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>ctx</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+</unit>

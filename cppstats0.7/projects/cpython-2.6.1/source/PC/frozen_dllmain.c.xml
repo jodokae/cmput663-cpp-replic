@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/cpython-2.6.1/source/PC/frozen_dllmain.c"><comment type="block">/* FreezeDLLMain.cpp
+
+This is a DLLMain suitable for frozen applications/DLLs on
+a Windows platform.
+
+The general problem is that many Python extension modules may define
+DLL main functions, but when statically linked together to form
+a frozen application, this DLLMain symbol exists multiple times.
+
+The solution is:
+* Each module checks for a frozen build, and if so, defines its DLLMain
+  function as "__declspec(dllexport) DllMain%module%" 
+  (eg, DllMainpythoncom, or DllMainpywintypes)
+
+* The frozen .EXE/.DLL links against this module, which provides
+  the single DllMain.
+
+* This DllMain attempts to locate and call the DllMain for each
+  of the extension modules.
+
+* This code also has hooks to "simulate" DllMain when used from
+  a frozen .EXE.
+
+At this stage, there is a static table of "possibly embedded modules".
+This should change to something better, but it will work OK for now.
+
+Note that this scheme does not handle dependencies in the order
+of DllMain calls - except it does call pywintypes first :-)
+
+As an example of how an extension module with a DllMain should be
+changed, here is a snippet from the pythoncom extension module.
+
+  // end of example code from pythoncom's DllMain.cpp
+  #ifndef BUILD_FREEZE
+  #define DLLMAIN DllMain
+  #define DLLMAIN_DECL
+  #else
+  #define DLLMAIN DllMainpythoncom
+  #define DLLMAIN_DECL __declspec(dllexport)
+  #endif
+
+  extern "C" DLLMAIN_DECL
+  BOOL WINAPI DLLMAIN(HINSTANCE hInstance, DWORD dwReason, LPVOID lpReserved)
+  // end of example code from pythoncom's DllMain.cpp
+
+***************************************************************************/</comment>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"windows.h"</cpp:file></cpp:include>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>char</name> *</type><name><name>possibleModules</name><index>[]</index></name> <init>= <expr><block>{
+	<expr>"pywintypes"</expr>,
+	<expr>"pythoncom"</expr>,
+	<expr>"win32ui"</expr>,
+	<expr><name>NULL</name></expr>,
+}</block></expr></init></decl>;</decl_stmt>
+
+<function_decl><type><name>BOOL</name></type> <name>CallModuleDllMain</name><parameter_list>(<param><decl><type><name>char</name> *</type><name>modName</name></decl></param>, <param><decl><type><name>DWORD</name></type> <name>dwReason</name></decl></param>)</parameter_list>;</function_decl>
+
+
+<comment type="block">/*
+  Called by a frozen .EXE only, so that built-in extension
+  modules are initialized correctly
+*/</comment>
+<function><type><name>void</name></type> <name>PyWinFreeze_ExeInit</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>char</name> **</type><name>modName</name></decl>;</decl_stmt>
+	<for>for (<init><expr><name>modName</name> = <name>possibleModules</name></expr>;</init><condition><expr>*<name>modName</name></expr>;</condition><incr><expr>*<name>modName</name>++</expr></incr>) <block>{
+<comment type="block">/*		printf("Initialising '%s'\n", *modName); */</comment>
+		<expr_stmt><expr><call><name>CallModuleDllMain</name><argument_list>(<argument><expr>*<name>modName</name></expr></argument>, <argument><expr><name>DLL_PROCESS_ATTACH</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	}</block></for>
+}</block></function>
+
+<comment type="block">/*
+  Called by a frozen .EXE only, so that built-in extension
+  modules are cleaned up 
+*/</comment>
+<function><type><name>void</name></type> <name>PyWinFreeze_ExeTerm</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>
+<block>{
+	<comment type="line">// Must go backwards</comment>
+	<decl_stmt><decl><type><name>char</name> **</type><name>modName</name></decl>;</decl_stmt>
+	<for>for (<init><expr><name>modName</name> = <name>possibleModules</name>+(<sizeof>sizeof<argument_list>(<argument><expr><name>possibleModules</name></expr></argument>)</argument_list></sizeof> / <sizeof>sizeof<argument_list>(<argument><expr><name>char</name> *</expr></argument>)</argument_list></sizeof>)-2</expr>;</init>
+	     <condition><expr><name>modName</name> &gt;= <name>possibleModules</name></expr>;</condition>
+	     <incr><expr>*<name>modName</name>--</expr></incr>) <block>{
+<comment type="block">/*		printf("Terminating '%s'\n", *modName);*/</comment>
+		<expr_stmt><expr><call><name>CallModuleDllMain</name><argument_list>(<argument><expr>*<name>modName</name></expr></argument>, <argument><expr><name>DLL_PROCESS_DETACH</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	}</block></for>
+}</block></function>
+
+<function><type><name>BOOL</name> <name>WINAPI</name></type> <name>DllMain</name><parameter_list>(<param><decl><type><name>HINSTANCE</name></type> <name>hInstance</name></decl></param>, <param><decl><type><name>DWORD</name></type> <name>dwReason</name></decl></param>, <param><decl><type><name>LPVOID</name></type> <name>lpReserved</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>BOOL</name></type> <name>ret</name> <init>= <expr><name>TRUE</name></expr></init></decl>;</decl_stmt>
+	<switch>switch <condition>(<expr><name>dwReason</name></expr>)</condition> <block>{
+		<case>case <expr><name>DLL_PROCESS_ATTACH</name></expr>: 
+		<block>{
+			<decl_stmt><decl><type><name>char</name> **</type><name>modName</name></decl>;</decl_stmt>
+			<for>for (<init><expr><name>modName</name> = <name>possibleModules</name></expr>;</init><condition><expr>*<name>modName</name></expr>;</condition><incr><expr>*<name>modName</name>++</expr></incr>) <block>{
+				<decl_stmt><decl><type><name>BOOL</name></type> <name>ok</name> <init>= <expr><call><name>CallModuleDllMain</name><argument_list>(<argument><expr>*<name>modName</name></expr></argument>, <argument><expr><name>dwReason</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+				<if>if <condition>(<expr>!<name>ok</name></expr>)</condition><then>
+					<expr_stmt><expr><name>ret</name> = <name>FALSE</name></expr>;</expr_stmt></then></if>
+			}</block></for>
+			<break>break;</break>
+		}</block>
+		</case><case>case <expr><name>DLL_PROCESS_DETACH</name></expr>: 
+		<block>{
+			<comment type="line">// Must go backwards</comment>
+			<decl_stmt><decl><type><name>char</name> **</type><name>modName</name></decl>;</decl_stmt>
+			<for>for (<init><expr><name>modName</name> = <name>possibleModules</name>+(<sizeof>sizeof<argument_list>(<argument><expr><name>possibleModules</name></expr></argument>)</argument_list></sizeof> / <sizeof>sizeof<argument_list>(<argument><expr><name>char</name> *</expr></argument>)</argument_list></sizeof>)-2</expr>;</init>
+			     <condition><expr><name>modName</name> &gt;= <name>possibleModules</name></expr>;</condition>
+			     <incr><expr>*<name>modName</name>--</expr></incr>)
+				<expr_stmt><expr><call><name>CallModuleDllMain</name><argument_list>(<argument><expr>*<name>modName</name></expr></argument>, <argument><expr><name>DLL_PROCESS_DETACH</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></for>
+			<break>break;</break>
+		}</block>
+	</case>}</block></switch>
+	<return>return <expr><name>ret</name></expr>;</return>
+}</block></function>
+
+<function><type><name>BOOL</name></type> <name>CallModuleDllMain</name><parameter_list>(<param><decl><type><name>char</name> *</type><name>modName</name></decl></param>, <param><decl><type><name>DWORD</name></type> <name>dwReason</name></decl></param>)</parameter_list>
+<block>{
+	<function_decl><type><name>BOOL</name></type> (<name>WINAPI</name> * <name>pfndllmain</name>)<parameter_list>(<param><decl><type><name>HINSTANCE</name></type></decl></param>, <param><decl><type><name>DWORD</name></type></decl></param>, <param><decl><type><name>LPVOID</name></type></decl></param>)</parameter_list>;</function_decl>
+
+	<decl_stmt><decl><type><name>char</name></type> <name><name>funcName</name><index>[<expr>255</expr>]</index></name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>HMODULE</name></type> <name>hmod</name> <init>= <expr><call><name>GetModuleHandle</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+	<expr_stmt><expr><call><name>strcpy</name><argument_list>(<argument><expr><name>funcName</name></expr></argument>, <argument><expr>"_DllMain"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>strcat</name><argument_list>(<argument><expr><name>funcName</name></expr></argument>, <argument><expr><name>modName</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>strcat</name><argument_list>(<argument><expr><name>funcName</name></expr></argument>, <argument><expr>"@12"</expr></argument>)</argument_list></call></expr>;</expr_stmt> <comment type="line">// stdcall convention.</comment>
+	<expr_stmt><expr><name>pfndllmain</name> = (<call><call><name>BOOL</name> <argument_list>(<argument><expr><name>WINAPI</name> *</expr></argument>)</argument_list></call><argument_list>(<argument><expr><name>HINSTANCE</name></expr></argument>, <argument><expr><name>DWORD</name></expr></argument>, <argument><expr><name>LPVOID</name></expr></argument>)</argument_list></call>)<call><name>GetProcAddress</name><argument_list>(<argument><expr><name>hmod</name></expr></argument>, <argument><expr><name>funcName</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>pfndllmain</name>==<name>NULL</name></expr>)</condition><then> <block>{
+		<comment type="block">/* No function by that name exported - then that module does
+ 		   not appear in our frozen program - return OK
+                */</comment>
+		<return>return <expr><name>TRUE</name></expr>;</return>
+	}</block></then></if>
+	<return>return <expr><call>(*<name>pfndllmain</name>)<argument_list>(<argument><expr><name>hmod</name></expr></argument>, <argument><expr><name>dwReason</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+</unit>

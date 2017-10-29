@@ -1,0 +1,1365 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/httpd-2.4.29/server/mpm/netware/mpm_netware.c"><comment type="block">/* Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */</comment>
+
+<comment type="block">/*
+ * httpd.c: simple http daemon for answering WWW file requests
+ *
+ *
+ * 03-21-93  Rob McCool wrote original code (up to NCSA HTTPd 1.3)
+ *
+ * 03-06-95  blong
+ *  changed server number for child-alone processes to 0 and changed name
+ *   of processes
+ *
+ * 03-10-95  blong
+ *      Added numerous speed hacks proposed by Robert S. Thau (rst@ai.mit.edu)
+ *      including set group before fork, and call gettime before to fork
+ *      to set up libraries.
+ *
+ * 04-14-95  rst / rh
+ *      Brandon's code snarfed from NCSA 1.4, but tinkered to work with the
+ *      Apache server, and also to have child processes do accept() directly.
+ *
+ * April-July '95 rst
+ *      Extensive rework for Apache.
+ */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_portable.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_strings.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_thread_proc.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_signal.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_tables.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_getopt.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_thread_mutex.h"</cpp:file></cpp:include>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>APR_WANT_STDIO</name></cpp:macro></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>APR_WANT_STRFUNC</name></cpp:macro></cpp:define>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_want.h"</cpp:file></cpp:include>
+
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_HAVE_UNISTD_H</name></expr></cpp:if>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;unistd.h&gt;</cpp:file></cpp:include>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_HAVE_SYS_TYPES_H</name></expr></cpp:if>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;sys/types.h&gt;</cpp:file></cpp:include>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>USE_WINSOCK</name></cpp:ifndef>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;sys/select.h&gt;</cpp:file></cpp:include>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"ap_config.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"httpd.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"mpm_default.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_main.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_log.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_config.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_core.h"</cpp:file></cpp:include>             <comment type="block">/* for get_remote_host */</comment>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_connection.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"scoreboard.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"ap_mpm.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"mpm_common.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"ap_listen.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"ap_mmn.h"</cpp:file></cpp:include>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>HAVE_TIME_H</name></cpp:ifdef>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;time.h&gt;</cpp:file></cpp:include>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;signal.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;netware.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;nks/netware.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;library.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;screen.h&gt;</cpp:file></cpp:include>
+
+<function_decl><type><name>int</name></type> <name>nlmUnloadSignaled</name><parameter_list>(<param><decl><type><name>int</name></type> <name>wait</name></decl></param>)</parameter_list>;</function_decl>
+
+<comment type="block">/* Limit on the total --- clients will be locked out if more servers than
+ * this are needed.  It is intended solely to keep the server from crashing
+ * when things get out of hand.
+ *
+ * We keep a hard maximum number of servers, for two reasons --- first off,
+ * in case something goes seriously wrong, we want to stop the fork bomb
+ * short of actually crashing the machine we're running on by filling some
+ * kernel table.  Secondly, it keeps the size of the scoreboard file small
+ * enough that we can read the whole thing without worrying too much about
+ * the overhead.
+ */</comment>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>HARD_SERVER_LIMIT</name></cpp:ifndef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>HARD_SERVER_LIMIT</name></cpp:macro> <cpp:value>1</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>WORKER_DEAD</name></cpp:macro>         <cpp:value>SERVER_DEAD</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>WORKER_STARTING</name></cpp:macro>     <cpp:value>SERVER_STARTING</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>WORKER_READY</name></cpp:macro>        <cpp:value>SERVER_READY</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>WORKER_IDLE_KILL</name></cpp:macro>    <cpp:value>SERVER_IDLE_KILL</cpp:value></cpp:define>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>MPM_HARD_LIMITS_FILE</name></cpp:macro> <cpp:value>"/mpm_default.h"</cpp:value></cpp:define>
+
+<comment type="block">/* *Non*-shared http_main globals... */</comment>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name></type> <name>ap_threads_per_child</name><init>=<expr>0</expr></init></decl>;</decl_stmt>         <comment type="block">/* Worker threads per child */</comment>
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name></type> <name>ap_threads_to_start</name><init>=<expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name></type> <name>ap_threads_min_free</name><init>=<expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name></type> <name>ap_threads_max_free</name><init>=<expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name></type> <name>ap_threads_limit</name><init>=<expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name></type> <name>mpm_state</name> <init>= <expr><name>AP_MPMQ_STARTING</name></expr></init></decl>;</decl_stmt>
+
+<comment type="block">/*
+ * The max child slot ever assigned, preserved across restarts.  Necessary
+ * to deal with MaxRequestWorkers changes across SIGWINCH restarts.  We use this
+ * value to optimize routines that have to scan the entire scoreboard.
+ */</comment>
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name></type> <name>ap_max_workers_limit</name> <init>= <expr>-1</expr></init></decl>;</decl_stmt>
+
+<decl_stmt><decl><type><name>int</name></type> <name>hold_screen_on_exit</name> <init>= <expr>0</expr></init></decl>;</decl_stmt> <comment type="block">/* Indicates whether the screen should be held open */</comment>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>fd_set</name></type> <name>listenfds</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name></type> <name>listenmaxfd</name></decl>;</decl_stmt>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>apr_pool_t</name> *</type><name>pconf</name></decl>;</decl_stmt>               <comment type="block">/* Pool for config stuff */</comment>
+<decl_stmt><decl><type><specifier>static</specifier> <name>apr_pool_t</name> *</type><name>pmain</name></decl>;</decl_stmt>               <comment type="block">/* Pool for httpd child stuff */</comment>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>pid_t</name></type> <name>ap_my_pid</name></decl>;</decl_stmt>  <comment type="block">/* it seems silly to call getpid all the time */</comment>
+<decl_stmt><decl><type><specifier>static</specifier> <name>char</name> *</type><name>ap_my_addrspace</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name></type> <name>die_now</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+
+<comment type="block">/* Keep track of the number of worker threads currently active */</comment>
+<decl_stmt><decl><type><specifier>static</specifier> <name>unsigned</name> <name>long</name></type> <name>worker_thread_count</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name></type> <name>request_count</name></decl>;</decl_stmt>
+
+<comment type="block">/*  Structure used to register/deregister a console handler with the OS */</comment>
+<function_decl><type><specifier>static</specifier> <name>int</name></type> <name>InstallConsoleHandler</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>;</function_decl>
+<function_decl><type><specifier>static</specifier> <name>void</name></type> <name>RemoveConsoleHandler</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>;</function_decl>
+<function_decl><type><specifier>static</specifier> <name>int</name></type> <name>CommandLineInterpreter</name><parameter_list>(<param><decl><type><name>scr_t</name></type> <name>screenID</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>commandLine</name></decl></param>)</parameter_list>;</function_decl>
+<decl_stmt><decl><type><specifier>static</specifier>  <name>CommandParser_t</name></type> <name>ConsoleHandler</name> <init>= <expr><block>{<expr>0</expr>, <expr><name>NULL</name></expr>, <expr>0</expr>}</block></expr></init></decl>;</decl_stmt>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>HANDLEDCOMMAND</name></cpp:macro>  <cpp:value>0</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>NOTMYCOMMAND</name></cpp:macro>    <cpp:value>1</cpp:value></cpp:define>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name></type> <name>show_settings</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+
+<comment type="line">//#define DBINFO_ON</comment>
+<comment type="line">//#define DBPRINT_ON</comment>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>DBPRINT_ON</name></cpp:ifdef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>DBPRINT0</name><parameter_list>(<param><type><name>s</name></type></param>)</parameter_list></cpp:macro> <cpp:value>printf(s)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>DBPRINT1</name><parameter_list>(<param><type><name>s</name></type></param>,<param><type><name>v1</name></type></param>)</parameter_list></cpp:macro> <cpp:value>printf(s,v1)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>DBPRINT2</name><parameter_list>(<param><type><name>s</name></type></param>,<param><type><name>v1</name></type></param>,<param><type><name>v2</name></type></param>)</parameter_list></cpp:macro> <cpp:value>printf(s,v1,v2)</cpp:value></cpp:define>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>DBPRINT0</name><parameter_list>(<param><type><name>s</name></type></param>)</parameter_list></cpp:macro></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>DBPRINT1</name><parameter_list>(<param><type><name>s</name></type></param>,<param><type><name>v1</name></type></param>)</parameter_list></cpp:macro></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>DBPRINT2</name><parameter_list>(<param><type><name>s</name></type></param>,<param><type><name>v1</name></type></param>,<param><type><name>v2</name></type></param>)</parameter_list></cpp:macro></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<comment type="block">/* volatile just in case */</comment>
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name> <specifier>volatile</specifier></type> <name>shutdown_pending</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name> <specifier>volatile</specifier></type> <name>restart_pending</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name> <specifier>volatile</specifier></type> <name>is_graceful</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name> <specifier>volatile</specifier></type> <name>wait_to_finish</name><init>=<expr>1</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>ap_generation_t</name> <specifier>volatile</specifier></type> <name>ap_my_generation</name><init>=<expr>0</expr></init></decl>;</decl_stmt>
+
+<comment type="block">/* a clean exit from a child with proper cleanup */</comment>
+<function_decl><type><specifier>static</specifier> <name>void</name></type> <name>clean_child_exit</name><parameter_list>(<param><decl><type><name>int</name></type> <name>code</name></decl></param>, <param><decl><type><name>int</name></type> <name>worker_num</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>ptrans</name></decl></param>,
+                             <param><decl><type><name>apr_bucket_alloc_t</name> *</type><name>bucket_alloc</name></decl></param>)</parameter_list> __attribute__ <parameter_list>(<param/></parameter_list>(noreturn</function_decl>))<empty_stmt>;</empty_stmt>
+<function><type><specifier>static</specifier> <name>void</name></type> <name>clean_child_exit</name><parameter_list>(<param><decl><type><name>int</name></type> <name>code</name></decl></param>, <param><decl><type><name>int</name></type> <name>worker_num</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>ptrans</name></decl></param>,
+                             <param><decl><type><name>apr_bucket_alloc_t</name> *</type><name>bucket_alloc</name></decl></param>)</parameter_list>
+<block>{
+    <expr_stmt><expr><call><name>apr_bucket_alloc_destroy</name><argument_list>(<argument><expr><name>bucket_alloc</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr>!<name>shutdown_pending</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>apr_pool_destroy</name><argument_list>(<argument><expr><name>ptrans</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <expr_stmt><expr><call><name>atomic_dec</name> <argument_list>(<argument><expr>&amp;<name>worker_thread_count</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>worker_num</name> &gt;=0</expr>)</condition><then>
+        <expr_stmt><expr><call><name>ap_update_child_status_from_indexes</name><argument_list>(<argument><expr>0</expr></argument>, <argument><expr><name>worker_num</name></expr></argument>, <argument><expr><name>WORKER_DEAD</name></expr></argument>,
+                                            <argument><expr>(<name>request_rec</name> *) <name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+    <expr_stmt><expr><call><name>NXThreadExit</name><argument_list>(<argument><expr>(<name>void</name>*)&amp;<name>code</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<comment type="block">/* proper cleanup when returning from ap_mpm_run() */</comment>
+<function><type><specifier>static</specifier> <name>void</name></type> <name>mpm_main_cleanup</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>
+<block>{
+    <if>if <condition>(<expr><name>pmain</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>apr_pool_destroy</name><argument_list>(<argument><expr><name>pmain</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type> <name>netware_query</name><parameter_list>(<param><decl><type><name>int</name></type> <name>query_code</name></decl></param>, <param><decl><type><name>int</name> *</type><name>result</name></decl></param>, <param><decl><type><name>apr_status_t</name> *</type><name>rv</name></decl></param>)</parameter_list>
+<block>{
+    <expr_stmt><expr>*<name>rv</name> = <name>APR_SUCCESS</name></expr>;</expr_stmt>
+    <switch>switch<condition>(<expr><name>query_code</name></expr>)</condition><block>{
+        <case>case <expr><name>AP_MPMQ_MAX_DAEMON_USED</name></expr>:
+            <expr_stmt><expr>*<name>result</name> = 1</expr>;</expr_stmt>
+            <break>break;</break>
+        </case><case>case <expr><name>AP_MPMQ_IS_THREADED</name></expr>:
+            <expr_stmt><expr>*<name>result</name> = <name>AP_MPMQ_DYNAMIC</name></expr>;</expr_stmt>
+            <break>break;</break>
+        </case><case>case <expr><name>AP_MPMQ_IS_FORKED</name></expr>:
+            <expr_stmt><expr>*<name>result</name> = <name>AP_MPMQ_NOT_SUPPORTED</name></expr>;</expr_stmt>
+            <break>break;</break>
+        </case><case>case <expr><name>AP_MPMQ_HARD_LIMIT_DAEMONS</name></expr>:
+            <expr_stmt><expr>*<name>result</name> = <name>HARD_SERVER_LIMIT</name></expr>;</expr_stmt>
+            <break>break;</break>
+        </case><case>case <expr><name>AP_MPMQ_HARD_LIMIT_THREADS</name></expr>:
+            <expr_stmt><expr>*<name>result</name> = <name>HARD_THREAD_LIMIT</name></expr>;</expr_stmt>
+            <break>break;</break>
+        </case><case>case <expr><name>AP_MPMQ_MAX_THREADS</name></expr>:
+            <expr_stmt><expr>*<name>result</name> = <name>ap_threads_limit</name></expr>;</expr_stmt>
+            <break>break;</break>
+        </case><case>case <expr><name>AP_MPMQ_MIN_SPARE_DAEMONS</name></expr>:
+            <expr_stmt><expr>*<name>result</name> = 0</expr>;</expr_stmt>
+            <break>break;</break>
+        </case><case>case <expr><name>AP_MPMQ_MIN_SPARE_THREADS</name></expr>:
+            <expr_stmt><expr>*<name>result</name> = <name>ap_threads_min_free</name></expr>;</expr_stmt>
+            <break>break;</break>
+        </case><case>case <expr><name>AP_MPMQ_MAX_SPARE_DAEMONS</name></expr>:
+            <expr_stmt><expr>*<name>result</name> = 0</expr>;</expr_stmt>
+            <break>break;</break>
+        </case><case>case <expr><name>AP_MPMQ_MAX_SPARE_THREADS</name></expr>:
+            <expr_stmt><expr>*<name>result</name> = <name>ap_threads_max_free</name></expr>;</expr_stmt>
+            <break>break;</break>
+        </case><case>case <expr><name>AP_MPMQ_MAX_REQUESTS_DAEMON</name></expr>:
+            <expr_stmt><expr>*<name>result</name> = <name>ap_max_requests_per_child</name></expr>;</expr_stmt>
+            <break>break;</break>
+        </case><case>case <expr><name>AP_MPMQ_MAX_DAEMONS</name></expr>:
+            <expr_stmt><expr>*<name>result</name> = 1</expr>;</expr_stmt>
+            <break>break;</break>
+        </case><case>case <expr><name>AP_MPMQ_MPM_STATE</name></expr>:
+            <expr_stmt><expr>*<name>result</name> = <name>mpm_state</name></expr>;</expr_stmt>
+            <break>break;</break>
+        </case><case>case <expr><name>AP_MPMQ_GENERATION</name></expr>:
+            <expr_stmt><expr>*<name>result</name> = <name>ap_my_generation</name></expr>;</expr_stmt>
+            <break>break;</break>
+        </case><default>default:
+            <expr_stmt><expr>*<name>rv</name> = <name>APR_ENOTIMPL</name></expr>;</expr_stmt>
+            <break>break;</break>
+    </default>}</block></switch>
+    <return>return <expr><name>OK</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *</type><name>netware_get_name</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>
+<block>{
+    <return>return <expr>"NetWare"</expr>;</return>
+}</block></function>
+
+<comment type="block">/*****************************************************************
+ * Connection structures and accounting...
+ */</comment>
+
+<function><type><specifier>static</specifier> <name>void</name></type> <name>mpm_term</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>
+<block>{
+    <expr_stmt><expr><call><name>RemoveConsoleHandler</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name>wait_to_finish</name> = 0</expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>NXThreadYield</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>void</name></type> <name>sig_term</name><parameter_list>(<param><decl><type><name>int</name></type> <name>sig</name></decl></param>)</parameter_list>
+<block>{
+    <if>if <condition>(<expr><name>shutdown_pending</name> == 1</expr>)</condition><then> <block>{
+        <comment type="block">/* Um, is this _probably_ not an error, if the user has
+         * tried to do a shutdown twice quickly, so we won't
+         * worry about reporting it.
+         */</comment>
+        <return>return;</return>
+    }</block></then></if>
+    <expr_stmt><expr><name>shutdown_pending</name> = 1</expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>DBPRINT0</name> <argument_list>(<argument><expr>"waiting for threads\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <while>while <condition>(<expr><name>wait_to_finish</name></expr>)</condition> <block>{
+        <expr_stmt><expr><call><name>apr_thread_yield</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+    }</block></while>
+    <expr_stmt><expr><call><name>DBPRINT0</name> <argument_list>(<argument><expr>"goodbye\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<comment type="block">/* restart() is the signal handler for SIGHUP and SIGWINCH
+ * in the parent process, unless running in ONE_PROCESS mode
+ */</comment>
+<function><type><specifier>static</specifier> <name>void</name></type> <name>restart</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>
+<block>{
+    <if>if <condition>(<expr><name>restart_pending</name> == 1</expr>)</condition><then> <block>{
+        <comment type="block">/* Probably not an error - don't bother reporting it */</comment>
+        <return>return;</return>
+    }</block></then></if>
+    <expr_stmt><expr><name>restart_pending</name> = 1</expr>;</expr_stmt>
+    <expr_stmt><expr><name>is_graceful</name> = 1</expr>;</expr_stmt>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>void</name></type> <name>set_signals</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>
+<block>{
+    <expr_stmt><expr><call><name>apr_signal</name><argument_list>(<argument><expr><name>SIGTERM</name></expr></argument>, <argument><expr><name>sig_term</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>apr_signal</name><argument_list>(<argument><expr><name>SIGABRT</name></expr></argument>, <argument><expr><name>sig_term</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<function><type><name>int</name></type> <name>nlmUnloadSignaled</name><parameter_list>(<param><decl><type><name>int</name></type> <name>wait</name></decl></param>)</parameter_list>
+<block>{
+    <expr_stmt><expr><name>shutdown_pending</name> = 1</expr>;</expr_stmt>
+
+    <if>if <condition>(<expr><name>wait</name></expr>)</condition><then> <block>{
+        <while>while <condition>(<expr><name>wait_to_finish</name></expr>)</condition> <block>{
+            <expr_stmt><expr><call><name>NXThreadYield</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+        }</block></while>
+    }</block></then></if>
+
+    <return>return <expr>0</expr>;</return>
+}</block></function>
+
+<comment type="block">/*****************************************************************
+ * Child process main loop.
+ * The following vars are static to avoid getting clobbered by longjmp();
+ * they are really private to child_main.
+ */</comment>
+
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>MAX_WB_RETRIES</name></cpp:macro>  <cpp:value>3</cpp:value></cpp:define>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>DBINFO_ON</name></cpp:ifdef>
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name></type> <name>would_block</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name></type> <name>retry_success</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name></type> <name>retry_fail</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name></type> <name>avg_retries</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<comment type="block">/*static */</comment>
+<function><type><name>void</name></type> <name>worker_main</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>arg</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>ap_listen_rec</name> *</type><name>lr</name></decl>, *<decl><type ref="prev"/><name>first_lr</name></decl>, *<decl><type ref="prev"/><name>last_lr</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>ptrans</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_allocator_t</name> *</type><name>allocator</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_bucket_alloc_t</name> *</type><name>bucket_alloc</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>conn_rec</name> *</type><name>current_conn</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_status_t</name></type> <name>stat</name> <init>= <expr><name>APR_EINIT</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>ap_sb_handle_t</name> *</type><name>sbh</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_thread_t</name> *</type><name>thd</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_os_thread_t</name></type> <name>osthd</name></decl>;</decl_stmt>
+
+    <decl_stmt><decl><type><name>int</name></type> <name>my_worker_num</name> <init>= <expr>(<name>int</name>)<name>arg</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_socket_t</name> *</type><name>csd</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>requests_this_child</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_socket_t</name> *</type><name>sd</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>fd_set</name></type> <name>main_fds</name></decl>;</decl_stmt>
+
+    <decl_stmt><decl><type><name>int</name></type> <name>sockdes</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>srv</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type>struct <name>timeval</name></type> <name>tv</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>wouldblock_retry</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>osthd</name> = <call><name>apr_os_thread_current</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>apr_os_thread_put</name><argument_list>(<argument><expr>&amp;<name>thd</name></expr></argument>, <argument><expr>&amp;<name>osthd</name></expr></argument>, <argument><expr><name>pmain</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name><name>tv</name>.<name>tv_sec</name></name> = 1</expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>tv</name>.<name>tv_usec</name></name> = 0</expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>apr_allocator_create</name><argument_list>(<argument><expr>&amp;<name>allocator</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>apr_allocator_max_free_set</name><argument_list>(<argument><expr><name>allocator</name></expr></argument>, <argument><expr><name>ap_max_mem_free</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>apr_pool_create_ex</name><argument_list>(<argument><expr>&amp;<name>ptrans</name></expr></argument>, <argument><expr><name>pmain</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>allocator</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>apr_allocator_owner_set</name><argument_list>(<argument><expr><name>allocator</name></expr></argument>, <argument><expr><name>ptrans</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>apr_pool_tag</name><argument_list>(<argument><expr><name>ptrans</name></expr></argument>, <argument><expr>"transaction"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>bucket_alloc</name> = <call><name>apr_bucket_alloc_create_ex</name><argument_list>(<argument><expr><name>allocator</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>atomic_inc</name> <argument_list>(<argument><expr>&amp;<name>worker_thread_count</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <while>while <condition>(<expr>!<name>die_now</name></expr>)</condition> <block>{
+        <comment type="block">/*
+        * (Re)initialize this child to a pre-connection state.
+        */</comment>
+        <expr_stmt><expr><name>current_conn</name> = <name>NULL</name></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>apr_pool_clear</name><argument_list>(<argument><expr><name>ptrans</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <if>if <condition>(<expr>(<name>ap_max_requests_per_child</name> &gt; 0
+            &amp;&amp; <name>requests_this_child</name>++ &gt;= <name>ap_max_requests_per_child</name>)</expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>DBPRINT1</name> <argument_list>(<argument><expr>"\n**Thread slot %d is shutting down"</expr></argument>, <argument><expr><name>my_worker_num</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>clean_child_exit</name><argument_list>(<argument><expr>0</expr></argument>, <argument><expr><name>my_worker_num</name></expr></argument>, <argument><expr><name>ptrans</name></expr></argument>, <argument><expr><name>bucket_alloc</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+
+        <expr_stmt><expr><call><name>ap_update_child_status_from_indexes</name><argument_list>(<argument><expr>0</expr></argument>, <argument><expr><name>my_worker_num</name></expr></argument>, <argument><expr><name>WORKER_READY</name></expr></argument>,
+                                            <argument><expr>(<name>request_rec</name> *) <name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <comment type="block">/*
+        * Wait for an acceptable connection to arrive.
+        */</comment>
+
+        <for>for (<init>;</init><condition>;</condition><incr/>) <block>{
+            <if>if <condition>(<expr><name>shutdown_pending</name> || <name>restart_pending</name> || (<name><name>ap_scoreboard_image</name>-&gt;<name>servers</name><index>[<expr>0</expr>]</index><index>[<expr><name>my_worker_num</name></expr>]</index></name>.<name>status</name> == <name>WORKER_IDLE_KILL</name>)</expr>)</condition><then> <block>{
+                <expr_stmt><expr><call><name>DBPRINT1</name> <argument_list>(<argument><expr>"\nThread slot %d is shutting down\n"</expr></argument>, <argument><expr><name>my_worker_num</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><call><name>clean_child_exit</name><argument_list>(<argument><expr>0</expr></argument>, <argument><expr><name>my_worker_num</name></expr></argument>, <argument><expr><name>ptrans</name></expr></argument>, <argument><expr><name>bucket_alloc</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></then></if>
+
+            <comment type="block">/* Check the listen queue on all sockets for requests */</comment>
+            <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr>&amp;<name>main_fds</name></expr></argument>, <argument><expr>&amp;<name>listenfds</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>fd_set</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name>srv</name> = <call><name>select</name><argument_list>(<argument><expr><name>listenmaxfd</name> + 1</expr></argument>, <argument><expr>&amp;<name>main_fds</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr>&amp;<name>tv</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+            <if>if <condition>(<expr><name>srv</name> &lt;= 0</expr>)</condition><then> <block>{
+                <if>if <condition>(<expr><name>srv</name> &lt; 0</expr>)</condition><then> <block>{
+                    <expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_NOTICE</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>ap_server_conf</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00217</expr></argument>)</argument_list></call>
+                        "select() failed on listen socket"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                    <expr_stmt><expr><call><name>apr_thread_yield</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+                }</block></then></if>
+                <continue>continue;</continue>
+            }</block></then></if>
+
+            <comment type="block">/* remember the last_lr we searched last time around so that
+            we don't end up starving any particular listening socket */</comment>
+            <if>if <condition>(<expr><name>last_lr</name> == <name>NULL</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><name>lr</name> = <name>ap_listeners</name></expr>;</expr_stmt>
+            }</block></then>
+            <else>else <block>{
+                <expr_stmt><expr><name>lr</name> = <name><name>last_lr</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+                <if>if <condition>(<expr>!<name>lr</name></expr>)</condition><then>
+                    <expr_stmt><expr><name>lr</name> = <name>ap_listeners</name></expr>;</expr_stmt></then></if>
+            }</block></else></if>
+            <expr_stmt><expr><name>first_lr</name> = <name>lr</name></expr>;</expr_stmt>
+            <do>do <block>{
+                <expr_stmt><expr><call><name>apr_os_sock_get</name><argument_list>(<argument><expr>&amp;<name>sockdes</name></expr></argument>, <argument><expr><name><name>lr</name>-&gt;<name>sd</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <if>if <condition>(<expr><call><name>FD_ISSET</name><argument_list>(<argument><expr><name>sockdes</name></expr></argument>, <argument><expr>&amp;<name>main_fds</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+                    <goto>goto <name>got_listener</name>;</goto></then></if>
+                <expr_stmt><expr><name>lr</name> = <name><name>lr</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+                <if>if <condition>(<expr>!<name>lr</name></expr>)</condition><then>
+                    <expr_stmt><expr><name>lr</name> = <name>ap_listeners</name></expr>;</expr_stmt></then></if>
+            }</block> while <condition>(<expr><name>lr</name> != <name>first_lr</name></expr>)</condition>;</do>
+            <comment type="block">/* if we get here, something unexpected happened. Go back
+            into the select state and try again.
+            */</comment>
+            <continue>continue;</continue>
+        <label><name>got_listener</name>:</label>
+            <expr_stmt><expr><name>last_lr</name> = <name>lr</name></expr>;</expr_stmt>
+            <expr_stmt><expr><name>sd</name> = <name><name>lr</name>-&gt;<name>sd</name></name></expr>;</expr_stmt>
+
+            <expr_stmt><expr><name>wouldblock_retry</name> = <name>MAX_WB_RETRIES</name></expr>;</expr_stmt>
+
+            <while>while <condition>(<expr><name>wouldblock_retry</name></expr>)</condition> <block>{
+                <if>if <condition>(<expr>(<name>stat</name> = <call><name>apr_socket_accept</name><argument_list>(<argument><expr>&amp;<name>csd</name></expr></argument>, <argument><expr><name>sd</name></expr></argument>, <argument><expr><name>ptrans</name></expr></argument>)</argument_list></call>) == <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+                    <break>break;</break>
+                }</block></then>
+                <else>else <block>{
+                    <comment type="block">/* if the error is a wouldblock then maybe we were too
+                        quick try to pull the next request from the listen
+                        queue.  Try a few more times then return to our idle
+                        listen state. */</comment>
+                    <if>if <condition>(<expr>!<call><name>APR_STATUS_IS_EAGAIN</name><argument_list>(<argument><expr><name>stat</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+                        <break>break;</break>
+                    }</block></then></if>
+
+                    <if>if <condition>(<expr><name>wouldblock_retry</name>--</expr>)</condition><then> <block>{
+                        <expr_stmt><expr><call><name>apr_thread_yield</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+                    }</block></then></if>
+                }</block></else></if>
+            }</block></while>
+
+            <comment type="block">/* If we got a new socket, set it to non-blocking mode and process
+                it.  Otherwise handle the error. */</comment>
+            <if>if <condition>(<expr><name>stat</name> == <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><call><name>apr_socket_opt_set</name><argument_list>(<argument><expr><name>csd</name></expr></argument>, <argument><expr><name>APR_SO_NONBLOCK</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>DBINFO_ON</name></cpp:ifdef>
+                <if>if <condition>(<expr><name>wouldblock_retry</name> &lt; <name>MAX_WB_RETRIES</name></expr>)</condition><then> <block>{
+                    <expr_stmt><expr><name>retry_success</name>++</expr>;</expr_stmt>
+                    <expr_stmt><expr><name>avg_retries</name> += (<name>MAX_WB_RETRIES</name>-<name>wouldblock_retry</name>)</expr>;</expr_stmt>
+                }</block></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+                <break>break;</break>       <comment type="block">/* We have a socket ready for reading */</comment>
+            }</block></then>
+            <else>else <block>{
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>DBINFO_ON</name></cpp:ifdef>
+                <if>if <condition>(<expr><call><name>APR_STATUS_IS_EAGAIN</name><argument_list>(<argument><expr><name>stat</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+                        <expr_stmt><expr><name>would_block</name>++</expr>;</expr_stmt>
+                        <expr_stmt><expr><name>retry_fail</name>++</expr>;</expr_stmt>
+                }</block></then>
+                <else>else <if>if <condition>(</condition></if></else></if>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+                <if>if <condition>(<expr><call><name>APR_STATUS_IS_EAGAIN</name><argument_list>(<argument><expr><name>stat</name></expr></argument>)</argument_list></call> ||
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+                    <call><name>APR_STATUS_IS_ECONNRESET</name><argument_list>(<argument><expr><name>stat</name></expr></argument>)</argument_list></call> ||
+                    <call><name>APR_STATUS_IS_ETIMEDOUT</name><argument_list>(<argument><expr><name>stat</name></expr></argument>)</argument_list></call> ||
+                    <call><name>APR_STATUS_IS_EHOSTUNREACH</name><argument_list>(<argument><expr><name>stat</name></expr></argument>)</argument_list></call> ||
+                    <call><name>APR_STATUS_IS_ENETUNREACH</name><argument_list>(<argument><expr><name>stat</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+                        <empty_stmt>;</empty_stmt>
+                }</block></then>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>USE_WINSOCK</name></cpp:ifdef>
+                <else>else <if>if <condition>(<expr><call><name>APR_STATUS_IS_ENETDOWN</name><argument_list>(<argument><expr><name>stat</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+                       <comment type="block">/*
+                        * When the network layer has been shut down, there
+                        * is not much use in simply exiting: the parent
+                        * would simply re-create us (and we'd fail again).
+                        * Use the CHILDFATAL code to tear the server down.
+                        * @@@ Martin's idea for possible improvement:
+                        * A different approach would be to define
+                        * a new APEXIT_NETDOWN exit code, the reception
+                        * of which would make the parent shutdown all
+                        * children, then idle-loop until it detected that
+                        * the network is up again, and restart the children.
+                        * Ben Hyde noted that temporary ENETDOWN situations
+                        * occur in mobile IP.
+                        */</comment>
+                        <expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_EMERG</name></expr></argument>, <argument><expr><name>stat</name></expr></argument>, <argument><expr><name>ap_server_conf</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00218</expr></argument>)</argument_list></call>
+                            "apr_socket_accept: giving up."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                        <expr_stmt><expr><call><name>clean_child_exit</name><argument_list>(<argument><expr><name>APEXIT_CHILDFATAL</name></expr></argument>, <argument><expr><name>my_worker_num</name></expr></argument>, <argument><expr><name>ptrans</name></expr></argument>,
+                                         <argument><expr><name>bucket_alloc</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                }</block></then>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+                <else>else <block>{
+                        <expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_ERR</name></expr></argument>, <argument><expr><name>stat</name></expr></argument>, <argument><expr><name>ap_server_conf</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00219</expr></argument>)</argument_list></call>
+                            "apr_socket_accept: (client socket)"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                        <expr_stmt><expr><call><name>clean_child_exit</name><argument_list>(<argument><expr>1</expr></argument>, <argument><expr><name>my_worker_num</name></expr></argument>, <argument><expr><name>ptrans</name></expr></argument>, <argument><expr><name>bucket_alloc</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                }</block></else></if></else></if>
+            }</block></else></if>
+        }</block></for>
+
+        <expr_stmt><expr><call><name>ap_create_sb_handle</name><argument_list>(<argument><expr>&amp;<name>sbh</name></expr></argument>, <argument><expr><name>ptrans</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>my_worker_num</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <comment type="block">/*
+        * We now have a connection, so set it up with the appropriate
+        * socket options, file descriptors, and read/write buffers.
+        */</comment>
+        <expr_stmt><expr><name>current_conn</name> = <call><name>ap_run_create_connection</name><argument_list>(<argument><expr><name>ptrans</name></expr></argument>, <argument><expr><name>ap_server_conf</name></expr></argument>, <argument><expr><name>csd</name></expr></argument>,
+                                                <argument><expr><name>my_worker_num</name></expr></argument>, <argument><expr><name>sbh</name></expr></argument>,
+                                                <argument><expr><name>bucket_alloc</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>current_conn</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name><name>current_conn</name>-&gt;<name>current_thread</name></name> = <name>thd</name></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>ap_process_connection</name><argument_list>(<argument><expr><name>current_conn</name></expr></argument>, <argument><expr><name>csd</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>ap_lingering_close</name><argument_list>(<argument><expr><name>current_conn</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+        <expr_stmt><expr><name>request_count</name>++</expr>;</expr_stmt>
+    }</block></while>
+    <expr_stmt><expr><call><name>clean_child_exit</name><argument_list>(<argument><expr>0</expr></argument>, <argument><expr><name>my_worker_num</name></expr></argument>, <argument><expr><name>ptrans</name></expr></argument>, <argument><expr><name>bucket_alloc</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>int</name></type> <name>make_child</name><parameter_list>(<param><decl><type><name>server_rec</name> *</type><name>s</name></decl></param>, <param><decl><type><name>int</name></type> <name>slot</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>tid</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>err</name><init>=<expr>0</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>NXContext_t</name></type> <name>ctx</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr><name>slot</name> + 1 &gt; <name>ap_max_workers_limit</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>ap_max_workers_limit</name> = <name>slot</name> + 1</expr>;</expr_stmt>
+    }</block></then></if>
+
+    <expr_stmt><expr><call><name>ap_update_child_status_from_indexes</name><argument_list>(<argument><expr>0</expr></argument>, <argument><expr><name>slot</name></expr></argument>, <argument><expr><name>WORKER_STARTING</name></expr></argument>,
+                                        <argument><expr>(<name>request_rec</name> *) <name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr><name>ctx</name> = <call><name>NXContextAlloc</name><argument_list>(<argument><expr>(<call><call><name>void</name> <argument_list>(<argument><expr>*</expr></argument>)</argument_list></call><argument_list>(<argument><expr><name>void</name> *</expr></argument>)</argument_list></call>) <name>worker_main</name></expr></argument>, <argument><expr>(<name>void</name>*)<name>slot</name></expr></argument>, <argument><expr><name>NX_PRIO_MED</name></expr></argument>, <argument><expr><name>ap_thread_stacksize</name></expr></argument>, <argument><expr><name>NX_CTX_NORMAL</name></expr></argument>, <argument><expr>&amp;<name>err</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <decl_stmt><decl><type><name>char</name></type> <name><name>threadName</name><index>[<expr>32</expr>]</index></name></decl>;</decl_stmt>
+
+        <expr_stmt><expr><call><name>sprintf</name> <argument_list>(<argument><expr><name>threadName</name></expr></argument>, <argument><expr>"Apache_Worker %d"</expr></argument>, <argument><expr><name>slot</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>NXContextSetName</name><argument_list>(<argument><expr><name>ctx</name></expr></argument>, <argument><expr><name>threadName</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><name>err</name> = <call><name>NXThreadCreate</name><argument_list>(<argument><expr><name>ctx</name></expr></argument>, <argument><expr><name>NX_THR_BIND_CONTEXT</name></expr></argument>, <argument><expr>&amp;<name>tid</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>err</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>NXContextFree</name> <argument_list>(<argument><expr><name>ctx</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+    }</block></then></if>
+
+    <if>if <condition>(<expr><name>err</name></expr>)</condition><then> <block>{
+        <comment type="block">/* create thread didn't succeed. Fix the scoreboard or else
+        * it will say SERVER_STARTING forever and ever
+        */</comment>
+        <expr_stmt><expr><call><name>ap_update_child_status_from_indexes</name><argument_list>(<argument><expr>0</expr></argument>, <argument><expr><name>slot</name></expr></argument>, <argument><expr><name>WORKER_DEAD</name></expr></argument>,
+                                            <argument><expr>(<name>request_rec</name> *) <name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <comment type="block">/* In case system resources are maxxed out, we don't want
+        Apache running away with the CPU trying to fork over and
+        over and over again. */</comment>
+        <expr_stmt><expr><call><name>apr_thread_yield</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+
+        <return>return <expr>-1</expr>;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><name><name>ap_scoreboard_image</name>-&gt;<name>servers</name><index>[<expr>0</expr>]</index><index>[<expr><name>slot</name></expr>]</index></name>.<name>tid</name> = <name>tid</name></expr>;</expr_stmt>
+
+    <return>return <expr>0</expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* start up a bunch of worker threads */</comment>
+<function><type><specifier>static</specifier> <name>void</name></type> <name>startup_workers</name><parameter_list>(<param><decl><type><name>int</name></type> <name>number_to_start</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+
+    <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>number_to_start</name> &amp;&amp; <name>i</name> &lt; <name>ap_threads_limit</name></expr>;</condition> <incr><expr>++<name>i</name></expr></incr>) <block>{
+        <if>if <condition>(<expr><name><name>ap_scoreboard_image</name>-&gt;<name>servers</name><index>[<expr>0</expr>]</index><index>[<expr><name>i</name></expr>]</index></name>.<name>status</name> != <name>WORKER_DEAD</name></expr>)</condition><then> <block>{
+            <continue>continue;</continue>
+        }</block></then></if>
+        <if>if <condition>(<expr><call><name>make_child</name><argument_list>(<argument><expr><name>ap_server_conf</name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then> <block>{
+            <break>break;</break>
+        }</block></then></if>
+        <expr_stmt><expr>--<name>number_to_start</name></expr>;</expr_stmt>
+    }</block></for>
+}</block></function>
+
+
+<comment type="block">/*
+ * idle_spawn_rate is the number of children that will be spawned on the
+ * next maintenance cycle if there aren't enough idle servers.  It is
+ * doubled up to MAX_SPAWN_RATE, and reset only when a cycle goes by
+ * without the need to spawn.
+ */</comment>
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name></type> <name>idle_spawn_rate</name> <init>= <expr>1</expr></init></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>MAX_SPAWN_RATE</name></cpp:ifndef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>MAX_SPAWN_RATE</name></cpp:macro> <cpp:value>(64)</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name></type> <name>hold_off_on_exponential_spawning</name></decl>;</decl_stmt>
+
+<function><type><specifier>static</specifier> <name>void</name></type> <name>perform_idle_server_maintenance</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>idle_count</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>worker_score</name> *</type><name>ws</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>free_length</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name><name>free_slots</name><index>[<expr><name>MAX_SPAWN_RATE</name></expr>]</index></name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>last_non_dead</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>total_non_dead</name></decl>;</decl_stmt>
+
+    <comment type="block">/* initialize the free_list */</comment>
+    <expr_stmt><expr><name>free_length</name> = 0</expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>idle_count</name> = 0</expr>;</expr_stmt>
+    <expr_stmt><expr><name>last_non_dead</name> = -1</expr>;</expr_stmt>
+    <expr_stmt><expr><name>total_non_dead</name> = 0</expr>;</expr_stmt>
+
+    <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name>ap_threads_limit</name></expr>;</condition> <incr><expr>++<name>i</name></expr></incr>) <block>{
+        <decl_stmt><decl><type><name>int</name></type> <name>status</name></decl>;</decl_stmt>
+
+        <if>if <condition>(<expr><name>i</name> &gt;= <name>ap_max_workers_limit</name> &amp;&amp; <name>free_length</name> == <name>idle_spawn_rate</name></expr>)</condition><then>
+            <break>break;</break></then></if>
+        <expr_stmt><expr><name>ws</name> = &amp;<name><name>ap_scoreboard_image</name>-&gt;<name>servers</name><index>[<expr>0</expr>]</index><index>[<expr><name>i</name></expr>]</index></name></expr>;</expr_stmt>
+        <expr_stmt><expr><name>status</name> = <name><name>ws</name>-&gt;<name>status</name></name></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>status</name> == <name>WORKER_DEAD</name></expr>)</condition><then> <block>{
+            <comment type="block">/* try to keep children numbers as low as possible */</comment>
+            <if>if <condition>(<expr><name>free_length</name> &lt; <name>idle_spawn_rate</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><name><name>free_slots</name><index>[<expr><name>free_length</name></expr>]</index></name> = <name>i</name></expr>;</expr_stmt>
+                <expr_stmt><expr>++<name>free_length</name></expr>;</expr_stmt>
+            }</block></then></if>
+        }</block></then>
+        <else>else <if>if <condition>(<expr><name>status</name> == <name>WORKER_IDLE_KILL</name></expr>)</condition><then> <block>{
+            <comment type="block">/* If it is already marked to die, skip it */</comment>
+            <continue>continue;</continue>
+        }</block></then>
+        <else>else <block>{
+            <comment type="block">/* We consider a starting server as idle because we started it
+            * at least a cycle ago, and if it still hasn't finished starting
+            * then we're just going to swamp things worse by forking more.
+            * So we hopefully won't need to fork more if we count it.
+            * This depends on the ordering of SERVER_READY and SERVER_STARTING.
+            */</comment>
+            <if>if <condition>(<expr><name>status</name> &lt;= <name>WORKER_READY</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr>++ <name>idle_count</name></expr>;</expr_stmt>
+            }</block></then></if>
+
+            <expr_stmt><expr>++<name>total_non_dead</name></expr>;</expr_stmt>
+            <expr_stmt><expr><name>last_non_dead</name> = <name>i</name></expr>;</expr_stmt>
+        }</block></else></if></else></if>
+    }</block></for>
+    <expr_stmt><expr><call><name>DBPRINT2</name><argument_list>(<argument><expr>"Total: %d Idle Count: %d  \r"</expr></argument>, <argument><expr><name>total_non_dead</name></expr></argument>, <argument><expr><name>idle_count</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name>ap_max_workers_limit</name> = <name>last_non_dead</name> + 1</expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>idle_count</name> &gt; <name>ap_threads_max_free</name></expr>)</condition><then> <block>{
+        <comment type="block">/* kill off one child... we use the pod because that'll cause it to
+        * shut down gracefully, in case it happened to pick up a request
+        * while we were counting
+        */</comment>
+        <expr_stmt><expr><name>idle_spawn_rate</name> = 1</expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>ap_update_child_status_from_indexes</name><argument_list>(<argument><expr>0</expr></argument>, <argument><expr><name>last_non_dead</name></expr></argument>, <argument><expr><name>WORKER_IDLE_KILL</name></expr></argument>,
+                                            <argument><expr>(<name>request_rec</name> *) <name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>DBPRINT1</name><argument_list>(<argument><expr>"\nKilling idle thread: %d\n"</expr></argument>, <argument><expr><name>last_non_dead</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+    <else>else <if>if <condition>(<expr><name>idle_count</name> &lt; <name>ap_threads_min_free</name></expr>)</condition><then> <block>{
+        <comment type="block">/* terminate the free list */</comment>
+        <if>if <condition>(<expr><name>free_length</name> == 0</expr>)</condition><then> <block>{
+            <comment type="block">/* only report this condition once */</comment>
+            <decl_stmt><decl><type><specifier>static</specifier> <name>int</name></type> <name>reported</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+
+            <if>if <condition>(<expr>!<name>reported</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_ERR</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>ap_server_conf</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00220</expr></argument>)</argument_list></call>
+                    "server reached MaxRequestWorkers setting, consider"
+                    " raising the MaxRequestWorkers setting"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><name>reported</name> = 1</expr>;</expr_stmt>
+            }</block></then></if>
+            <expr_stmt><expr><name>idle_spawn_rate</name> = 1</expr>;</expr_stmt>
+        }</block></then>
+        <else>else <block>{
+            <if>if <condition>(<expr><name>idle_spawn_rate</name> &gt;= 8</expr>)</condition><then> <block>{
+                <expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_INFO</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>ap_server_conf</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00221</expr></argument>)</argument_list></call>
+                    "server seems busy, (you may need "
+                    "to increase StartServers, or Min/MaxSpareServers), "
+                    "spawning %d children, there are %d idle, and "
+                    "%d total children"</expr></argument>, <argument><expr><name>idle_spawn_rate</name></expr></argument>,
+                    <argument><expr><name>idle_count</name></expr></argument>, <argument><expr><name>total_non_dead</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></then></if>
+            <expr_stmt><expr><call><name>DBPRINT0</name><argument_list>(<argument><expr>"\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name>free_length</name></expr>;</condition> <incr><expr>++<name>i</name></expr></incr>) <block>{
+                <expr_stmt><expr><call><name>DBPRINT1</name><argument_list>(<argument><expr>"Spawning additional thread slot: %d\n"</expr></argument>, <argument><expr><name><name>free_slots</name><index>[<expr><name>i</name></expr>]</index></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><call><name>make_child</name><argument_list>(<argument><expr><name>ap_server_conf</name></expr></argument>, <argument><expr><name><name>free_slots</name><index>[<expr><name>i</name></expr>]</index></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></for>
+            <comment type="block">/* the next time around we want to spawn twice as many if this
+            * wasn't good enough, but not if we've just done a graceful
+            */</comment>
+            <if>if <condition>(<expr><name>hold_off_on_exponential_spawning</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr>--<name>hold_off_on_exponential_spawning</name></expr>;</expr_stmt>
+            }</block></then>
+            <else>else <if>if <condition>(<expr><name>idle_spawn_rate</name> &lt; <name>MAX_SPAWN_RATE</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><name>idle_spawn_rate</name> *= 2</expr>;</expr_stmt>
+            }</block></then></if></else></if>
+        }</block></else></if>
+    }</block></then>
+    <else>else <block>{
+        <expr_stmt><expr><name>idle_spawn_rate</name> = 1</expr>;</expr_stmt>
+    }</block></else></if></else></if>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>void</name></type> <name>display_settings</name><parameter_list>()</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name><name>status_array</name><index>[<expr><name>SERVER_NUM_STATUS</name></expr>]</index></name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>, <decl><type ref="prev"/><name>status</name></decl>, <decl><type ref="prev"/><name>total</name><init>=<expr>0</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>reqs</name> <init>= <expr><name>request_count</name></expr></init></decl>;</decl_stmt>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>DBINFO_ON</name></cpp:ifdef>
+    <decl_stmt><decl><type><name>int</name></type> <name>wblock</name> <init>= <expr><name>would_block</name></expr></init></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>would_block</name> = 0</expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+    <expr_stmt><expr><name>request_count</name> = 0</expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>ClearScreen</name> <argument_list>(<argument><expr><call><name>getscreenhandle</name><argument_list>()</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"%s \n"</expr></argument>, <argument><expr><call><name>ap_get_server_description</name><argument_list>()</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <for>for (<init><expr><name>i</name>=0</expr>;</init><condition><expr><name>i</name>&lt;<name>SERVER_NUM_STATUS</name></expr>;</condition><incr><expr><name>i</name>++</expr></incr>) <block>{
+        <expr_stmt><expr><name><name>status_array</name><index>[<expr><name>i</name></expr>]</index></name> = 0</expr>;</expr_stmt>
+    }</block></for>
+
+    <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name>ap_threads_limit</name></expr>;</condition> <incr><expr>++<name>i</name></expr></incr>) <block>{
+        <expr_stmt><expr><name>status</name> = (<name><name>ap_scoreboard_image</name>-&gt;<name>servers</name><index>[<expr>0</expr>]</index><index>[<expr><name>i</name></expr>]</index></name>).<name>status</name></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>status_array</name><index>[<expr><name>status</name></expr>]</index></name>++</expr>;</expr_stmt>
+    }</block></for>
+
+    <for>for (<init><expr><name>i</name>=0</expr>;</init><condition><expr><name>i</name>&lt;<name>SERVER_NUM_STATUS</name></expr>;</condition><incr><expr><name>i</name>++</expr></incr>) <block>{
+        <switch>switch<condition>(<expr><name>i</name></expr>)</condition>
+        <block>{
+        <case>case <expr><name>SERVER_DEAD</name></expr>:
+            <expr_stmt><expr><call><name>printf</name> <argument_list>(<argument><expr>"Available:\t%d\n"</expr></argument>, <argument><expr><name><name>status_array</name><index>[<expr><name>i</name></expr>]</index></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <break>break;</break>
+        </case><case>case <expr><name>SERVER_STARTING</name></expr>:
+            <expr_stmt><expr><call><name>printf</name> <argument_list>(<argument><expr>"Starting:\t%d\n"</expr></argument>, <argument><expr><name><name>status_array</name><index>[<expr><name>i</name></expr>]</index></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <break>break;</break>
+        </case><case>case <expr><name>SERVER_READY</name></expr>:
+            <expr_stmt><expr><call><name>printf</name> <argument_list>(<argument><expr>"Ready:\t\t%d\n"</expr></argument>, <argument><expr><name><name>status_array</name><index>[<expr><name>i</name></expr>]</index></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <break>break;</break>
+        </case><case>case <expr><name>SERVER_BUSY_READ</name></expr>:
+            <expr_stmt><expr><call><name>printf</name> <argument_list>(<argument><expr>"Busy:\t\t%d\n"</expr></argument>, <argument><expr><name><name>status_array</name><index>[<expr><name>i</name></expr>]</index></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <break>break;</break>
+        </case><case>case <expr><name>SERVER_BUSY_WRITE</name></expr>:
+            <expr_stmt><expr><call><name>printf</name> <argument_list>(<argument><expr>"Busy Write:\t%d\n"</expr></argument>, <argument><expr><name><name>status_array</name><index>[<expr><name>i</name></expr>]</index></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <break>break;</break>
+        </case><case>case <expr><name>SERVER_BUSY_KEEPALIVE</name></expr>:
+            <expr_stmt><expr><call><name>printf</name> <argument_list>(<argument><expr>"Busy Keepalive:\t%d\n"</expr></argument>, <argument><expr><name><name>status_array</name><index>[<expr><name>i</name></expr>]</index></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <break>break;</break>
+        </case><case>case <expr><name>SERVER_BUSY_LOG</name></expr>:
+            <expr_stmt><expr><call><name>printf</name> <argument_list>(<argument><expr>"Busy Log:\t%d\n"</expr></argument>, <argument><expr><name><name>status_array</name><index>[<expr><name>i</name></expr>]</index></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <break>break;</break>
+        </case><case>case <expr><name>SERVER_BUSY_DNS</name></expr>:
+            <expr_stmt><expr><call><name>printf</name> <argument_list>(<argument><expr>"Busy DNS:\t%d\n"</expr></argument>, <argument><expr><name><name>status_array</name><index>[<expr><name>i</name></expr>]</index></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <break>break;</break>
+        </case><case>case <expr><name>SERVER_CLOSING</name></expr>:
+            <expr_stmt><expr><call><name>printf</name> <argument_list>(<argument><expr>"Closing:\t%d\n"</expr></argument>, <argument><expr><name><name>status_array</name><index>[<expr><name>i</name></expr>]</index></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <break>break;</break>
+        </case><case>case <expr><name>SERVER_GRACEFUL</name></expr>:
+            <expr_stmt><expr><call><name>printf</name> <argument_list>(<argument><expr>"Restart:\t%d\n"</expr></argument>, <argument><expr><name><name>status_array</name><index>[<expr><name>i</name></expr>]</index></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <break>break;</break>
+        </case><case>case <expr><name>SERVER_IDLE_KILL</name></expr>:
+            <expr_stmt><expr><call><name>printf</name> <argument_list>(<argument><expr>"Idle Kill:\t%d\n"</expr></argument>, <argument><expr><name><name>status_array</name><index>[<expr><name>i</name></expr>]</index></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <break>break;</break>
+        </case><default>default:
+            <expr_stmt><expr><call><name>printf</name> <argument_list>(<argument><expr>"Unknown Status:\t%d\n"</expr></argument>, <argument><expr><name><name>status_array</name><index>[<expr><name>i</name></expr>]</index></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <break>break;</break>
+        </default>}</block></switch>
+        <if>if <condition>(<expr><name>i</name> != <name>SERVER_DEAD</name></expr>)</condition><then>
+            <expr_stmt><expr><name>total</name>+=<name><name>status_array</name><index>[<expr><name>i</name></expr>]</index></name></expr>;</expr_stmt></then></if>
+    }</block></for>
+    <expr_stmt><expr><call><name>printf</name> <argument_list>(<argument><expr>"Total Running:\t%d\tout of: \t%d\n"</expr></argument>, <argument><expr><name>total</name></expr></argument>, <argument><expr><name>ap_threads_limit</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>printf</name> <argument_list>(<argument><expr>"Requests per interval:\t%d\n"</expr></argument>, <argument><expr><name>reqs</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>DBINFO_ON</name></cpp:ifdef>
+    <expr_stmt><expr><call><name>printf</name> <argument_list>(<argument><expr>"Would blocks:\t%d\n"</expr></argument>, <argument><expr><name>wblock</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>printf</name> <argument_list>(<argument><expr>"Successful retries:\t%d\n"</expr></argument>, <argument><expr><name>retry_success</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>printf</name> <argument_list>(<argument><expr>"Failed retries:\t%d\n"</expr></argument>, <argument><expr><name>retry_fail</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>printf</name> <argument_list>(<argument><expr>"Avg retries:\t%d\n"</expr></argument>, <argument><expr><name>retry_success</name> == 0 ? 0 : <name>avg_retries</name> / <name>retry_success</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>void</name></type> <name>show_server_data</name><parameter_list>()</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>ap_listen_rec</name> *</type><name>lr</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>module</name> **</type><name>m</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"%s\n"</expr></argument>, <argument><expr><call><name>ap_get_server_description</name><argument_list>()</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>ap_my_addrspace</name> &amp;&amp; (<name><name>ap_my_addrspace</name><index>[<expr>0</expr>]</index></name> != 'O') &amp;&amp; (<name><name>ap_my_addrspace</name><index>[<expr>1</expr>]</index></name> != 'S')</expr>)</condition><then>
+        <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"   Running in address space %s\n"</expr></argument>, <argument><expr><name>ap_my_addrspace</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+
+    <comment type="block">/* Display listening ports */</comment>
+    <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"   Listening on port(s):"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name>lr</name> = <name>ap_listeners</name></expr>;</expr_stmt>
+    <do>do <block>{
+       <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>" %d"</expr></argument>, <argument><expr><name><name>lr</name>-&gt;<name>bind_addr</name>-&gt;<name>port</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+       <expr_stmt><expr><name>lr</name> = <name><name>lr</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+    }</block> while <condition>(<expr><name>lr</name> &amp;&amp; <name>lr</name> != <name>ap_listeners</name></expr>)</condition>;</do>
+
+    <comment type="block">/* Display dynamic modules loaded */</comment>
+    <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <for>for (<init><expr><name>m</name> = <name>ap_loaded_modules</name></expr>;</init> <condition><expr>*<name>m</name> != <name>NULL</name></expr>;</condition> <incr><expr><name>m</name>++</expr></incr>) <block>{
+        <if>if <condition>(<expr>((<name>module</name>*)*<name>m</name>)-&gt;<name>dynamic_load_handle</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"   Loaded dynamic module %s\n"</expr></argument>, <argument><expr>((<name>module</name>*)*<name>m</name>)-&gt;<name>name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+    }</block></for>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>int</name></type> <name>setup_listeners</name><parameter_list>(<param><decl><type><name>server_rec</name> *</type><name>s</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>ap_listen_rec</name> *</type><name>lr</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>sockdes</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr><call><name>ap_setup_listeners</name><argument_list>(<argument><expr><name>s</name></expr></argument>)</argument_list></call> &lt; 1</expr> )</condition><then> <block>{
+        <expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_ALERT</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>s</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00222</expr></argument>)</argument_list></call>
+            "no listening sockets available, shutting down"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr>-1</expr>;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><name>listenmaxfd</name> = -1</expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>FD_ZERO</name><argument_list>(<argument><expr>&amp;<name>listenfds</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <for>for (<init><expr><name>lr</name> = <name>ap_listeners</name></expr>;</init> <condition><expr><name>lr</name></expr>;</condition> <incr><expr><name>lr</name> = <name><name>lr</name>-&gt;<name>next</name></name></expr></incr>) <block>{
+        <expr_stmt><expr><call><name>apr_os_sock_get</name><argument_list>(<argument><expr>&amp;<name>sockdes</name></expr></argument>, <argument><expr><name><name>lr</name>-&gt;<name>sd</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>FD_SET</name><argument_list>(<argument><expr><name>sockdes</name></expr></argument>, <argument><expr>&amp;<name>listenfds</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>sockdes</name> &gt; <name>listenmaxfd</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>listenmaxfd</name> = <name>sockdes</name></expr>;</expr_stmt>
+        }</block></then></if>
+    }</block></for>
+    <return>return <expr>0</expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type> <name>shutdown_listeners</name><parameter_list>()</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>ap_listen_rec</name> *</type><name>lr</name></decl>;</decl_stmt>
+
+    <for>for (<init><expr><name>lr</name> = <name>ap_listeners</name></expr>;</init> <condition><expr><name>lr</name></expr>;</condition> <incr><expr><name>lr</name> = <name><name>lr</name>-&gt;<name>next</name></name></expr></incr>) <block>{
+        <expr_stmt><expr><call><name>apr_socket_close</name><argument_list>(<argument><expr><name><name>lr</name>-&gt;<name>sd</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></for>
+    <expr_stmt><expr><name>ap_listeners</name> = <name>NULL</name></expr>;</expr_stmt>
+    <return>return <expr>0</expr>;</return>
+}</block></function>
+
+<comment type="block">/*****************************************************************
+ * Executive routines.
+ */</comment>
+
+<function><type><specifier>static</specifier> <name>int</name></type> <name>netware_run</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>_pconf</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>plog</name></decl></param>, <param><decl><type><name>server_rec</name> *</type><name>s</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>apr_status_t</name></type> <name>status</name><init>=<expr>0</expr></init></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>pconf</name> = <name>_pconf</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name>ap_server_conf</name> = <name>s</name></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr><call><name>setup_listeners</name><argument_list>(<argument><expr><name>s</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_ALERT</name></expr></argument>, <argument><expr><name>status</name></expr></argument>, <argument><expr><name>s</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00223</expr></argument>)</argument_list></call>
+            "no listening sockets available, shutting down"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr>!<name>OK</name></expr>;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><name>restart_pending</name> = <name>shutdown_pending</name> = 0</expr>;</expr_stmt>
+    <expr_stmt><expr><name>worker_thread_count</name> = 0</expr>;</expr_stmt>
+
+    <if>if <condition>(<expr>!<name>is_graceful</name></expr>)</condition><then> <block>{
+        <if>if <condition>(<expr><call><name>ap_run_pre_mpm</name><argument_list>(<argument><expr><name><name>s</name>-&gt;<name>process</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>SB_NOT_SHARED</name></expr></argument>)</argument_list></call> != <name>OK</name></expr>)</condition><then> <block>{
+            <return>return <expr>!<name>OK</name></expr>;</return>
+        }</block></then></if>
+    }</block></then></if>
+
+    <comment type="block">/* Only set slot 0 since that is all NetWare will ever have. */</comment>
+    <expr_stmt><expr><name><name>ap_scoreboard_image</name>-&gt;<name>parent</name><index>[<expr>0</expr>]</index></name>.<name>pid</name> = <call><name>getpid</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>ap_run_child_status</name><argument_list>(<argument><expr><name>ap_server_conf</name></expr></argument>,
+                        <argument><expr><name><name>ap_scoreboard_image</name>-&gt;<name>parent</name><index>[<expr>0</expr>]</index></name>.<name>pid</name></expr></argument>,
+                        <argument><expr><name>ap_my_generation</name></expr></argument>,
+                        <argument><expr>0</expr></argument>,
+                        <argument><expr><name>MPM_CHILD_STARTED</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>set_signals</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>apr_pool_create</name><argument_list>(<argument><expr>&amp;<name>pmain</name></expr></argument>, <argument><expr><name>pconf</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>ap_run_child_init</name><argument_list>(<argument><expr><name>pmain</name></expr></argument>, <argument><expr><name>ap_server_conf</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr><name>ap_threads_max_free</name> &lt; <name>ap_threads_min_free</name> + 1</expr>)</condition><then>  <comment type="block">/* Don't thrash... */</comment>
+        <expr_stmt><expr><name>ap_threads_max_free</name> = <name>ap_threads_min_free</name> + 1</expr>;</expr_stmt></then></if>
+    <expr_stmt><expr><name>request_count</name> = 0</expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>startup_workers</name><argument_list>(<argument><expr><name>ap_threads_to_start</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+     <comment type="block">/* Allow the Apache screen to be closed normally on exit() only if it
+        has not been explicitly forced to close on exit(). (ie. the -E flag
+        was specified at startup) */</comment>
+    <if>if <condition>(<expr><name>hold_screen_on_exit</name> &gt; 0</expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>hold_screen_on_exit</name> = 0</expr>;</expr_stmt>
+    }</block></then></if>
+
+    <expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_NOTICE</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>ap_server_conf</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00224</expr></argument>)</argument_list></call>
+            "%s configured -- resuming normal operations"</expr></argument>,
+            <argument><expr><call><name>ap_get_server_description</name><argument_list>()</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_INFO</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>ap_server_conf</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00225</expr></argument>)</argument_list></call>
+            "Server built: %s"</expr></argument>, <argument><expr><call><name>ap_get_server_built</name><argument_list>()</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>ap_log_command_line</name><argument_list>(<argument><expr><name>plog</name></expr></argument>, <argument><expr><name>s</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>ap_log_mpm_common</name><argument_list>(<argument><expr><name>s</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>show_server_data</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>mpm_state</name> = <name>AP_MPMQ_RUNNING</name></expr>;</expr_stmt>
+    <while>while <condition>(<expr>!<name>restart_pending</name> &amp;&amp; !<name>shutdown_pending</name></expr>)</condition> <block>{
+        <expr_stmt><expr><call><name>perform_idle_server_maintenance</name><argument_list>(<argument><expr><name>pconf</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>show_settings</name></expr>)</condition><then>
+            <expr_stmt><expr><call><name>display_settings</name><argument_list>()</argument_list></call></expr>;</expr_stmt></then></if>
+        <expr_stmt><expr><call><name>apr_thread_yield</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>apr_sleep</name><argument_list>(<argument><expr><name>SCOREBOARD_MAINTENANCE_INTERVAL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></while>
+    <expr_stmt><expr><name>mpm_state</name> = <name>AP_MPMQ_STOPPING</name></expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>ap_run_child_status</name><argument_list>(<argument><expr><name>ap_server_conf</name></expr></argument>,
+                        <argument><expr><name><name>ap_scoreboard_image</name>-&gt;<name>parent</name><index>[<expr>0</expr>]</index></name>.<name>pid</name></expr></argument>,
+                        <argument><expr><name>ap_my_generation</name></expr></argument>,
+                        <argument><expr>0</expr></argument>,
+                        <argument><expr><name>MPM_CHILD_EXITED</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* Shutdown the listen sockets so that we don't get stuck in a blocking call.
+    shutdown_listeners();*/</comment>
+
+    <if>if <condition>(<expr><name>shutdown_pending</name></expr>)</condition><then> <block>{ <comment type="block">/* Got an unload from the console */</comment>
+        <expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_NOTICE</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>ap_server_conf</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00226</expr></argument>)</argument_list></call>
+            "caught SIGTERM, shutting down"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <while>while <condition>(<expr><name>worker_thread_count</name> &gt; 0</expr>)</condition> <block>{
+            <expr_stmt><expr><call><name>printf</name> <argument_list>(<argument><expr>"\rShutdown pending. Waiting for %lu thread(s) to terminate..."</expr></argument>,
+                    <argument><expr><name>worker_thread_count</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>apr_thread_yield</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+        }</block></while>
+
+        <expr_stmt><expr><call><name>mpm_main_cleanup</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>DONE</name></expr>;</return>
+    }</block></then>
+    <else>else <block>{  <comment type="block">/* the only other way out is a restart */</comment>
+        <comment type="block">/* advance to the next generation */</comment>
+        <comment type="block">/* XXX: we really need to make sure this new generation number isn't in
+         * use by any of the children.
+         */</comment>
+        <expr_stmt><expr>++<name>ap_my_generation</name></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>ap_scoreboard_image</name>-&gt;<name>global</name>-&gt;<name>running_generation</name></name> = <name>ap_my_generation</name></expr>;</expr_stmt>
+
+        <expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_NOTICE</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>ap_server_conf</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00227</expr></argument>)</argument_list></call>
+                "Graceful restart requested, doing restart"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <comment type="block">/* Wait for all of the threads to terminate before initiating the restart */</comment>
+        <while>while <condition>(<expr><name>worker_thread_count</name> &gt; 0</expr>)</condition> <block>{
+            <expr_stmt><expr><call><name>printf</name> <argument_list>(<argument><expr>"\rRestart pending. Waiting for %lu thread(s) to terminate..."</expr></argument>,
+                    <argument><expr><name>worker_thread_count</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>apr_thread_yield</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+        }</block></while>
+        <expr_stmt><expr><call><name>printf</name> <argument_list>(<argument><expr>"\nRestarting...\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if>
+
+    <expr_stmt><expr><call><name>mpm_main_cleanup</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>OK</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type> <name>netware_pre_config</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>plog</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>ptemp</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>char</name> *</type><name>addrname</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>mpm_state</name> = <name>AP_MPMQ_STARTING</name></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>is_graceful</name> = 0</expr>;</expr_stmt>
+    <expr_stmt><expr><name>ap_my_pid</name> = <call><name>getpid</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name>addrname</name> = <call><name>getaddressspacename</name> <argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>addrname</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>ap_my_addrspace</name> = <call><name>apr_pstrdup</name> <argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>addrname</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>free</name> <argument_list>(<argument><expr><name>addrname</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>USE_WINSOCK</name></cpp:ifndef>
+    <comment type="block">/* The following call has been moved to the mod_nw_ssl pre-config handler */</comment>
+    <expr_stmt><expr><call><name>ap_listen_pre_config</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+    <expr_stmt><expr><name>ap_threads_to_start</name> = <name>DEFAULT_START_THREADS</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name>ap_threads_min_free</name> = <name>DEFAULT_MIN_FREE_THREADS</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name>ap_threads_max_free</name> = <name>DEFAULT_MAX_FREE_THREADS</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name>ap_threads_limit</name> = <name>HARD_THREAD_LIMIT</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name>ap_extended_status</name> = 0</expr>;</expr_stmt>
+
+    <comment type="block">/* override core's default thread stacksize */</comment>
+    <expr_stmt><expr><name>ap_thread_stacksize</name> = <name>DEFAULT_THREAD_STACKSIZE</name></expr>;</expr_stmt>
+
+    <return>return <expr><name>OK</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type> <name>netware_check_config</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>plog</name></decl></param>,
+                                <param><decl><type><name>apr_pool_t</name> *</type><name>ptemp</name></decl></param>, <param><decl><type><name>server_rec</name> *</type><name>s</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><specifier>static</specifier> <name>int</name></type> <name>restart_num</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>startup</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+
+    <comment type="block">/* we want this only the first time around */</comment>
+    <if>if <condition>(<expr><name>restart_num</name>++ == 0</expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>startup</name> = 1</expr>;</expr_stmt>
+    }</block></then></if>
+
+    <if>if <condition>(<expr><name>ap_threads_limit</name> &gt; <name>HARD_THREAD_LIMIT</name></expr>)</condition><then> <block>{
+        <if>if <condition>(<expr><name>startup</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_WARNING</name> | <name>APLOG_STARTUP</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00228</expr></argument>)</argument_list></call>
+                         "WARNING: MaxThreads of %d exceeds compile-time "
+                         "limit of %d threads, decreasing to %d. "
+                         "To increase, please see the HARD_THREAD_LIMIT "
+                         "define in server/mpm/netware%s."</expr></argument>,
+                         <argument><expr><name>ap_threads_limit</name></expr></argument>, <argument><expr><name>HARD_THREAD_LIMIT</name></expr></argument>, <argument><expr><name>HARD_THREAD_LIMIT</name></expr></argument>,
+                         <argument><expr><name>MPM_HARD_LIMITS_FILE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then> <else>else <block>{
+            <expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_WARNING</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>s</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00229</expr></argument>)</argument_list></call>
+                         "MaxThreads of %d exceeds compile-time limit "
+                         "of %d, decreasing to match"</expr></argument>,
+                         <argument><expr><name>ap_threads_limit</name></expr></argument>, <argument><expr><name>HARD_THREAD_LIMIT</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></else></if>
+        <expr_stmt><expr><name>ap_threads_limit</name> = <name>HARD_THREAD_LIMIT</name></expr>;</expr_stmt>
+    }</block></then>
+    <else>else <if>if <condition>(<expr><name>ap_threads_limit</name> &lt; 1</expr>)</condition><then> <block>{
+        <if>if <condition>(<expr><name>startup</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_WARNING</name> | <name>APLOG_STARTUP</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00230</expr></argument>)</argument_list></call>
+                         "WARNING: MaxThreads of %d not allowed, "
+                         "increasing to 1."</expr></argument>, <argument><expr><name>ap_threads_limit</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then> <else>else <block>{
+            <expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_WARNING</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>s</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>02661</expr></argument>)</argument_list></call>
+                         "MaxThreads of %d not allowed, increasing to 1"</expr></argument>,
+                         <argument><expr><name>ap_threads_limit</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></else></if>
+        <expr_stmt><expr><name>ap_threads_limit</name> = 1</expr>;</expr_stmt>
+    }</block></then></if></else></if>
+
+    <comment type="block">/* ap_threads_to_start &gt; ap_threads_limit effectively checked in
+     * call to startup_workers(ap_threads_to_start) in ap_mpm_run()
+     */</comment>
+    <if>if <condition>(<expr><name>ap_threads_to_start</name> &lt; 0</expr>)</condition><then> <block>{
+        <if>if <condition>(<expr><name>startup</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_WARNING</name> | <name>APLOG_STARTUP</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00231</expr></argument>)</argument_list></call>
+                         "WARNING: StartThreads of %d not allowed, "
+                         "increasing to 1."</expr></argument>, <argument><expr><name>ap_threads_to_start</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then> <else>else <block>{
+            <expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_WARNING</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>s</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00232</expr></argument>)</argument_list></call>
+                         "StartThreads of %d not allowed, increasing to 1"</expr></argument>,
+                         <argument><expr><name>ap_threads_to_start</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></else></if>
+        <expr_stmt><expr><name>ap_threads_to_start</name> = 1</expr>;</expr_stmt>
+    }</block></then></if>
+
+    <if>if <condition>(<expr><name>ap_threads_min_free</name> &lt; 1</expr>)</condition><then> <block>{
+        <if>if <condition>(<expr><name>startup</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_WARNING</name> | <name>APLOG_STARTUP</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00233</expr></argument>)</argument_list></call>
+                         "WARNING: MinSpareThreads of %d not allowed, "
+                         "increasing to 1 to avoid almost certain server failure. "
+                         "Please read the documentation."</expr></argument>, <argument><expr><name>ap_threads_min_free</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then> <else>else <block>{
+            <expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_WARNING</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>s</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00234</expr></argument>)</argument_list></call>
+                         "MinSpareThreads of %d not allowed, increasing to 1"</expr></argument>,
+                         <argument><expr><name>ap_threads_min_free</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></else></if>
+        <expr_stmt><expr><name>ap_threads_min_free</name> = 1</expr>;</expr_stmt>
+    }</block></then></if>
+
+    <comment type="block">/* ap_threads_max_free &lt; ap_threads_min_free + 1 checked in ap_mpm_run() */</comment>
+
+    <return>return <expr><name>OK</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>void</name></type> <name>netware_mpm_hooks</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>)</parameter_list>
+<block>{
+    <comment type="block">/* Run the pre-config hook after core's so that it can override the
+     * default setting of ThreadStackSize for NetWare.
+     */</comment>
+    <decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> * <specifier>const</specifier></type> <name><name>predecessors</name><index>[]</index></name> <init>= <expr><block>{<expr>"core.c"</expr>, <expr><name>NULL</name></expr>}</block></expr></init></decl>;</decl_stmt>
+
+    <expr_stmt><expr><call><name>ap_hook_pre_config</name><argument_list>(<argument><expr><name>netware_pre_config</name></expr></argument>, <argument><expr><name>predecessors</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>APR_HOOK_MIDDLE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>ap_hook_check_config</name><argument_list>(<argument><expr><name>netware_check_config</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>APR_HOOK_MIDDLE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <comment type="line">//ap_hook_post_config(netware_post_config, NULL, NULL, 0);</comment>
+    <comment type="line">//ap_hook_child_init(netware_child_init, NULL, NULL, APR_HOOK_MIDDLE);</comment>
+    <comment type="line">//ap_hook_open_logs(netware_open_logs, NULL, aszSucc, APR_HOOK_REALLY_FIRST);</comment>
+    <expr_stmt><expr><call><name>ap_hook_mpm</name><argument_list>(<argument><expr><name>netware_run</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>APR_HOOK_MIDDLE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>ap_hook_mpm_query</name><argument_list>(<argument><expr><name>netware_query</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>APR_HOOK_MIDDLE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>ap_hook_mpm_get_name</name><argument_list>(<argument><expr><name>netware_get_name</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>APR_HOOK_MIDDLE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>void</name></type> <name>netware_rewrite_args</name><parameter_list>(<param><decl><type><name>process_rec</name> *</type><name>process</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>char</name> *</type><name>def_server_root</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name></type> <name><name>optbuf</name><index>[<expr>3</expr>]</index></name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>opt_arg</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_getopt_t</name> *</type><name>opt</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>mpm_new_argv</name></decl>;</decl_stmt>
+
+
+    <expr_stmt><expr><call><name>atexit</name> <argument_list>(<argument><expr><name>mpm_term</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>InstallConsoleHandler</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* Make sure to hold the Apache screen open if exit() is called */</comment>
+    <expr_stmt><expr><name>hold_screen_on_exit</name> = 1</expr>;</expr_stmt>
+
+    <comment type="block">/* Rewrite process-&gt;argv[];
+     *
+     * add default -d serverroot from the path of this executable
+     *
+     * The end result will look like:
+     *     The -d serverroot default from the running executable
+     */</comment>
+    <if>if <condition>(<expr><name><name>process</name>-&gt;<name>argc</name></name> &gt; 0</expr>)</condition><then> <block>{
+        <decl_stmt><decl><type><name>char</name> *</type><name>s</name> <init>= <expr><call><name>apr_pstrdup</name> <argument_list>(<argument><expr><name><name>process</name>-&gt;<name>pconf</name></name></expr></argument>, <argument><expr><name><name>process</name>-&gt;<name>argv</name><index>[<expr>0</expr>]</index></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+        <if>if <condition>(<expr><name>s</name></expr>)</condition><then> <block>{
+            <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>, <decl><type ref="prev"/><name>len</name> <init>= <expr><call><name>strlen</name><argument_list>(<argument><expr><name>s</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+            <for>for (<init><expr><name>i</name>=<name>len</name></expr>;</init> <condition><expr><name>i</name></expr>;</condition> <incr><expr><name>i</name>--</expr></incr>) <block>{
+                <if>if <condition>(<expr><name><name>s</name><index>[<expr><name>i</name></expr>]</index></name> == '\\' || <name><name>s</name><index>[<expr><name>i</name></expr>]</index></name> == '/'</expr>)</condition><then> <block>{
+                    <expr_stmt><expr><name><name>s</name><index>[<expr><name>i</name></expr>]</index></name> = '\0'</expr>;</expr_stmt>
+                    <expr_stmt><expr><call><name>apr_filepath_merge</name><argument_list>(<argument><expr>&amp;<name>def_server_root</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>s</name></expr></argument>,
+                        <argument><expr><name>APR_FILEPATH_TRUENAME</name></expr></argument>, <argument><expr><name><name>process</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                    <break>break;</break>
+                }</block></then></if>
+            }</block></for>
+            <comment type="block">/* Use process-&gt;pool so that the rewritten argv
+            * lasts for the lifetime of the server process,
+            * because pconf will be destroyed after the
+            * initial pre-flight of the config parser.
+            */</comment>
+            <expr_stmt><expr><name>mpm_new_argv</name> = <call><name>apr_array_make</name><argument_list>(<argument><expr><name><name>process</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>process</name>-&gt;<name>argc</name></name> + 2</expr></argument>,
+                                  <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>const <name>char</name> *</expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr>*(const <name>char</name> **)<call><name>apr_array_push</name><argument_list>(<argument><expr><name>mpm_new_argv</name></expr></argument>)</argument_list></call> = <name><name>process</name>-&gt;<name>argv</name><index>[<expr>0</expr>]</index></name></expr>;</expr_stmt>
+            <expr_stmt><expr>*(const <name>char</name> **)<call><name>apr_array_push</name><argument_list>(<argument><expr><name>mpm_new_argv</name></expr></argument>)</argument_list></call> = "-d"</expr>;</expr_stmt>
+            <expr_stmt><expr>*(const <name>char</name> **)<call><name>apr_array_push</name><argument_list>(<argument><expr><name>mpm_new_argv</name></expr></argument>)</argument_list></call> = <name>def_server_root</name></expr>;</expr_stmt>
+
+            <expr_stmt><expr><name><name>optbuf</name><index>[<expr>0</expr>]</index></name> = '-'</expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>optbuf</name><index>[<expr>2</expr>]</index></name> = '\0'</expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>apr_getopt_init</name><argument_list>(<argument><expr>&amp;<name>opt</name></expr></argument>, <argument><expr><name><name>process</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>process</name>-&gt;<name>argc</name></name></expr></argument>, <argument><expr><name><name>process</name>-&gt;<name>argv</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <while>while <condition>(<expr><call><name>apr_getopt</name><argument_list>(<argument><expr><name>opt</name></expr></argument>, <argument><expr><name>AP_SERVER_BASEARGS</name>"n:"</expr></argument>, <argument><expr><name>optbuf</name> + 1</expr></argument>, <argument><expr>&amp;<name>opt_arg</name></expr></argument>)</argument_list></call> == <name>APR_SUCCESS</name></expr>)</condition> <block>{
+                <switch>switch <condition>(<expr><name><name>optbuf</name><index>[<expr>1</expr>]</index></name></expr>)</condition> <block>{
+                <case>case <expr>'n'</expr>:
+                    <if>if <condition>(<expr><name>opt_arg</name></expr>)</condition><then> <block>{
+                        <expr_stmt><expr><call><name>renamescreen</name><argument_list>(<argument><expr><name>opt_arg</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                    }</block></then></if>
+                    <break>break;</break>
+                </case><case>case <expr>'E'</expr>:
+                    <comment type="block">/* Don't need to hold the screen open if the output is going to a file */</comment>
+                    <expr_stmt><expr><name>hold_screen_on_exit</name> = -1</expr>;</expr_stmt>
+                </case><default>default:
+                    <expr_stmt><expr>*(const <name>char</name> **)<call><name>apr_array_push</name><argument_list>(<argument><expr><name>mpm_new_argv</name></expr></argument>)</argument_list></call> =
+                        <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name><name>process</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>optbuf</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+                    <if>if <condition>(<expr><name>opt_arg</name></expr>)</condition><then> <block>{
+                        <expr_stmt><expr>*(const <name>char</name> **)<call><name>apr_array_push</name><argument_list>(<argument><expr><name>mpm_new_argv</name></expr></argument>)</argument_list></call> = <name>opt_arg</name></expr>;</expr_stmt>
+                    }</block></then></if>
+                    <break>break;</break>
+                </default>}</block></switch>
+            }</block></while>
+            <expr_stmt><expr><name><name>process</name>-&gt;<name>argc</name></name> = <name><name>mpm_new_argv</name>-&gt;<name>nelts</name></name></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>process</name>-&gt;<name>argv</name></name> = (const <name>char</name> * const *) <name><name>mpm_new_argv</name>-&gt;<name>elts</name></name></expr>;</expr_stmt>
+        }</block></then></if>
+    }</block></then></if>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type> <name>CommandLineInterpreter</name><parameter_list>(<param><decl><type><name>scr_t</name></type> <name>screenID</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>commandLine</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>char</name> *</type><name>szCommand</name> <init>= <expr>"APACHE2 "</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>iCommandLen</name> <init>= <expr>8</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name></type> <name><name>szcommandLine</name><index>[<expr>256</expr>]</index></name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name> *</type><name>pID</name></decl>;</decl_stmt>
+    <expr_stmt><expr><name>screenID</name> = <name>screenID</name></expr>;</expr_stmt>
+
+
+    <if>if <condition>(<expr><name>commandLine</name> == <name>NULL</name></expr>)</condition><then>
+        <return>return <expr><name>NOTMYCOMMAND</name></expr>;</return></then></if>
+    <if>if <condition>(<expr><call><name>strlen</name><argument_list>(<argument><expr><name>commandLine</name></expr></argument>)</argument_list></call> &lt;= <call><name>strlen</name><argument_list>(<argument><expr><name>szCommand</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+        <return>return <expr><name>NOTMYCOMMAND</name></expr>;</return></then></if>
+
+    <expr_stmt><expr><call><name>apr_cpystrn</name><argument_list>(<argument><expr><name>szcommandLine</name></expr></argument>, <argument><expr><name>commandLine</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>szcommandLine</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/*  All added commands begin with "APACHE2 " */</comment>
+
+    <if>if <condition>(<expr>!<call><name>strnicmp</name><argument_list>(<argument><expr><name>szCommand</name></expr></argument>, <argument><expr><name>szcommandLine</name></expr></argument>, <argument><expr><name>iCommandLen</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>ActivateScreen</name> <argument_list>(<argument><expr><call><name>getscreenhandle</name><argument_list>()</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <comment type="block">/* If an instance id was not given but the nlm is loaded in
+            protected space, then the command belongs to the
+            OS address space instance to pass it on. */</comment>
+        <expr_stmt><expr><name>pID</name> = <call><name>strstr</name> <argument_list>(<argument><expr><name>szcommandLine</name></expr></argument>, <argument><expr>"-p"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr>(<name>pID</name> == <name>NULL</name>) &amp;&amp; <call><name>nlmisloadedprotected</name><argument_list>()</argument_list></call></expr>)</condition><then>
+            <return>return <expr><name>NOTMYCOMMAND</name></expr>;</return></then></if>
+
+        <comment type="block">/* If we got an instance id but it doesn't match this
+            instance of the nlm, pass it on. */</comment>
+        <if>if <condition>(<expr><name>pID</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>pID</name> = &amp;<name><name>pID</name><index>[<expr>2</expr>]</index></name></expr>;</expr_stmt>
+            <while>while <condition>(<expr>*<name>pID</name> &amp;&amp; (*<name>pID</name> == ' ')</expr>)</condition>
+                <expr_stmt><expr><name>pID</name>++</expr>;</expr_stmt></while>
+        }</block></then></if>
+        <if>if <condition>(<expr><name>pID</name> &amp;&amp; <name>ap_my_addrspace</name> &amp;&amp; <call><name>strnicmp</name><argument_list>(<argument><expr><name>pID</name></expr></argument>, <argument><expr><name>ap_my_addrspace</name></expr></argument>, <argument><expr><call><name>strlen</name><argument_list>(<argument><expr><name>ap_my_addrspace</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>)</condition><then>
+            <return>return <expr><name>NOTMYCOMMAND</name></expr>;</return></then></if>
+
+        <comment type="block">/* If we have determined that this command belongs to this
+            instance of the nlm, then handle it. */</comment>
+        <if>if <condition>(<expr>!<call><name>strnicmp</name><argument_list>(<argument><expr>"RESTART"</expr></argument>,<argument><expr>&amp;<name><name>szcommandLine</name><index>[<expr><name>iCommandLen</name></expr>]</index></name></expr></argument>,<argument><expr>3</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"Restart Requested...\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>restart</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+        <else>else <if>if <condition>(<expr>!<call><name>strnicmp</name><argument_list>(<argument><expr>"VERSION"</expr></argument>,<argument><expr>&amp;<name><name>szcommandLine</name><index>[<expr><name>iCommandLen</name></expr>]</index></name></expr></argument>,<argument><expr>3</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"Server version: %s\n"</expr></argument>, <argument><expr><call><name>ap_get_server_description</name><argument_list>()</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"Server built:   %s\n"</expr></argument>, <argument><expr><call><name>ap_get_server_built</name><argument_list>()</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+        <else>else <if>if <condition>(<expr>!<call><name>strnicmp</name><argument_list>(<argument><expr>"MODULES"</expr></argument>,<argument><expr>&amp;<name><name>szcommandLine</name><index>[<expr><name>iCommandLen</name></expr>]</index></name></expr></argument>,<argument><expr>3</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>ap_show_modules</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+        <else>else <if>if <condition>(<expr>!<call><name>strnicmp</name><argument_list>(<argument><expr>"DIRECTIVES"</expr></argument>,<argument><expr>&amp;<name><name>szcommandLine</name><index>[<expr><name>iCommandLen</name></expr>]</index></name></expr></argument>,<argument><expr>3</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+                <expr_stmt><expr><call><name>ap_show_directives</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+        <else>else <if>if <condition>(<expr>!<call><name>strnicmp</name><argument_list>(<argument><expr>"SHUTDOWN"</expr></argument>,<argument><expr>&amp;<name><name>szcommandLine</name><index>[<expr><name>iCommandLen</name></expr>]</index></name></expr></argument>,<argument><expr>3</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"Shutdown Requested...\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name>shutdown_pending</name> = 1</expr>;</expr_stmt>
+        }</block></then>
+        <else>else <if>if <condition>(<expr>!<call><name>strnicmp</name><argument_list>(<argument><expr>"SETTINGS"</expr></argument>,<argument><expr>&amp;<name><name>szcommandLine</name><index>[<expr><name>iCommandLen</name></expr>]</index></name></expr></argument>,<argument><expr>3</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <if>if <condition>(<expr><name>show_settings</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><name>show_settings</name> = 0</expr>;</expr_stmt>
+                <expr_stmt><expr><call><name>ClearScreen</name> <argument_list>(<argument><expr><call><name>getscreenhandle</name><argument_list>()</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><call><name>show_server_data</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+            }</block></then>
+            <else>else <block>{
+                <expr_stmt><expr><name>show_settings</name> = 1</expr>;</expr_stmt>
+                <expr_stmt><expr><call><name>display_settings</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+            }</block></else></if>
+        }</block></then>
+        <else>else <block>{
+            <expr_stmt><expr><name>show_settings</name> = 0</expr>;</expr_stmt>
+            <if>if <condition>(<expr><call><name>strnicmp</name><argument_list>(<argument><expr>"HELP"</expr></argument>,<argument><expr>&amp;<name><name>szcommandLine</name><index>[<expr><name>iCommandLen</name></expr>]</index></name></expr></argument>,<argument><expr>3</expr></argument>)</argument_list></call></expr>)</condition><then>
+                <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"Unknown APACHE2 command %s\n"</expr></argument>, <argument><expr>&amp;<name><name>szcommandLine</name><index>[<expr><name>iCommandLen</name></expr>]</index></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+            <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"Usage: APACHE2 [command] [-p &lt;instance ID&gt;]\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"Commands:\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"\tDIRECTIVES - Show directives\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"\tHELP       - Display this help information\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"\tMODULES    - Show a list of the loaded modules\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"\tRESTART    - Reread the configuration file and restart Apache\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"\tSETTINGS   - Show current thread status\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"\tSHUTDOWN   - Shutdown Apache\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"\tVERSION    - Display the server version information\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></else></if></else></if></else></if></else></if></else></if></else></if>
+
+        <comment type="block">/*  Tell NetWare we handled the command */</comment>
+        <return>return <expr><name>HANDLEDCOMMAND</name></expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/*  Tell NetWare that the command isn't mine */</comment>
+    <return>return <expr><name>NOTMYCOMMAND</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type> <name>InstallConsoleHandler</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>
+<block>{
+    <comment type="block">/*  Our command line handler interfaces the system operator
+    with this NLM */</comment>
+
+    <expr_stmt><expr><call><name>NX_WRAP_INTERFACE</name><argument_list>(<argument><expr><name>CommandLineInterpreter</name></expr></argument>, <argument><expr>2</expr></argument>, <argument><expr>(<name>void</name>*)&amp;(<name><name>ConsoleHandler</name>.<name>parser</name></name>)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name><name>ConsoleHandler</name>.<name>rTag</name></name> = <call><name>AllocateResourceTag</name><argument_list>(<argument><expr><call><name>getnlmhandle</name><argument_list>()</argument_list></call></expr></argument>, <argument><expr>"Command Line Processor"</expr></argument>,
+        <argument><expr><name>ConsoleCommandSignature</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr>!<name><name>ConsoleHandler</name>.<name>rTag</name></name></expr>)</condition><then>
+    <block>{
+        <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"Error on allocate resource tag\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr>1</expr>;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><call><name>RegisterConsoleCommand</name><argument_list>(<argument><expr>&amp;<name>ConsoleHandler</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/*  The Remove procedure unregisters the console handler */</comment>
+
+    <return>return <expr>0</expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>void</name></type> <name>RemoveConsoleHandler</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>
+<block>{
+    <expr_stmt><expr><call><name>UnRegisterConsoleCommand</name><argument_list>(<argument><expr>&amp;<name>ConsoleHandler</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>NX_UNWRAP_INTERFACE</name><argument_list>(<argument><expr><name><name>ConsoleHandler</name>.<name>parser</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *</type><name>set_threads_to_start</name><parameter_list>(<param><decl><type><name>cmd_parms</name> *</type><name>cmd</name></decl></param>, <param><decl><type><name>void</name> *</type><name>dummy</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>arg</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>err</name> <init>= <expr><call><name>ap_check_cmd_context</name><argument_list>(<argument><expr><name>cmd</name></expr></argument>, <argument><expr><name>GLOBAL_ONLY</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <if>if <condition>(<expr><name>err</name> != <name>NULL</name></expr>)</condition><then> <block>{
+        <return>return <expr><name>err</name></expr>;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><name>ap_threads_to_start</name> = <call><name>atoi</name><argument_list>(<argument><expr><name>arg</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *</type><name>set_min_free_threads</name><parameter_list>(<param><decl><type><name>cmd_parms</name> *</type><name>cmd</name></decl></param>, <param><decl><type><name>void</name> *</type><name>dummy</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>arg</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>err</name> <init>= <expr><call><name>ap_check_cmd_context</name><argument_list>(<argument><expr><name>cmd</name></expr></argument>, <argument><expr><name>GLOBAL_ONLY</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <if>if <condition>(<expr><name>err</name> != <name>NULL</name></expr>)</condition><then> <block>{
+        <return>return <expr><name>err</name></expr>;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><name>ap_threads_min_free</name> = <call><name>atoi</name><argument_list>(<argument><expr><name>arg</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *</type><name>set_max_free_threads</name><parameter_list>(<param><decl><type><name>cmd_parms</name> *</type><name>cmd</name></decl></param>, <param><decl><type><name>void</name> *</type><name>dummy</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>arg</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>err</name> <init>= <expr><call><name>ap_check_cmd_context</name><argument_list>(<argument><expr><name>cmd</name></expr></argument>, <argument><expr><name>GLOBAL_ONLY</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <if>if <condition>(<expr><name>err</name> != <name>NULL</name></expr>)</condition><then> <block>{
+        <return>return <expr><name>err</name></expr>;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><name>ap_threads_max_free</name> = <call><name>atoi</name><argument_list>(<argument><expr><name>arg</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *</type><name>set_thread_limit</name> <parameter_list>(<param><decl><type><name>cmd_parms</name> *</type><name>cmd</name></decl></param>, <param><decl><type><name>void</name> *</type><name>dummy</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>arg</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>err</name> <init>= <expr><call><name>ap_check_cmd_context</name><argument_list>(<argument><expr><name>cmd</name></expr></argument>, <argument><expr><name>GLOBAL_ONLY</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <if>if <condition>(<expr><name>err</name> != <name>NULL</name></expr>)</condition><then> <block>{
+        <return>return <expr><name>err</name></expr>;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><name>ap_threads_limit</name> = <call><name>atoi</name><argument_list>(<argument><expr><name>arg</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>command_rec</name></type> <name><name>netware_mpm_cmds</name><index>[]</index></name> <init>= <expr><block>{
+<expr><name>LISTEN_COMMANDS</name></expr>,
+<expr><call><name>AP_INIT_TAKE1</name><argument_list>(<argument><expr>"StartThreads"</expr></argument>, <argument><expr><name>set_threads_to_start</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>RSRC_CONF</name></expr></argument>,
+              <argument><expr>"Number of worker threads launched at server startup"</expr></argument>)</argument_list></call></expr>,
+<expr><call><name>AP_INIT_TAKE1</name><argument_list>(<argument><expr>"MinSpareThreads"</expr></argument>, <argument><expr><name>set_min_free_threads</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>RSRC_CONF</name></expr></argument>,
+              <argument><expr>"Minimum number of idle threads, to handle request spikes"</expr></argument>)</argument_list></call></expr>,
+<expr><call><name>AP_INIT_TAKE1</name><argument_list>(<argument><expr>"MaxSpareThreads"</expr></argument>, <argument><expr><name>set_max_free_threads</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>RSRC_CONF</name></expr></argument>,
+              <argument><expr>"Maximum number of idle threads"</expr></argument>)</argument_list></call></expr>,
+<expr><call><name>AP_INIT_TAKE1</name><argument_list>(<argument><expr>"MaxThreads"</expr></argument>, <argument><expr><name>set_thread_limit</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>RSRC_CONF</name></expr></argument>,
+              <argument><expr>"Maximum number of worker threads alive at the same time"</expr></argument>)</argument_list></call></expr>,
+<expr><block>{ <expr><name>NULL</name></expr> }</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+
+<expr_stmt><expr><call><name>AP_DECLARE_MODULE</name><argument_list>(<argument><expr><name>mpm_netware</name></expr></argument>)</argument_list></call> = <block>{
+    <expr><name>MPM20_MODULE_STUFF</name></expr>,
+    <expr><name>netware_rewrite_args</name></expr>,   <comment type="block">/* hook to run before apache parses args */</comment>
+    <expr><name>NULL</name></expr>,                   <comment type="block">/* create per-directory config structure */</comment>
+    <expr><name>NULL</name></expr>,                   <comment type="block">/* merge per-directory config structures */</comment>
+    <expr><name>NULL</name></expr>,                   <comment type="block">/* create per-server config structure */</comment>
+    <expr><name>NULL</name></expr>,                   <comment type="block">/* merge per-server config structures */</comment>
+    <expr><name>netware_mpm_cmds</name></expr>,       <comment type="block">/* command apr_table_t */</comment>
+    <expr><name>netware_mpm_hooks</name></expr>,      <comment type="block">/* register hooks */</comment>
+}</block></expr>;</expr_stmt>
+</unit>

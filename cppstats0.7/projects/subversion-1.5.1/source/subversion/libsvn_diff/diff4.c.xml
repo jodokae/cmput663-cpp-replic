@@ -1,0 +1,276 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/subversion-1.5.1/source/subversion/libsvn_diff/diff4.c"><comment type="block">/*
+ * diff.c :  routines for doing diffs
+ *
+ * ====================================================================
+ * Copyright (c) 2000-2004 CollabNet.  All rights reserved.
+ *
+ * This software is licensed as described in the file COPYING, which
+ * you should have received as part of this distribution.  The terms
+ * are also available at http://subversion.tigris.org/license-1.html.
+ * If newer versions of this license are posted there, you may use a
+ * newer version instead, at your option.
+ *
+ * This software consists of voluntary contributions made by many
+ * individuals.  For exact contribution history, see the revision
+ * history and logs, available at http://subversion.tigris.org/.
+ * ====================================================================
+ */</comment>
+
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_pools.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_general.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_pools.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_error.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_diff.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_types.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"diff.h"</cpp:file></cpp:include>
+
+<comment type="block">/*
+ * Variance adjustment rules:
+ *
+ * http://subversion.tigris.org/variance-adjusted-patching.html
+ *
+ * ###: Expand this comment to contain the full set of adjustment
+ * ###: rules instead of pointing to a webpage.
+ */</comment>
+
+<comment type="block">/*
+ * In the text below consider the following:
+ *
+ * O     = Original
+ * M     = Modified
+ * L     = Latest
+ * A     = Ancestor
+ * X:Y   = diff between X and Y
+ * X:Y:Z = 3-way diff between X, Y and Z
+ * P     = O:L, possibly adjusted
+ *
+ * diff4 -- Variance adjusted diff algorithm
+ *
+ * 1. Create a diff O:L and call that P.
+ *
+ * 2. Morph P into a 3-way diff by performing the following
+ *    transformation: O:L -&gt; O:O:L.
+ *
+ * 3. Create a diff A:O.
+ *
+ * 4. Using A:O...
+ *
+ * #. Using M:A...
+ *
+ * #. Resolve conflicts...
+ *
+
+   1. Out-range added line: decrement the line numbers in every hunk in P
+      that comes after the addition. This undoes the effect of the add, since
+      the add never happened in D.
+
+   2. Out-range deleted line: increment the line numbers in every hunk in P
+      that comes after the deletion. This undoes the effect of the deletion,
+      since the deletion never happened in D.
+
+   3. Out-range edited line: do nothing. Out-range edits are irrelevant to P.
+
+   4. Added line in context range in P: remove the corresponding line from
+      the context, optionally replacing it with new context based on that
+      region in M, and adjust line numbers and mappings appropriately.
+
+   5. Added line in affected text range in P: this is a dependency problem
+      -- part of the change T:18-T:19 depends on changes introduced to T after
+      B branched. There are several possible behaviors, depending on what the
+      user wants. One is to generate an informative error, stating that
+      T:18-T:19 depends on some other change (T:N-T:M, where N&gt;=8, M&lt;=18,
+      and M-N == 1); the exact revisions can be discovered automatically using
+      the same process as "cvs annotate", though it may take some time to do
+      so. Another option is to include the change in P, as an insertion of the
+      "after" version of the text, and adjust line numbers and mappings
+      accordingly. (And if all this isn't sounding a lot like a directory
+      merge algorithm, try drinking more of the Kool-Aid.) A third option is
+      to include it as an insertion, but with metadata (such as CVS-style
+      conflict markers) indicating that the line attempting to be patched
+      does not exist in B.
+
+   6. Deleted line that is in-range in P: request another universe -- this
+      situation can't happen in ours.
+
+   7. In-range edited line: reverse that edit in the "before" version of the
+      corresponding line in the appropriate hunk in P, to obtain the version of
+      the line that will be found in B when P is applied.
+*/</comment>
+
+
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>adjust_diff</name><parameter_list>(<param><decl><type><name>svn_diff_t</name> *</type><name>diff</name></decl></param>, <param><decl><type><name>svn_diff_t</name> *</type><name>adjust</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_diff_t</name> *</type><name>hunk</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_off_t</name></type> <name>range_start</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_off_t</name></type> <name>range_end</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_off_t</name></type> <name>adjustment</name></decl>;</decl_stmt>
+
+  <for>for (<init>;</init> <condition><expr><name>adjust</name></expr>;</condition> <incr><expr><name>adjust</name> = <name><name>adjust</name>-&gt;<name>next</name></name></expr></incr>)
+    <block>{
+      <expr_stmt><expr><name>range_start</name> = <name><name>adjust</name>-&gt;<name>modified_start</name></name></expr>;</expr_stmt>
+      <expr_stmt><expr><name>range_end</name> = <name>range_start</name> + <name><name>adjust</name>-&gt;<name>modified_length</name></name></expr>;</expr_stmt>
+      <expr_stmt><expr><name>adjustment</name> = <name><name>adjust</name>-&gt;<name>original_length</name></name> - <name><name>adjust</name>-&gt;<name>modified_length</name></name></expr>;</expr_stmt>
+
+      <comment type="block">/* No change in line count, so no modifications. [3, 7] */</comment>
+      <if>if <condition>(<expr><name>adjustment</name> == 0</expr>)</condition><then>
+        <continue>continue;</continue></then></if>
+
+      <for>for (<init><expr><name>hunk</name> = <name>diff</name></expr>;</init> <condition><expr><name>hunk</name></expr>;</condition> <incr><expr><name>hunk</name> = <name><name>hunk</name>-&gt;<name>next</name></name></expr></incr>)
+        <block>{
+          <comment type="block">/* Changes are in the range before this hunk.  Adjust the start
+           * of the hunk. [1, 2]
+           */</comment>
+          <if>if <condition>(<expr><name><name>hunk</name>-&gt;<name>modified_start</name></name> &gt;= <name>range_end</name></expr>)</condition><then>
+            <block>{
+              <expr_stmt><expr><name><name>hunk</name>-&gt;<name>modified_start</name></name> += <name>adjustment</name></expr>;</expr_stmt>
+              <continue>continue;</continue>
+            }</block></then></if>
+
+          <comment type="block">/* Changes are in the range beyond this hunk.  No adjustments
+           * needed. [1, 2]
+           */</comment>
+          <if>if <condition>(<expr><name><name>hunk</name>-&gt;<name>modified_start</name></name> + <name><name>hunk</name>-&gt;<name>modified_length</name></name> &lt;= <name>range_start</name></expr>)</condition><then>
+            <continue>continue;</continue></then></if>
+
+          <comment type="block">/* From here on changes are in the range of this hunk. */</comment>
+
+          <comment type="block">/* This is a context hunk.  Adjust the length. [4]
+           */</comment>
+          <if>if <condition>(<expr><name><name>hunk</name>-&gt;<name>type</name></name> == <name>svn_diff__type_diff_modified</name></expr>)</condition><then>
+            <block>{
+              <expr_stmt><expr><name><name>hunk</name>-&gt;<name>modified_length</name></name> += <name>adjustment</name></expr>;</expr_stmt>
+              <continue>continue;</continue>
+            }</block></then></if>
+
+          <comment type="block">/* Mark as conflicted. This happens in the reverse case when a line
+           * is added in range and in the forward case when a line is deleted
+           * in range. [5 (reverse), 6 (forward)]
+           */</comment>
+          <if>if <condition>(<expr><name>adjustment</name> &lt; 0</expr>)</condition><then>
+              <expr_stmt><expr><name><name>hunk</name>-&gt;<name>type</name></name> = <name>svn_diff__type_conflict</name></expr>;</expr_stmt></then></if>
+
+          <comment type="block">/* Adjust the length of this hunk (reverse the change). [5, 6] */</comment>
+          <expr_stmt><expr><name><name>hunk</name>-&gt;<name>modified_length</name></name> -= <name>adjustment</name></expr>;</expr_stmt>
+        }</block></for>
+    }</block></for>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_diff_diff4</name><parameter_list>(<param><decl><type><name>svn_diff_t</name> **</type><name>diff</name></decl></param>,
+               <param><decl><type><name>void</name> *</type><name>diff_baton</name></decl></param>,
+               <param><decl><type><specifier>const</specifier> <name>svn_diff_fns_t</name> *</type><name>vtable</name></decl></param>,
+               <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_diff__tree_t</name> *</type><name>tree</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_diff__position_t</name> *</type><name><name>position_list</name><index>[<expr>4</expr>]</index></name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_diff__lcs_t</name> *</type><name>lcs_ol</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_diff__lcs_t</name> *</type><name>lcs_adjust</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_diff_t</name> *</type><name>diff_ol</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_diff_t</name> *</type><name>diff_adjust</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_diff_t</name> *</type><name>hunk</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>subpool</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>subpool2</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>subpool3</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr>*<name>diff</name> = <name>NULL</name></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name>subpool</name> = <call><name>svn_pool_create</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>subpool2</name> = <call><name>svn_pool_create</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>subpool3</name> = <call><name>svn_pool_create</name><argument_list>(<argument><expr><name>subpool2</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>svn_diff__tree_create</name><argument_list>(<argument><expr>&amp;<name>tree</name></expr></argument>, <argument><expr><name>subpool3</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_diff__get_tokens</name><argument_list>(<argument><expr>&amp;<name><name>position_list</name><index>[<expr>0</expr>]</index></name></expr></argument>,
+                               <argument><expr><name>tree</name></expr></argument>,
+                               <argument><expr><name>diff_baton</name></expr></argument>, <argument><expr><name>vtable</name></expr></argument>,
+                               <argument><expr><name>svn_diff_datasource_original</name></expr></argument>,
+                               <argument><expr><name>subpool2</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_diff__get_tokens</name><argument_list>(<argument><expr>&amp;<name><name>position_list</name><index>[<expr>1</expr>]</index></name></expr></argument>,
+                               <argument><expr><name>tree</name></expr></argument>,
+                               <argument><expr><name>diff_baton</name></expr></argument>, <argument><expr><name>vtable</name></expr></argument>,
+                               <argument><expr><name>svn_diff_datasource_modified</name></expr></argument>,
+                               <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_diff__get_tokens</name><argument_list>(<argument><expr>&amp;<name><name>position_list</name><index>[<expr>2</expr>]</index></name></expr></argument>,
+                               <argument><expr><name>tree</name></expr></argument>,
+                               <argument><expr><name>diff_baton</name></expr></argument>, <argument><expr><name>vtable</name></expr></argument>,
+                               <argument><expr><name>svn_diff_datasource_latest</name></expr></argument>,
+                               <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_diff__get_tokens</name><argument_list>(<argument><expr>&amp;<name><name>position_list</name><index>[<expr>3</expr>]</index></name></expr></argument>,
+                               <argument><expr><name>tree</name></expr></argument>,
+                               <argument><expr><name>diff_baton</name></expr></argument>, <argument><expr><name>vtable</name></expr></argument>,
+                               <argument><expr><name>svn_diff_datasource_ancestor</name></expr></argument>,
+                               <argument><expr><name>subpool2</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Get rid of the tokens, we don't need them to calc the diff */</comment>
+  <if>if <condition>(<expr><name><name>vtable</name>-&gt;<name>token_discard_all</name></name> != <name>NULL</name></expr>)</condition><then>
+    <expr_stmt><expr><call><name><name>vtable</name>-&gt;<name>token_discard_all</name></name><argument_list>(<argument><expr><name>diff_baton</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <comment type="block">/* We don't need the nodes in the tree either anymore, nor the tree itself */</comment>
+  <expr_stmt><expr><call><name>svn_pool_clear</name><argument_list>(<argument><expr><name>subpool3</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Get the lcs for original - latest */</comment>
+  <expr_stmt><expr><name>lcs_ol</name> = <call><name>svn_diff__lcs</name><argument_list>(<argument><expr><name><name>position_list</name><index>[<expr>0</expr>]</index></name></expr></argument>, <argument><expr><name><name>position_list</name><index>[<expr>2</expr>]</index></name></expr></argument>, <argument><expr><name>subpool3</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>diff_ol</name> = <call><name>svn_diff__diff</name><argument_list>(<argument><expr><name>lcs_ol</name></expr></argument>, <argument><expr>1</expr></argument>, <argument><expr>1</expr></argument>, <argument><expr><name>TRUE</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>svn_pool_clear</name><argument_list>(<argument><expr><name>subpool3</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <for>for (<init><expr><name>hunk</name> = <name>diff_ol</name></expr>;</init> <condition><expr><name>hunk</name></expr>;</condition> <incr><expr><name>hunk</name> = <name><name>hunk</name>-&gt;<name>next</name></name></expr></incr>)
+    <block>{
+      <expr_stmt><expr><name><name>hunk</name>-&gt;<name>latest_start</name></name> = <name><name>hunk</name>-&gt;<name>modified_start</name></name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>hunk</name>-&gt;<name>latest_length</name></name> = <name><name>hunk</name>-&gt;<name>modified_length</name></name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>hunk</name>-&gt;<name>modified_start</name></name> = <name><name>hunk</name>-&gt;<name>original_start</name></name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>hunk</name>-&gt;<name>modified_length</name></name> = <name><name>hunk</name>-&gt;<name>original_length</name></name></expr>;</expr_stmt>
+
+      <if>if <condition>(<expr><name><name>hunk</name>-&gt;<name>type</name></name> == <name>svn_diff__type_diff_modified</name></expr>)</condition><then>
+          <expr_stmt><expr><name><name>hunk</name>-&gt;<name>type</name></name> = <name>svn_diff__type_diff_latest</name></expr>;</expr_stmt></then>
+      <else>else
+          <expr_stmt><expr><name><name>hunk</name>-&gt;<name>type</name></name> = <name>svn_diff__type_diff_modified</name></expr>;</expr_stmt></else></if>
+    }</block></for>
+
+  <comment type="block">/* Get the lcs for common ancestor - original
+   * Do reverse adjustements
+   */</comment>
+  <expr_stmt><expr><name>lcs_adjust</name> = <call><name>svn_diff__lcs</name><argument_list>(<argument><expr><name><name>position_list</name><index>[<expr>3</expr>]</index></name></expr></argument>, <argument><expr><name><name>position_list</name><index>[<expr>2</expr>]</index></name></expr></argument>, <argument><expr><name>subpool3</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>diff_adjust</name> = <call><name>svn_diff__diff</name><argument_list>(<argument><expr><name>lcs_adjust</name></expr></argument>, <argument><expr>1</expr></argument>, <argument><expr>1</expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>subpool3</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>adjust_diff</name><argument_list>(<argument><expr><name>diff_ol</name></expr></argument>, <argument><expr><name>diff_adjust</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>svn_pool_clear</name><argument_list>(<argument><expr><name>subpool3</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Get the lcs for modified - common ancestor
+   * Do forward adjustments
+   */</comment>
+  <expr_stmt><expr><name>lcs_adjust</name> = <call><name>svn_diff__lcs</name><argument_list>(<argument><expr><name><name>position_list</name><index>[<expr>1</expr>]</index></name></expr></argument>, <argument><expr><name><name>position_list</name><index>[<expr>3</expr>]</index></name></expr></argument>, <argument><expr><name>subpool3</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>diff_adjust</name> = <call><name>svn_diff__diff</name><argument_list>(<argument><expr><name>lcs_adjust</name></expr></argument>, <argument><expr>1</expr></argument>, <argument><expr>1</expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>subpool3</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>adjust_diff</name><argument_list>(<argument><expr><name>diff_ol</name></expr></argument>, <argument><expr><name>diff_adjust</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Get rid of the position lists for original and ancestor, and delete
+   * our scratchpool.
+   */</comment>
+  <expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name>subpool2</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Now we try and resolve the conflicts we encountered */</comment>
+  <for>for (<init><expr><name>hunk</name> = <name>diff_ol</name></expr>;</init> <condition><expr><name>hunk</name></expr>;</condition> <incr><expr><name>hunk</name> = <name><name>hunk</name>-&gt;<name>next</name></name></expr></incr>)
+    <block>{
+      <if>if <condition>(<expr><name><name>hunk</name>-&gt;<name>type</name></name> == <name>svn_diff__type_conflict</name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>svn_diff__resolve_conflict</name><argument_list>(<argument><expr><name>hunk</name></expr></argument>, <argument><expr>&amp;<name><name>position_list</name><index>[<expr>1</expr>]</index></name></expr></argument>,
+                                     <argument><expr>&amp;<name><name>position_list</name><index>[<expr>2</expr>]</index></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+    }</block></for>
+
+  <expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr>*<name>diff</name> = <name>diff_ol</name></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+</unit>

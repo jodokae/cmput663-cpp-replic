@@ -1,0 +1,1459 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/subversion-1.5.1/source/subversion/libsvn_ra_neon/util.c"><comment type="block">/*
+ * util.c :  utility functions for the RA/DAV library
+ *
+ * ====================================================================
+ * Copyright (c) 2000-2007 CollabNet.  All rights reserved.
+ *
+ * This software is licensed as described in the file COPYING, which
+ * you should have received as part of this distribution.  The terms
+ * are also available at http://subversion.tigris.org/license-1.html.
+ * If newer versions of this license are posted there, you may use a
+ * newer version instead, at your option.
+ *
+ * This software consists of voluntary contributions made by many
+ * individuals.  For exact contribution history, see the revision
+ * history and logs, available at http://subversion.tigris.org/.
+ * ====================================================================
+ */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_pools.h&gt;</cpp:file></cpp:include>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>APR_WANT_STRFUNC</name></cpp:macro></cpp:define>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_want.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_uri.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;ne_alloc.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;ne_compress.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;ne_basic.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_pools.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_path.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_string.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_utf.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_xml.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_private_config.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"ra_neon.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;assert.h&gt;</cpp:file></cpp:include>
+
+
+<escape char="0xc"/>
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type>
+<name>xml_parser_cleanup</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>)</parameter_list>
+<block>{
+  <expr_stmt><expr><call><name>ne_xml_destroy</name><argument_list>(<argument><expr><name>baton</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>ne_xml_parser</name> *</type>
+<name>xml_parser_create</name><parameter_list>(<param><decl><type><name>svn_ra_neon__request_t</name> *</type><name>req</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>ne_xml_parser</name> *</type><name>p</name> <init>= <expr><call><name>ne_xml_create</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <comment type="block">/* ### HACK: Set the parser's error to the empty string.  Someday we
+     hope neon will let us have an easy way to tell the difference
+     between XML parsing errors, and errors that occur while handling
+     the XML tags that we get.  Until then, trust that whenever neon
+     has an error somewhere below the API, it sets its own error to
+     something non-empty (the API promises non-NULL, at least). */</comment>
+  <expr_stmt><expr><call><name>ne_xml_set_error</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>apr_pool_cleanup_register</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>p</name></expr></argument>,
+                            <argument><expr><name>xml_parser_cleanup</name></expr></argument>,
+                            <argument><expr><name>apr_pool_cleanup_null</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>p</name></expr>;</return>
+}</block></function>
+
+
+<escape char="0xc"/>
+<comment type="block">/* Simple multi-status parser
+ *
+ * For the purpose of 'simple' requests which - if it weren't
+ * for our custom error parser - could use the ne_basic.h interfaces.
+ */</comment>
+
+<decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>svn_ra_neon__xml_elm_t</name></type> <name><name>multistatus_elements</name><index>[]</index></name> <init>=
+  <expr><block>{ <expr><block>{ <expr>"DAV:"</expr>, <expr>"multistatus"</expr>, <expr><name>ELEM_multistatus</name></expr>, <expr>0</expr> }</block></expr>,
+    <expr><block>{ <expr>"DAV:"</expr>, <expr>"response"</expr>, <expr><name>ELEM_response</name></expr>, <expr>0</expr> }</block></expr>,
+    <expr><block>{ <expr>"DAV:"</expr>, <expr>"responsedescription"</expr>, <expr><name>ELEM_responsedescription</name></expr>,
+      <expr><name>SVN_RA_NEON__XML_CDATA</name></expr> }</block></expr>,
+    <expr><block>{ <expr>"DAV:"</expr>, <expr>"status"</expr>, <expr><name>ELEM_status</name></expr>, <expr><name>SVN_RA_NEON__XML_CDATA</name></expr> }</block></expr>,
+    <expr><block>{ <expr>"DAV:"</expr>, <expr>"href"</expr>, <expr><name>ELEM_href</name></expr>, <expr><name>SVN_RA_NEON__XML_CDATA</name></expr> }</block></expr>,
+    <expr><block>{ <expr>"DAV:"</expr>, <expr>"propstat"</expr>, <expr><name>ELEM_propstat</name></expr>, <expr><name>SVN_RA_NEON__XML_CDATA</name></expr> }</block></expr>,
+    <expr><block>{ <expr>"DAV:"</expr>, <expr>"prop"</expr>, <expr><name>ELEM_prop</name></expr>, <expr><name>SVN_RA_NEON__XML_CDATA</name></expr> }</block></expr>,
+
+    <comment type="block">/* We start out basic and are not interested in other elements */</comment>
+    <expr><block>{ <expr>""</expr>, <expr>""</expr>, <expr><name>ELEM_unknown</name></expr>, <expr>0</expr> }</block></expr>,
+
+    <expr><block>{ <expr><name>NULL</name></expr> }</block></expr>
+  }</block></expr></init></decl>;</decl_stmt>
+
+
+<decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>int</name></type> <name><name>multistatus_nesting_table</name><index>[]</index><index>[<expr>5</expr>]</index></name> <init>=
+  <expr><block>{ <expr><block>{ <expr><name>ELEM_root</name></expr>, <expr><name>ELEM_multistatus</name></expr>, <expr><name>SVN_RA_NEON__XML_INVALID</name></expr> }</block></expr>,
+    <expr><block>{ <expr><name>ELEM_multistatus</name></expr>, <expr><name>ELEM_response</name></expr>, <expr><name>ELEM_responsedescription</name></expr>,
+      <expr><name>SVN_RA_NEON__XML_DECLINE</name></expr> }</block></expr>,
+    <expr><block>{ <expr><name>ELEM_responsedescription</name></expr>, <expr><name>SVN_RA_NEON__XML_INVALID</name></expr> }</block></expr>,
+    <expr><block>{ <expr><name>ELEM_response</name></expr>, <expr><name>ELEM_href</name></expr>, <expr><name>ELEM_status</name></expr>, <expr><name>ELEM_propstat</name></expr>,
+      <expr><name>SVN_RA_NEON__XML_DECLINE</name></expr> }</block></expr>,
+    <expr><block>{ <expr><name>ELEM_status</name></expr>, <expr><name>SVN_RA_NEON__XML_INVALID</name></expr> }</block></expr>,
+    <expr><block>{ <expr><name>ELEM_href</name></expr>, <expr><name>SVN_RA_NEON__XML_INVALID</name></expr> }</block></expr>,
+    <expr><block>{ <expr><name>ELEM_propstat</name></expr>, <expr><name>ELEM_prop</name></expr>, <expr><name>ELEM_status</name></expr>, <expr><name>ELEM_responsedescription</name></expr>,
+      <expr><name>SVN_RA_NEON__XML_INVALID</name></expr> }</block></expr>,
+    <expr><block>{ <expr><name>ELEM_prop</name></expr>, <expr><name>SVN_RA_NEON__XML_DECLINE</name></expr> }</block></expr>,
+    <expr><block>{ <expr><name>SVN_RA_NEON__XML_DECLINE</name></expr> }</block></expr>,
+  }</block></expr></init></decl>;</decl_stmt>
+
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>validate_element</name><parameter_list>(<param><decl><type><name>int</name></type> <name>parent</name></decl></param>, <param><decl><type><name>int</name></type> <name>child</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>int</name></type> <name>i</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>j</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+
+  <while>while <condition>(<expr><name>parent</name> != <name><name>multistatus_nesting_table</name><index>[<expr><name>i</name></expr>]</index><index>[<expr>0</expr>]</index></name>
+         &amp;&amp; (<name><name>multistatus_nesting_table</name><index>[<expr><name>i</name></expr>]</index><index>[<expr>0</expr>]</index></name> &gt; 0 || <name>i</name> == 0)</expr>)</condition>
+    <expr_stmt><expr><name>i</name>++</expr>;</expr_stmt></while>
+
+  <if>if <condition>(<expr><name>parent</name> == <name><name>multistatus_nesting_table</name><index>[<expr><name>i</name></expr>]</index><index>[<expr>0</expr>]</index></name></expr>)</condition><then>
+    <while>while <condition>(<expr><name><name>multistatus_nesting_table</name><index>[<expr><name>i</name></expr>]</index><index>[<expr>++<name>j</name></expr>]</index></name> != <name>child</name>
+           &amp;&amp; <name><name>multistatus_nesting_table</name><index>[<expr><name>i</name></expr>]</index><index>[<expr><name>j</name></expr>]</index></name> &gt; 0</expr>)</condition>
+      <empty_stmt>;</empty_stmt></while></then></if>
+
+  <return>return <expr><name><name>multistatus_nesting_table</name><index>[<expr><name>i</name></expr>]</index><index>[<expr><name>j</name></expr>]</index></name></expr>;</return>
+}</block></function>
+
+<typedef>typedef <type><struct>struct
+<block>{
+  <decl_stmt><decl><type><name>svn_stringbuf_t</name> *</type><name>want_cdata</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_stringbuf_t</name> *</type><name>cdata</name></decl>;</decl_stmt>
+
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>in_propstat</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>propstat_has_error</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_stringbuf_t</name> *</type><name>propname</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_stringbuf_t</name> *</type><name>propstat_description</name></decl>;</decl_stmt>
+
+  <decl_stmt><decl><type><name>svn_ra_neon__request_t</name> *</type><name>req</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_stringbuf_t</name> *</type><name>description</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>contains_error</name></decl>;</decl_stmt>
+}</block></struct></type> <name>multistatus_baton_t</name>;</typedef>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>start_207_element</name><parameter_list>(<param><decl><type><name>int</name> *</type><name>elem</name></decl></param>, <param><decl><type><name>void</name> *</type><name>baton</name></decl></param>, <param><decl><type><name>int</name></type> <name>parent</name></decl></param>,
+                  <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>nspace</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>name</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>atts</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>multistatus_baton_t</name> *</type><name>b</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>svn_ra_neon__xml_elm_t</name> *</type><name>elm</name> <init>=
+    <expr><call><name>svn_ra_neon__lookup_xml_elem</name><argument_list>(<argument><expr><name>multistatus_elements</name></expr></argument>, <argument><expr><name>nspace</name></expr></argument>, <argument><expr><name>name</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <expr_stmt><expr>*<name>elem</name> = <name>elm</name> ? <call><name>validate_element</name><argument_list>(<argument><expr><name>parent</name></expr></argument>, <argument><expr><name><name>elm</name>-&gt;<name>id</name></name></expr></argument>)</argument_list></call> : <name>SVN_RA_NEON__XML_DECLINE</name></expr>;</expr_stmt>
+
+
+  <if>if <condition>(<expr><name>parent</name> == <name>ELEM_prop</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>svn_stringbuf_setempty</name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>propname</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>nspace</name></expr></argument>, <argument><expr><name>SVN_DAV_PROP_NS_DAV</name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <expr_stmt><expr><call><name>svn_stringbuf_set</name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>propname</name></name></expr></argument>, <argument><expr><name>SVN_PROP_PREFIX</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+      <else>else <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>nspace</name></expr></argument>, <argument><expr>"DAV:"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <expr_stmt><expr><call><name>svn_stringbuf_set</name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>propname</name></name></expr></argument>, <argument><expr>"DAV:"</expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if></else></if>
+
+      <expr_stmt><expr><call><name>svn_stringbuf_appendcstr</name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>propname</name></name></expr></argument>, <argument><expr><name>name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <if>if <condition>(<expr>*<name>elem</name> &lt; 1</expr>)</condition><then> <comment type="block">/* ! &gt; 0 */</comment>
+    <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return></then></if>
+
+  <switch>switch <condition>(<expr>*<name>elem</name></expr>)</condition>
+    <block>{
+    <case>case <expr><name>ELEM_propstat</name></expr>:
+      <expr_stmt><expr><name><name>b</name>-&gt;<name>in_propstat</name></name> = <name>TRUE</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>b</name>-&gt;<name>propstat_has_error</name></name> = <name>FALSE</name></expr>;</expr_stmt>
+      <break>break;</break>
+
+    </case><default>default:
+      <break>break;</break>
+    </default>}</block></switch>
+
+  <comment type="block">/* We're guaranteed to have ELM now: SVN_RA_NEON__XML_DECLINE &lt; 1 */</comment>
+  <if>if <condition>(<expr><name><name>elm</name>-&gt;<name>flags</name></name> &amp; <name>SVN_RA_NEON__XML_CDATA</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>svn_stringbuf_setempty</name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>cdata</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>b</name>-&gt;<name>want_cdata</name></name> = <name><name>b</name>-&gt;<name>cdata</name></name></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>end_207_element</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>, <param><decl><type><name>int</name></type> <name>state</name></decl></param>,
+                <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>nspace</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>name</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>multistatus_baton_t</name> *</type><name>b</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+
+  <switch>switch <condition>(<expr><name>state</name></expr>)</condition>
+    <block>{
+    <case>case <expr><name>ELEM_multistatus</name></expr>:
+      <if>if <condition>(<expr><name><name>b</name>-&gt;<name>contains_error</name></name></expr>)</condition><then>
+        <block>{
+          <if>if <condition>(<expr><call><name>svn_stringbuf_isempty</name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>description</name></name></expr></argument>)</argument_list></call></expr>)</condition><then>
+            <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_DAV_REQUEST_FAILED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                    <argument><expr><call><name>_</name><argument_list>(<argument><expr>"The request response contained at least "
+                                      "one error"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then>
+          <else>else
+            <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_DAV_REQUEST_FAILED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                    <argument><expr><name><name>b</name>-&gt;<name>description</name>-&gt;<name>data</name></name></expr></argument>)</argument_list></call></expr>;</return></else></if>
+        }</block></then></if>
+      <break>break;</break>
+
+    </case><case>case <expr><name>ELEM_responsedescription</name></expr>:
+      <if>if <condition>(<expr><name><name>b</name>-&gt;<name>in_propstat</name></name></expr>)</condition><then>
+        <expr_stmt><expr><call><name>svn_stringbuf_set</name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>propstat_description</name></name></expr></argument>, <argument><expr><name><name>b</name>-&gt;<name>cdata</name>-&gt;<name>data</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+      <else>else
+        <block>{
+          <if>if <condition>(<expr>! <call><name>svn_stringbuf_isempty</name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>description</name></name></expr></argument>)</argument_list></call></expr>)</condition><then>
+            <expr_stmt><expr><call><name>svn_stringbuf_appendcstr</name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>description</name></name></expr></argument>, <argument><expr>"\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+          <expr_stmt><expr><call><name>svn_stringbuf_appendstr</name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>description</name></name></expr></argument>, <argument><expr><name><name>b</name>-&gt;<name>cdata</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></else></if>
+      <break>break;</break>
+
+    </case><case>case <expr><name>ELEM_status</name></expr>:
+      <block>{
+        <decl_stmt><decl><type><name>ne_status</name></type> <name>status</name></decl>;</decl_stmt>
+
+        <if>if <condition>(<expr><call><name>ne_parse_statusline</name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>cdata</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr>&amp;<name>status</name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+          <block>{
+            <comment type="block">/*### I wanted ||=, but I guess the end result is the same */</comment>
+            <if>if <condition>(<expr>! <name><name>b</name>-&gt;<name>in_propstat</name></name></expr>)</condition><then>
+              <expr_stmt><expr><name><name>b</name>-&gt;<name>contains_error</name></name> |= (<name><name>status</name>.<name>klass</name></name> != 2)</expr>;</expr_stmt></then>
+            <else>else
+              <expr_stmt><expr><name><name>b</name>-&gt;<name>propstat_has_error</name></name> = (<name><name>status</name>.<name>klass</name></name> != 2)</expr>;</expr_stmt></else></if>
+
+            <expr_stmt><expr><call><name>free</name><argument_list>(<argument><expr><name><name>status</name>.<name>reason_phrase</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          }</block></then>
+        <else>else
+          <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_DAV_REQUEST_FAILED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                  <argument><expr><call><name>_</name><argument_list>(<argument><expr>"The response contains a non-conforming "
+                                    "HTTP status line"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></else></if>
+      }</block>
+      <break>break;</break>
+
+    </case><case>case <expr><name>ELEM_propstat</name></expr>:
+      <expr_stmt><expr><name><name>b</name>-&gt;<name>in_propstat</name></name> = <name>FALSE</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>b</name>-&gt;<name>contains_error</name></name> |= <name><name>b</name>-&gt;<name>propstat_has_error</name></name></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>svn_stringbuf_appendcstr</name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>description</name></name></expr></argument>,
+                               <argument><expr><call><name>apr_psprintf</name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>req</name>-&gt;<name>pool</name></name></expr></argument>,
+                                            <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Error setting property '%s': "</expr></argument>)</argument_list></call></expr></argument>,
+                                            <argument><expr><name><name>b</name>-&gt;<name>propname</name>-&gt;<name>data</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>svn_stringbuf_appendstr</name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>description</name></name></expr></argument>,
+                              <argument><expr><name><name>b</name>-&gt;<name>propstat_description</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    </case><default>default:
+      <comment type="block">/* do nothing */</comment>
+      <break>break;</break>
+    </default>}</block></switch>
+
+  <comment type="block">/* When we have an element which wants cdata,
+     we'll set it all up in start_207_element() again */</comment>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>want_cdata</name></name> = <name>NULL</name></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>ne_xml_parser</name> *</type>
+<name>multistatus_parser_create</name><parameter_list>(<param><decl><type><name>svn_ra_neon__request_t</name> *</type><name>req</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>multistatus_baton_t</name> *</type><name>b</name> <init>= <expr><call><name>apr_pcalloc</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>b</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>ne_xml_parser</name> *</type><name>multistatus_parser</name> <init>=
+    <expr><call><name>svn_ra_neon__xml_parser_create</name><argument_list>(<argument><expr><name>req</name></expr></argument>, <argument><expr><name>ne_accept_207</name></expr></argument>,
+                                   <argument><expr><name>start_207_element</name></expr></argument>,
+                                   <argument><expr><name>svn_ra_neon__xml_collect_cdata</name></expr></argument>,
+                                   <argument><expr><name>end_207_element</name></expr></argument>, <argument><expr><name>b</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>cdata</name></name> = <call><name>svn_stringbuf_create</name><argument_list>(<argument><expr>""</expr></argument>, <argument><expr><name><name>req</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>description</name></name> = <call><name>svn_stringbuf_create</name><argument_list>(<argument><expr>""</expr></argument>, <argument><expr><name><name>req</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>req</name></name> = <name>req</name></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>propname</name></name> = <call><name>svn_stringbuf_create</name><argument_list>(<argument><expr>""</expr></argument>, <argument><expr><name><name>req</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>propstat_description</name></name> = <call><name>svn_stringbuf_create</name><argument_list>(<argument><expr>""</expr></argument>, <argument><expr><name><name>req</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>multistatus_parser</name></expr>;</return>
+}</block></function>
+
+
+
+<escape char="0xc"/>
+<comment type="block">/* Neon request management */</comment>
+
+<comment type="block">/* Forward declare */</comment>
+<function_decl><type><specifier>static</specifier> <name>apr_status_t</name></type>
+<name>dav_request_cleanup</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>)</parameter_list>;</function_decl>
+
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type>
+<name>dav_request_sess_cleanup</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_neon__request_t</name> *</type><name>req</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+
+  <comment type="block">/* Make sure we don't run the 'child' cleanup anymore:
+     the pool it refers to probably doesn't exist anymore when it
+     finally does get run if it hasn't by now. */</comment>
+  <expr_stmt><expr><call><name>apr_pool_cleanup_kill</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>req</name></expr></argument>, <argument><expr><name>dav_request_cleanup</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name><name>req</name>-&gt;<name>ne_req</name></name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>ne_request_destroy</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>ne_req</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type>
+<name>dav_request_cleanup</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_neon__request_t</name> *</type><name>req</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+  <expr_stmt><expr><call><name>apr_pool_cleanup_run</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>sess</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>req</name></expr></argument>, <argument><expr><name>dav_request_sess_cleanup</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* Return a path-absolute relative URL, given a URL reference (which may
+   be absolute or relative). */</comment>
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *</type>
+<name>path_from_url</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>url</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>p</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Look for the scheme/authority separator.  Stop if we see a path
+     separator - that indicates that this definitely isn't an absolute URL. */</comment>
+  <for>for (<init><expr><name>p</name> = <name>url</name></expr>;</init> <condition><expr>*<name>p</name></expr>;</condition> <incr><expr><name>p</name>++</expr></incr>)
+    <if>if <condition>(<expr>*<name>p</name> == ':' || *<name>p</name> == '/'</expr>)</condition><then>
+      <break>break;</break></then></if></for>
+
+  <comment type="block">/* Check whether we found the scheme/authority separator. */</comment>
+  <if>if <condition>(<expr>*<name>p</name>++ != ':' || *<name>p</name>++ != '/' || *<name>p</name>++ != '/'</expr>)</condition><then>
+    <block>{
+      <comment type="block">/* No separator, so it must already be relative. */</comment>
+      <return>return <expr><name>url</name></expr>;</return>
+    }</block></then></if>
+
+  <comment type="block">/* Find the end of the authority section, indicated by the start of
+     a path, query, or fragment section. */</comment>
+  <for>for (<init>;</init> <condition><expr>*<name>p</name></expr>;</condition> <incr><expr><name>p</name>++</expr></incr>)
+    <if>if <condition>(<expr>*<name>p</name> == '/' || *<name>p</name> == '?' || *<name>p</name> == '#'</expr>)</condition><then>
+      <break>break;</break></then></if></for>
+
+  <comment type="block">/* Return a pointer to the rest of the URL, or to "/" if there
+     was no next section. */</comment>
+  <return>return <expr>*<name>p</name> == '\0' ? "/" : <name>p</name></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_ra_neon__request_t</name> *</type>
+<name>svn_ra_neon__request_create</name><parameter_list>(<param><decl><type><name>svn_ra_neon__session_t</name> *</type><name>sess</name></decl></param>,
+                            <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>method</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>url</name></decl></param>,
+                            <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>reqpool</name> <init>= <expr><call><name>svn_pool_create</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_ra_neon__request_t</name> *</type><name>req</name> <init>= <expr><call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>reqpool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>req</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <comment type="block">/* We never want to send Neon an absolute URL, since that can cause
+     problems with some servers (for example, those that may be accessed
+     using different server names from different locations, or those that
+     want to rewrite the incoming URL).  If the URL passed in is absolute,
+     convert it to a path-absolute relative URL. */</comment>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name> <init>= <expr><call><name>path_from_url</name><argument_list>(<argument><expr><name>url</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name><name>req</name>-&gt;<name>ne_sess</name></name> = <name><name>sess</name>-&gt;<name>main_session_busy</name></name> ? <name><name>sess</name>-&gt;<name>ne_sess2</name></name> : <name><name>sess</name>-&gt;<name>ne_sess</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>req</name>-&gt;<name>ne_req</name></name> = <call><name>ne_request_create</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>ne_sess</name></name></expr></argument>, <argument><expr><name>method</name></expr></argument>, <argument><expr><name>path</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>req</name>-&gt;<name>sess</name></name> = <name>sess</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>req</name>-&gt;<name>pool</name></name> = <name>reqpool</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>req</name>-&gt;<name>iterpool</name></name> = <call><name>svn_pool_create</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>req</name>-&gt;<name>method</name></name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>method</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>req</name>-&gt;<name>url</name></name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>url</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>req</name>-&gt;<name>rv</name></name> = -1</expr>;</expr_stmt>
+
+  <comment type="block">/* Neon resources may be NULL on out-of-memory */</comment>
+  <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>ne_req</name></name> != <name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>apr_pool_cleanup_register</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>req</name></expr></argument>,
+                            <argument><expr><name>dav_request_sess_cleanup</name></expr></argument>,
+                            <argument><expr><name>apr_pool_cleanup_null</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>apr_pool_cleanup_register</name><argument_list>(<argument><expr><name>reqpool</name></expr></argument>, <argument><expr><name>req</name></expr></argument>,
+                            <argument><expr><name>dav_request_cleanup</name></expr></argument>,
+                            <argument><expr><name>apr_pool_cleanup_null</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>req</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type>
+<name>compressed_body_reader_cleanup</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>)</parameter_list>
+<block>{
+  <if>if <condition>(<expr><name>baton</name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>ne_decompress_destroy</name><argument_list>(<argument><expr><name>baton</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>attach_ne_body_reader</name><parameter_list>(<param><decl><type><name>svn_ra_neon__request_t</name> *</type><name>req</name></decl></param>,
+                      <param><decl><type><name>ne_accept_response</name></type> <name>accpt</name></decl></param>,
+                      <param><decl><type><name>ne_block_reader</name></type> <name>reader</name></decl></param>,
+                      <param><decl><type><name>void</name> *</type><name>userdata</name></decl></param>)</parameter_list>
+<block>{
+  <if>if <condition>(<expr><name><name>req</name>-&gt;<name>sess</name>-&gt;<name>compression</name></name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>ne_decompress</name> *</type><name>decompress</name> <init>=
+        <expr><call><name>ne_decompress_reader</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>ne_req</name></name></expr></argument>, <argument><expr><name>accpt</name></expr></argument>, <argument><expr><name>reader</name></expr></argument>, <argument><expr><name>userdata</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+      <expr_stmt><expr><call><name>apr_pool_cleanup_register</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>pool</name></name></expr></argument>,
+                                <argument><expr><name>decompress</name></expr></argument>,
+                                <argument><expr><name>compressed_body_reader_cleanup</name></expr></argument>,
+                                <argument><expr><name>apr_pool_cleanup_null</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else
+    <expr_stmt><expr><call><name>ne_add_response_body_reader</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>ne_req</name></name></expr></argument>, <argument><expr><name>accpt</name></expr></argument>, <argument><expr><name>reader</name></expr></argument>, <argument><expr><name>userdata</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+}</block></function>
+
+
+<typedef>typedef <type><struct>struct
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_neon__request_t</name> *</type><name>req</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_ra_neon__block_reader</name></type> <name>real_reader</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>void</name> *</type><name>real_baton</name></decl>;</decl_stmt>
+}</block></struct></type> <name>body_reader_wrapper_baton_t</name>;</typedef>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>body_reader_wrapper</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>userdata</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>data</name></decl></param>, <param><decl><type><name>size_t</name></type> <name>len</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>body_reader_wrapper_baton_t</name> *</type><name>b</name> <init>= <expr><name>userdata</name></expr></init></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr><name><name>b</name>-&gt;<name>req</name>-&gt;<name>err</name></name></expr>)</condition><then>
+    <comment type="block">/* We already had an error? Bail out. */</comment>
+    <return>return <expr>1</expr>;</return></then></if>
+
+  <expr_stmt><expr><call><name>SVN_RA_NEON__REQ_ERR</name>
+    <argument_list>(<argument><expr><name><name>b</name>-&gt;<name>req</name></name></expr></argument>,
+     <argument><expr><call><name><name>b</name>-&gt;<name>real_reader</name></name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>real_baton</name></name></expr></argument>, <argument><expr><name>data</name></expr></argument>, <argument><expr><name>len</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name><name>b</name>-&gt;<name>req</name>-&gt;<name>err</name></name></expr>)</condition><then>
+    <return>return <expr>1</expr>;</return></then></if>
+
+  <return>return <expr>0</expr>;</return>
+}</block></function>
+
+<function><type><name>void</name></type>
+<name>svn_ra_neon__add_response_body_reader</name><parameter_list>(<param><decl><type><name>svn_ra_neon__request_t</name> *</type><name>req</name></decl></param>,
+                                      <param><decl><type><name>ne_accept_response</name></type> <name>accpt</name></decl></param>,
+                                      <param><decl><type><name>svn_ra_neon__block_reader</name></type> <name>reader</name></decl></param>,
+                                      <param><decl><type><name>void</name> *</type><name>userdata</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>body_reader_wrapper_baton_t</name> *</type><name>b</name> <init>= <expr><call><name>apr_palloc</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>b</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>req</name></name> = <name>req</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>real_baton</name></name> = <name>userdata</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>real_reader</name></name> = <name>reader</name></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>attach_ne_body_reader</name><argument_list>(<argument><expr><name>req</name></expr></argument>, <argument><expr><name>accpt</name></expr></argument>, <argument><expr><name>body_reader_wrapper</name></expr></argument>, <argument><expr><name>b</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+
+<escape char="0xc"/>
+<function><type><specifier>const</specifier> <name>svn_ra_neon__xml_elm_t</name> *</type>
+<name>svn_ra_neon__lookup_xml_elem</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>svn_ra_neon__xml_elm_t</name> *</type><name>table</name></decl></param>,
+                             <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>nspace</name></decl></param>,
+                             <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>name</name></decl></param>)</parameter_list>
+<block>{
+  <comment type="block">/* placeholder for `unknown' element if it's present */</comment>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>svn_ra_neon__xml_elm_t</name> *</type><name>elem_unknown</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>svn_ra_neon__xml_elm_t</name> *</type><name>elem</name></decl>;</decl_stmt>
+
+  <for>for(<init><expr><name>elem</name> = <name>table</name></expr>;</init> <condition><expr><name><name>elem</name>-&gt;<name>nspace</name></name></expr>;</condition> <incr><expr>++<name>elem</name></expr></incr>)
+    <block>{
+      <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name><name>elem</name>-&gt;<name>nspace</name></name></expr></argument>, <argument><expr><name>nspace</name></expr></argument>)</argument_list></call> == 0
+          &amp;&amp; <call><name>strcmp</name><argument_list>(<argument><expr><name><name>elem</name>-&gt;<name>name</name></name></expr></argument>, <argument><expr><name>name</name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <return>return <expr><name>elem</name></expr>;</return></then></if>
+
+      <comment type="block">/* Use a single loop to save CPU cycles.
+       *
+       * Maybe this element is defined as `unknown'? */</comment>
+      <if>if <condition>(<expr><name><name>elem</name>-&gt;<name>id</name></name> == <name>ELEM_unknown</name></expr>)</condition><then>
+        <expr_stmt><expr><name>elem_unknown</name> = <name>elem</name></expr>;</expr_stmt></then></if>
+    }</block></for>
+
+  <comment type="block">/* ELEM_unknown position in the table or NULL */</comment>
+  <return>return <expr><name>elem_unknown</name></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_ra_neon__xml_collect_cdata</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>, <param><decl><type><name>int</name></type> <name>state</name></decl></param>,
+                               <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>cdata</name></decl></param>, <param><decl><type><name>size_t</name></type> <name>len</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_stringbuf_t</name> **</type><name>b</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr>*<name>b</name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>svn_stringbuf_appendbytes</name><argument_list>(<argument><expr>*<name>b</name></expr></argument>, <argument><expr><name>cdata</name></expr></argument>, <argument><expr><name>len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<escape char="0xc"/>
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_ra_neon__copy_href</name><parameter_list>(<param><decl><type><name>svn_stringbuf_t</name> *</type><name>dst</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>src</name></decl></param>,
+                       <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <comment type="block">/* parse the PATH element out of the URL and store it.
+
+     ### do we want to verify the rest matches the current session?
+
+     Note: mod_dav does not (currently) use an absolute URL, but simply a
+     server-relative path (i.e. this uri_parse is effectively a no-op).
+  */</comment>
+
+  <decl_stmt><decl><type><name>apr_uri_t</name></type> <name>uri</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_status_t</name></type> <name>apr_status</name>
+    <init>= <expr><call><name>apr_uri_parse</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>src</name></expr></argument>, <argument><expr>&amp;<name>uri</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr><name>apr_status</name> != <name>APR_SUCCESS</name></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_wrap_apr</name><argument_list>(<argument><expr><name>apr_status</name></expr></argument>,
+                              <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Unable to parse URL '%s'"</expr></argument>)</argument_list></call></expr></argument>,
+                              <argument><expr><name>src</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <expr_stmt><expr><call><name>svn_stringbuf_setempty</name><argument_list>(<argument><expr><name>dst</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>svn_stringbuf_appendcstr</name><argument_list>(<argument><expr><name>dst</name></expr></argument>, <argument><expr><name><name>uri</name>.<name>path</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>generate_error</name><parameter_list>(<param><decl><type><name>svn_ra_neon__request_t</name> *</type><name>req</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>int</name></type> <name>errcode</name> <init>= <expr><name>SVN_ERR_RA_DAV_REQUEST_FAILED</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>context</name> <init>=
+    <expr><call><name>apr_psprintf</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"%s of '%s'"</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name><name>req</name>-&gt;<name>method</name></name></expr></argument>, <argument><expr><name><name>req</name>-&gt;<name>url</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>msg</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>hostport</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Convert the return codes. */</comment>
+  <switch>switch <condition>(<expr><name><name>req</name>-&gt;<name>rv</name></name></expr>)</condition>
+    <block>{
+    <case>case <expr><name>NE_OK</name></expr>:
+      <switch>switch <condition>(<expr><name><name>req</name>-&gt;<name>code</name></name></expr>)</condition>
+        <block>{
+        <case>case <expr>404</expr>:
+          <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_DAV_PATH_NOT_FOUND</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                  <argument><expr><call><name>apr_psprintf</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"'%s' path not found"</expr></argument>)</argument_list></call></expr></argument>,
+                                               <argument><expr><name><name>req</name>-&gt;<name>url</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+
+        </case><case>case <expr>301</expr>:
+        </case><case>case <expr>302</expr>:
+          <return>return <expr><call><name>svn_error_create</name>
+            <argument_list>(<argument><expr><name>SVN_ERR_RA_DAV_RELOCATED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+             <argument><expr><call><name>apr_psprintf</name><argument_list>(<argument><expr><name>pool</name></expr></argument>,
+                          <argument><expr>(<name><name>req</name>-&gt;<name>code</name></name> == 301)
+                          ? <call><name>_</name><argument_list>(<argument><expr>"Repository moved permanently to '%s';"
+                              " please relocate"</expr></argument>)</argument_list></call>
+                          : <call><name>_</name><argument_list>(<argument><expr>"Repository moved temporarily to '%s';"
+                              " please relocate"</expr></argument>)</argument_list></call></expr></argument>,
+                          <argument><expr><call><name>svn_ra_neon__request_get_location</name><argument_list>(<argument><expr><name>req</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+
+        </case><default>default:
+          <return>return <expr><call><name>svn_error_create</name>
+            <argument_list>(<argument><expr><name>errcode</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+             <argument><expr><call><name>apr_psprintf</name><argument_list>(<argument><expr><name>pool</name></expr></argument>,
+                          <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Server sent unexpected return value (%d %s) "
+                            "in response to %s request for '%s'"</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name><name>req</name>-&gt;<name>code</name></name></expr></argument>,
+                          <argument><expr><name><name>req</name>-&gt;<name>code_desc</name></name></expr></argument>, <argument><expr><name><name>req</name>-&gt;<name>method</name></name></expr></argument>, <argument><expr><name><name>req</name>-&gt;<name>url</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+        </default>}</block></switch>
+    </case><case>case <expr><name>NE_AUTH</name></expr>:
+      <expr_stmt><expr><name>errcode</name> = <name>SVN_ERR_RA_NOT_AUTHORIZED</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name>msg</name> = <call><name>_</name><argument_list>(<argument><expr>"authorization failed"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <break>break;</break>
+
+    </case><case>case <expr><name>NE_CONNECT</name></expr>:
+      <expr_stmt><expr><name>msg</name> = <call><name>_</name><argument_list>(<argument><expr>"could not connect to server"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <break>break;</break>
+
+    </case><case>case <expr><name>NE_TIMEOUT</name></expr>:
+      <expr_stmt><expr><name>msg</name> = <call><name>_</name><argument_list>(<argument><expr>"timed out waiting for server"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <break>break;</break>
+
+    </case><default>default:
+      <comment type="block">/* Get the error string from neon and convert to UTF-8. */</comment>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_utf_cstring_to_utf8</name><argument_list>(<argument><expr>&amp;<name>msg</name></expr></argument>, <argument><expr><call><name>ne_get_error</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>ne_sess</name></name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <break>break;</break>
+    </default>}</block></switch>
+
+  <comment type="block">/* The hostname may contain non-ASCII characters, so convert it to UTF-8. */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_utf_cstring_to_utf8</name><argument_list>(<argument><expr>&amp;<name>hostport</name></expr></argument>,
+                                  <argument><expr><call><name>ne_get_server_hostport</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>ne_sess</name></name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/*### This is a translation nightmare. Make sure to compose full strings
+    and mark those for translation. */</comment>
+  <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>errcode</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr>"%s: %s (%s://%s)"</expr></argument>,
+                           <argument><expr><name>context</name></expr></argument>, <argument><expr><name>msg</name></expr></argument>, <argument><expr><call><name>ne_get_scheme</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>ne_sess</name></name></expr></argument>)</argument_list></call></expr></argument>,
+                           <argument><expr><name>hostport</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<escape char="0xc"/>
+<comment type="block">/** Error parsing **/</comment>
+
+
+<comment type="block">/* Custom function of type ne_accept_response. */</comment>
+<function><type><specifier>static</specifier> <name>int</name></type> <name>ra_neon_error_accepter</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>userdata</name></decl></param>,
+                                  <param><decl><type><name>ne_request</name> *</type><name>req</name></decl></param>,
+                                  <param><decl><type><specifier>const</specifier> <name>ne_status</name> *</type><name>st</name></decl></param>)</parameter_list>
+<block>{
+  <comment type="block">/* Before, this function was being run for *all* responses including
+     the 401 auth challenge.  In neon 0.24.x that was harmless.  But
+     in neon 0.25.0, trying to parse a 401 response as XML using
+     ne_xml_parse_v aborts the response; so the auth hooks never got a
+     chance. */</comment>
+  <decl_stmt><decl><type><name>ne_content_type</name></type> <name>ctype</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Only accept non-2xx responses with text/xml content-type */</comment>
+  <if>if <condition>(<expr><name><name>st</name>-&gt;<name>klass</name></name> != 2 &amp;&amp; <call><name>ne_get_content_type</name><argument_list>(<argument><expr><name>req</name></expr></argument>, <argument><expr>&amp;<name>ctype</name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>int</name></type> <name>is_xml</name> <init>=
+        <expr>(<call><name>strcmp</name><argument_list>(<argument><expr><name><name>ctype</name>.<name>type</name></name></expr></argument>, <argument><expr>"text"</expr></argument>)</argument_list></call> == 0 &amp;&amp; <call><name>strcmp</name><argument_list>(<argument><expr><name><name>ctype</name>.<name>subtype</name></name></expr></argument>, <argument><expr>"xml"</expr></argument>)</argument_list></call> == 0)</expr></init></decl>;</decl_stmt>
+      <expr_stmt><expr><call><name>ne_free</name><argument_list>(<argument><expr><name><name>ctype</name>.<name>value</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <return>return <expr><name>is_xml</name></expr>;</return>
+    }</block></then>
+  <else>else
+    <return>return <expr>0</expr>;</return></else></if>
+}</block></function>
+
+
+<decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>svn_ra_neon__xml_elm_t</name></type> <name><name>error_elements</name><index>[]</index></name> <init>=
+<expr><block>{
+  <expr><block>{ <expr>"DAV:"</expr>, <expr>"error"</expr>, <expr><name>ELEM_error</name></expr>, <expr>0</expr> }</block></expr>,
+  <expr><block>{ <expr>"svn:"</expr>, <expr>"error"</expr>, <expr><name>ELEM_svn_error</name></expr>, <expr>0</expr> }</block></expr>,
+  <expr><block>{ <expr>"http://apache.org/dav/xmlns"</expr>, <expr>"human-readable"</expr>,
+    <expr><name>ELEM_human_readable</name></expr>, <expr><name>SVN_RA_NEON__XML_CDATA</name></expr> }</block></expr>,
+
+  <comment type="block">/* ### our validator doesn't yet recognize the rich, specific
+         &lt;D:some-condition-failed/&gt; objects as defined by DeltaV.*/</comment>
+
+  <expr><block>{ <expr><name>NULL</name></expr> }</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+
+
+<function><type><specifier>static</specifier> <name>int</name></type> <name>validate_error_elements</name><parameter_list>(<param><decl><type><name>svn_ra_neon__xml_elmid</name></type> <name>parent</name></decl></param>,
+                                   <param><decl><type><name>svn_ra_neon__xml_elmid</name></type> <name>child</name></decl></param>)</parameter_list>
+<block>{
+  <switch>switch <condition>(<expr><name>parent</name></expr>)</condition>
+    <block>{
+    <case>case <expr><name>ELEM_root</name></expr>:
+      <if>if <condition>(<expr><name>child</name> == <name>ELEM_error</name></expr>)</condition><then>
+        <return>return <expr><name>child</name></expr>;</return></then>
+      <else>else
+        <return>return <expr><name>SVN_RA_NEON__XML_INVALID</name></expr>;</return></else></if>
+
+    </case><case>case <expr><name>ELEM_error</name></expr>:
+      <if>if <condition>(<expr><name>child</name> == <name>ELEM_svn_error</name>
+          || <name>child</name> == <name>ELEM_human_readable</name></expr>)</condition><then>
+        <return>return <expr><name>child</name></expr>;</return></then>
+      <else>else
+        <return>return <expr><name>SVN_RA_NEON__XML_DECLINE</name></expr>;</return></else></if>  <comment type="block">/* ignore if something else
+                                            was in there */</comment>
+
+    </case><default>default:
+      <return>return <expr><name>SVN_RA_NEON__XML_DECLINE</name></expr>;</return>
+    </default>}</block></switch>
+
+  <comment type="block">/* NOTREACHED */</comment>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>collect_error_cdata</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>, <param><decl><type><name>int</name></type> <name>state</name></decl></param>,
+                    <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>cdata</name></decl></param>, <param><decl><type><name>size_t</name></type> <name>len</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_stringbuf_t</name> **</type><name>b</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr>*<name>b</name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>svn_stringbuf_appendbytes</name><argument_list>(<argument><expr>*<name>b</name></expr></argument>, <argument><expr><name>cdata</name></expr></argument>, <argument><expr><name>len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <return>return <expr>0</expr>;</return>
+}</block></function>
+
+<typedef>typedef <type><struct>struct <name>error_parser_baton</name>
+<block>{
+  <decl_stmt><decl><type><name>svn_stringbuf_t</name> *</type><name>want_cdata</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_stringbuf_t</name> *</type><name>cdata</name></decl>;</decl_stmt>
+
+  <decl_stmt><decl><type><name>svn_error_t</name> **</type><name>dst_err</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>tmp_err</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name> *</type><name>marshalled_error</name></decl>;</decl_stmt>
+}</block></struct></type> <name>error_parser_baton_t</name>;</typedef>
+
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>start_err_element</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>, <param><decl><type><name>int</name></type> <name>parent</name></decl></param>,
+                  <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>nspace</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>name</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>atts</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>svn_ra_neon__xml_elm_t</name> *</type><name>elm</name>
+    <init>= <expr><call><name>svn_ra_neon__lookup_xml_elem</name><argument_list>(<argument><expr><name>error_elements</name></expr></argument>, <argument><expr><name>nspace</name></expr></argument>, <argument><expr><name>name</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>acc</name> <init>= <expr><name>elm</name>
+    ? <call><name>validate_error_elements</name><argument_list>(<argument><expr><name>parent</name></expr></argument>, <argument><expr><name><name>elm</name>-&gt;<name>id</name></name></expr></argument>)</argument_list></call> : <name>SVN_RA_NEON__XML_DECLINE</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>error_parser_baton_t</name> *</type><name>b</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_error_t</name> **</type><name>err</name> <init>= <expr>&amp;(<name><name>b</name>-&gt;<name>tmp_err</name></name>)</expr></init></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr><name>acc</name> &lt; 1</expr>)</condition><then> <comment type="block">/* ! &gt; 0 */</comment>
+    <return>return <expr><name>acc</name></expr>;</return></then></if>
+
+  <switch>switch <condition>(<expr><name><name>elm</name>-&gt;<name>id</name></name></expr>)</condition>
+    <block>{
+    <case>case <expr><name>ELEM_svn_error</name></expr>:
+      <block>{
+        <comment type="block">/* allocate the svn_error_t.  Hopefully the value will be
+           overwritten by the &lt;human-readable&gt; tag, or even someday by
+           a &lt;D:failed-precondition/&gt; tag. */</comment>
+        <expr_stmt><expr>*<name>err</name> = <call><name>svn_error_create</name><argument_list>(<argument><expr><name>APR_EGENERAL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                <argument><expr>"General svn error from server"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <break>break;</break>
+      }</block>
+    </case><case>case <expr><name>ELEM_human_readable</name></expr>:
+      <block>{
+        <comment type="block">/* get the errorcode attribute if present */</comment>
+        <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>errcode_str</name> <init>=
+          <expr><call><name>svn_xml_get_attr_value</name><argument_list>(<argument><expr>"errcode"</expr></argument>, <comment type="block">/* ### make constant in
+                                               some mod_dav header? */</comment>
+                                 <argument><expr><name>atts</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+        <if>if <condition>(<expr><name>errcode_str</name> &amp;&amp; *<name>err</name></expr>)</condition><then>
+          <expr_stmt><expr><name>(*<name>err</name>)-&gt;<name>apr_err</name></name> = <call><name>atoi</name><argument_list>(<argument><expr><name>errcode_str</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+        <break>break;</break>
+      }</block>
+
+    </case><default>default:
+      <break>break;</break>
+    </default>}</block></switch>
+
+  <switch>switch <condition>(<expr><name><name>elm</name>-&gt;<name>id</name></name></expr>)</condition>
+    <block>{
+    <case>case <expr><name>ELEM_human_readable</name></expr>:
+      <expr_stmt><expr><name><name>b</name>-&gt;<name>want_cdata</name></name> = <name><name>b</name>-&gt;<name>cdata</name></name></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>svn_stringbuf_setempty</name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>want_cdata</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <break>break;</break>
+
+    </case><default>default:
+      <expr_stmt><expr><name><name>b</name>-&gt;<name>want_cdata</name></name> = <name>NULL</name></expr>;</expr_stmt>
+      <break>break;</break>
+    </default>}</block></switch>
+
+  <return>return <expr><name><name>elm</name>-&gt;<name>id</name></name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>end_err_element</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>, <param><decl><type><name>int</name></type> <name>state</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>nspace</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>name</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>error_parser_baton_t</name> *</type><name>b</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_error_t</name> **</type><name>err</name> <init>= <expr>&amp;(<name><name>b</name>-&gt;<name>tmp_err</name></name>)</expr></init></decl>;</decl_stmt>
+
+  <switch>switch <condition>(<expr><name>state</name></expr>)</condition>
+    <block>{
+    <case>case <expr><name>ELEM_human_readable</name></expr>:
+      <block>{
+        <if>if <condition>(<expr><name><name>b</name>-&gt;<name>cdata</name>-&gt;<name>data</name></name> &amp;&amp; *<name>err</name></expr>)</condition><then>
+          <block>{
+            <comment type="block">/* On the server dav_error_response_tag() will add a leading
+               and trailing newline if DEBUG_CR is defined in mod_dav.h,
+               so remove any such characters here. */</comment>
+            <decl_stmt><decl><type><name>apr_size_t</name></type> <name>len</name></decl>;</decl_stmt>
+            <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>cd</name> <init>= <expr><name><name>b</name>-&gt;<name>cdata</name>-&gt;<name>data</name></name></expr></init></decl>;</decl_stmt>
+            <if>if <condition>(<expr>*<name>cd</name> == '\n'</expr>)</condition><then>
+              <expr_stmt><expr>++<name>cd</name></expr>;</expr_stmt></then></if>
+            <expr_stmt><expr><name>len</name> = <call><name>strlen</name><argument_list>(<argument><expr><name>cd</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <if>if <condition>(<expr><name>len</name> &gt; 0 &amp;&amp; <name><name>cd</name><index>[<expr><name>len</name>-1</expr>]</index></name> == '\n'</expr>)</condition><then>
+              <expr_stmt><expr>--<name>len</name></expr>;</expr_stmt></then></if>
+
+            <expr_stmt><expr><name>(*<name>err</name>)-&gt;<name>message</name></name> = <call><name>apr_pstrmemdup</name><argument_list>(<argument><expr><name>(*<name>err</name>)-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>cd</name></expr></argument>, <argument><expr><name>len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          }</block></then></if>
+        <break>break;</break>
+      }</block>
+
+    </case><case>case <expr><name>ELEM_error</name></expr>:
+      <block>{
+        <if>if <condition>(<expr>*(<name><name>b</name>-&gt;<name>dst_err</name></name>)</expr>)</condition><then>
+          <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>tmp_err</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+        <else>else <if>if <condition>(<expr><name><name>b</name>-&gt;<name>tmp_err</name></name></expr>)</condition><then>
+          <block>{
+            <expr_stmt><expr>*(<name><name>b</name>-&gt;<name>dst_err</name></name>) = <name><name>b</name>-&gt;<name>tmp_err</name></name></expr>;</expr_stmt>
+            <if>if <condition>(<expr><name><name>b</name>-&gt;<name>marshalled_error</name></name></expr>)</condition><then>
+              <expr_stmt><expr>*(<name><name>b</name>-&gt;<name>marshalled_error</name></name>) = <name>TRUE</name></expr>;</expr_stmt></then></if>
+          }</block></then></if></else></if>
+        <expr_stmt><expr><name><name>b</name>-&gt;<name>tmp_err</name></name> = <name>NULL</name></expr>;</expr_stmt>
+        <break>break;</break>
+      }</block>
+
+    </case><default>default:
+      <break>break;</break>
+    </default>}</block></switch>
+
+  <return>return <expr>0</expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type>
+<name>error_parser_baton_cleanup</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>error_parser_baton_t</name> *</type><name>b</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr><name><name>b</name>-&gt;<name>tmp_err</name></name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>tmp_err</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>ne_xml_parser</name> *</type>
+<name>error_parser_create</name><parameter_list>(<param><decl><type><name>svn_ra_neon__request_t</name> *</type><name>req</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>error_parser_baton_t</name> *</type><name>b</name> <init>= <expr><call><name>apr_palloc</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>b</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>ne_xml_parser</name> *</type><name>error_parser</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>dst_err</name></name> = &amp;(<name><name>req</name>-&gt;<name>err</name></name>)</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>marshalled_error</name></name> = &amp;(<name><name>req</name>-&gt;<name>marshalled_error</name></name>)</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>tmp_err</name></name> = <name>NULL</name></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>want_cdata</name></name> = <name>NULL</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>cdata</name></name> = <call><name>svn_stringbuf_create</name><argument_list>(<argument><expr>""</expr></argument>, <argument><expr><name><name>req</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* attach a standard &lt;D:error&gt; body parser to the request */</comment>
+  <expr_stmt><expr><name>error_parser</name> = <call><name>xml_parser_create</name><argument_list>(<argument><expr><name>req</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>ne_xml_push_handler</name><argument_list>(<argument><expr><name>error_parser</name></expr></argument>,
+                      <argument><expr><name>start_err_element</name></expr></argument>,
+                      <argument><expr><name>collect_error_cdata</name></expr></argument>,
+                      <argument><expr><name>end_err_element</name></expr></argument>, <argument><expr><name>b</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>apr_pool_cleanup_register</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>b</name></expr></argument>,
+                            <argument><expr><name>error_parser_baton_cleanup</name></expr></argument>,
+                            <argument><expr><name>apr_pool_cleanup_null</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Register the "error" accepter and body-reader with the request --
+     the one to use when HTTP status is *not* 2XX */</comment>
+  <expr_stmt><expr><call><name>attach_ne_body_reader</name><argument_list>(<argument><expr><name>req</name></expr></argument>, <argument><expr><name>ra_neon_error_accepter</name></expr></argument>,
+                        <argument><expr><name>ne_xml_parse_v</name></expr></argument>, <argument><expr><name>error_parser</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>error_parser</name></expr>;</return>
+}</block></function>
+
+<escape char="0xc"/>
+<comment type="block">/* A body provider for ne_set_request_body_provider that pulls data
+ * from an APR file. See ne_request.h for a description of the
+ * interface.
+ */</comment>
+
+<typedef>typedef <type><struct>struct
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_neon__request_t</name> *</type><name>req</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_file_t</name> *</type><name>body_file</name></decl>;</decl_stmt>
+}</block></struct></type> <name>body_provider_baton_t</name>;</typedef>
+
+<function><type><specifier>static</specifier> <name>ssize_t</name></type> <name>ra_neon_body_provider</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>userdata</name></decl></param>,
+                                     <param><decl><type><name>char</name> *</type><name>buffer</name></decl></param>,
+                                     <param><decl><type><name>size_t</name></type> <name>buflen</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>body_provider_baton_t</name> *</type><name>b</name> <init>= <expr><name>userdata</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_ra_neon__request_t</name> *</type><name>req</name> <init>= <expr><name><name>b</name>-&gt;<name>req</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_file_t</name> *</type><name>body_file</name> <init>= <expr><name><name>b</name>-&gt;<name>body_file</name></name></expr></init></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr><name><name>req</name>-&gt;<name>sess</name>-&gt;<name>callbacks</name></name> &amp;&amp;
+      <name><name>req</name>-&gt;<name>sess</name>-&gt;<name>callbacks</name>-&gt;<name>cancel_func</name></name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>SVN_RA_NEON__REQ_ERR</name>
+      <argument_list>(<argument><expr><name>req</name></expr></argument>, <argument><expr><call>(<name><name>req</name>-&gt;<name>sess</name>-&gt;<name>callbacks</name>-&gt;<name>cancel_func</name></name>)<argument_list>(<argument><expr><name><name>req</name>-&gt;<name>sess</name>-&gt;<name>callback_baton</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <if>if <condition>(<expr><name><name>req</name>-&gt;<name>err</name></name></expr>)</condition><then>
+    <return>return <expr>-1</expr>;</return></then></if>
+
+  <expr_stmt><expr><call><name>svn_pool_clear</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>iterpool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>buflen</name> == 0</expr>)</condition><then>
+    <block>{
+      <comment type="block">/* This is the beginning of a new body pull. Rewind the file. */</comment>
+      <decl_stmt><decl><type><name>apr_off_t</name></type> <name>offset</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+      <expr_stmt><expr><call><name>SVN_RA_NEON__REQ_ERR</name>
+        <argument_list>(<argument><expr><name><name>b</name>-&gt;<name>req</name></name></expr></argument>,
+         <argument><expr><call><name>svn_io_file_seek</name><argument_list>(<argument><expr><name>body_file</name></expr></argument>, <argument><expr><name>APR_SET</name></expr></argument>, <argument><expr>&amp;<name>offset</name></expr></argument>, <argument><expr><name><name>req</name>-&gt;<name>iterpool</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <return>return <expr>(<name><name>req</name>-&gt;<name>err</name></name> ? -1 : 0)</expr>;</return>
+    }</block></then>
+  <else>else
+    <block>{
+      <decl_stmt><decl><type><name>apr_size_t</name></type> <name>nbytes</name> <init>= <expr><name>buflen</name></expr></init></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name> <init>= <expr><call><name>svn_io_file_read</name><argument_list>(<argument><expr><name>body_file</name></expr></argument>, <argument><expr><name>buffer</name></expr></argument>, <argument><expr>&amp;<name>nbytes</name></expr></argument>,
+                                          <argument><expr><name><name>req</name>-&gt;<name>iterpool</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+      <if>if <condition>(<expr><name>err</name></expr>)</condition><then>
+        <block>{
+          <if>if <condition>(<expr><call><name>APR_STATUS_IS_EOF</name><argument_list>(<argument><expr><name><name>err</name>-&gt;<name>apr_err</name></name></expr></argument>)</argument_list></call></expr>)</condition><then>
+            <block>{
+              <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+              <return>return <expr>0</expr>;</return>
+            }</block></then></if>
+
+          <expr_stmt><expr><call><name>SVN_RA_NEON__REQ_ERR</name><argument_list>(<argument><expr><name>req</name></expr></argument>, <argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <return>return <expr>-1</expr>;</return>
+        }</block></then>
+      <else>else
+        <return>return <expr><name>nbytes</name></expr>;</return></else></if>
+    }</block></else></if>
+}</block></function>
+
+
+<function><type><name>svn_error_t</name> *</type><name>svn_ra_neon__set_neon_body_provider</name><parameter_list>(<param><decl><type><name>svn_ra_neon__request_t</name> *</type><name>req</name></decl></param>,
+                                                 <param><decl><type><name>apr_file_t</name> *</type><name>body_file</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>apr_status_t</name></type> <name>status</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_finfo_t</name></type> <name>finfo</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>body_provider_baton_t</name> *</type><name>b</name> <init>= <expr><call><name>apr_palloc</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>b</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name>status</name> = <call><name>apr_file_info_get</name><argument_list>(<argument><expr>&amp;<name>finfo</name></expr></argument>, <argument><expr><name>APR_FINFO_SIZE</name></expr></argument>, <argument><expr><name>body_file</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>status</name></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_wrap_apr</name><argument_list>(<argument><expr><name>status</name></expr></argument>,
+                              <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Can't calculate the request body size"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>body_file</name></name> = <name>body_file</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>req</name></name> = <name>req</name></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>ne_set_request_body_provider</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>ne_req</name></name></expr></argument>, <argument><expr>(<name>size_t</name>) <name><name>finfo</name>.<name>size</name></name></expr></argument>,
+                               <argument><expr><name>ra_neon_body_provider</name></expr></argument>, <argument><expr><name>b</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<typedef>typedef <type><struct>struct <name>spool_reader_baton_t</name>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>spool_file_name</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_file_t</name> *</type><name>spool_file</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_ra_neon__request_t</name> *</type><name>req</name></decl>;</decl_stmt>
+}</block></struct></type> <name>spool_reader_baton_t</name>;</typedef>
+
+
+<comment type="block">/* This implements the svn_ra_neon__block_reader() callback interface. */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>spool_reader</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>userdata</name></decl></param>,
+             <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>buf</name></decl></param>,
+             <param><decl><type><name>size_t</name></type> <name>len</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>spool_reader_baton_t</name> *</type><name>baton</name> <init>= <expr><name>userdata</name></expr></init></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_io_file_write_full</name><argument_list>(<argument><expr><name><name>baton</name>-&gt;<name>spool_file</name></name></expr></argument>, <argument><expr><name>buf</name></expr></argument>,
+                                 <argument><expr><name>len</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name><name>baton</name>-&gt;<name>req</name>-&gt;<name>iterpool</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>svn_pool_clear</name><argument_list>(<argument><expr><name><name>baton</name>-&gt;<name>req</name>-&gt;<name>iterpool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>parse_spool_file</name><parameter_list>(<param><decl><type><name>svn_ra_neon__session_t</name> *</type><name>ras</name></decl></param>,
+                 <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>spool_file_name</name></decl></param>,
+                 <param><decl><type><name>ne_xml_parser</name> *</type><name>success_parser</name></decl></param>,
+                 <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>apr_file_t</name> *</type><name>spool_file</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_stream_t</name> *</type><name>spool_stream</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>char</name> *</type><name>buf</name> <init>= <expr><call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>SVN__STREAM_CHUNK_SIZE</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>len</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_io_file_open</name><argument_list>(<argument><expr>&amp;<name>spool_file</name></expr></argument>, <argument><expr><name>spool_file_name</name></expr></argument>,
+                           <argument><expr>(<name>APR_READ</name> | <name>APR_BUFFERED</name>)</expr></argument>, <argument><expr><name>APR_OS_DEFAULT</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>spool_stream</name> = <call><name>svn_stream_from_aprfile</name><argument_list>(<argument><expr><name>spool_file</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <while>while <condition>(<expr>1</expr>)</condition>
+    <block>{
+      <if>if <condition>(<expr><name><name>ras</name>-&gt;<name>callbacks</name></name> &amp;&amp;
+          <name><name>ras</name>-&gt;<name>callbacks</name>-&gt;<name>cancel_func</name></name></expr>)</condition><then>
+        <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call>(<name><name>ras</name>-&gt;<name>callbacks</name>-&gt;<name>cancel_func</name></name>)<argument_list>(<argument><expr><name><name>ras</name>-&gt;<name>callback_baton</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+      <expr_stmt><expr><name>len</name> = <name>SVN__STREAM_CHUNK_SIZE</name></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_stream_read</name><argument_list>(<argument><expr><name>spool_stream</name></expr></argument>, <argument><expr><name>buf</name></expr></argument>, <argument><expr>&amp;<name>len</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>len</name> &gt; 0</expr>)</condition><then>
+        <if>if <condition>(<expr><call><name>ne_xml_parse</name><argument_list>(<argument><expr><name>success_parser</name></expr></argument>, <argument><expr><name>buf</name></expr></argument>, <argument><expr><name>len</name></expr></argument>)</argument_list></call> != 0</expr>)</condition><then>
+          <comment type="block">/* The parse encountered an error or
+             was aborted by a user defined callback */</comment>
+          <break>break;</break></then></if></then></if>
+
+      <if>if <condition>(<expr><name>len</name> != <name>SVN__STREAM_CHUNK_SIZE</name></expr>)</condition><then>
+        <break>break;</break></then></if>
+    }</block></while>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* A baton that is used along with a set of Neon ne_startelm_cb,
+ * ne_cdata_cb, and ne_endelm_cb callbacks to handle conversion
+ * from Subversion style errors to Neon style errors.
+ *
+ * The underlying Subversion callbacks are called, and if errors
+ * are returned they are stored in this baton and a Neon level
+ * error code is returned to the parser.
+ */</comment>
+<typedef>typedef <type><struct>struct <block>{
+  <decl_stmt><decl><type><name>svn_ra_neon__request_t</name> *</type><name>req</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>ne_xml_parser</name> *</type><name>parser</name></decl>;</decl_stmt>
+
+  <decl_stmt><decl><type><name>void</name> *</type><name>baton</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_ra_neon__startelm_cb_t</name></type> <name>startelm_cb</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_ra_neon__cdata_cb_t</name></type> <name>cdata_cb</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_ra_neon__endelm_cb_t</name></type> <name>endelm_cb</name></decl>;</decl_stmt>
+}</block></struct></type> <name>parser_wrapper_baton_t</name>;</typedef>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>wrapper_startelm_cb</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>,
+                    <param><decl><type><name>int</name></type> <name>parent</name></decl></param>,
+                    <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>nspace</name></decl></param>,
+                    <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>name</name></decl></param>,
+                    <param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>atts</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>parser_wrapper_baton_t</name> *</type><name>pwb</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>elem</name> <init>= <expr><name>SVN_RA_NEON__XML_DECLINE</name></expr></init></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr><name><name>pwb</name>-&gt;<name>startelm_cb</name></name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>SVN_RA_NEON__REQ_ERR</name>
+      <argument_list>(<argument><expr><name><name>pwb</name>-&gt;<name>req</name></name></expr></argument>,
+       <argument><expr><call><name><name>pwb</name>-&gt;<name>startelm_cb</name></name><argument_list>(<argument><expr>&amp;<name>elem</name></expr></argument>, <argument><expr><name><name>pwb</name>-&gt;<name>baton</name></name></expr></argument>, <argument><expr><name>parent</name></expr></argument>, <argument><expr><name>nspace</name></expr></argument>, <argument><expr><name>name</name></expr></argument>, <argument><expr><name>atts</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <if>if <condition>(<expr><name>elem</name> == <name>SVN_RA_NEON__XML_INVALID</name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>SVN_RA_NEON__REQ_ERR</name>
+      <argument_list>(<argument><expr><name><name>pwb</name>-&gt;<name>req</name></name></expr></argument>,
+       <argument><expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_XML_MALFORMED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <if>if <condition>(<expr><name><name>pwb</name>-&gt;<name>req</name>-&gt;<name>err</name></name></expr>)</condition><then>
+    <return>return <expr><name>NE_XML_ABORT</name></expr>;</return></then></if>
+
+  <return>return <expr><name>elem</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>wrapper_cdata_cb</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>, <param><decl><type><name>int</name></type> <name>state</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>cdata</name></decl></param>, <param><decl><type><name>size_t</name></type> <name>len</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>parser_wrapper_baton_t</name> *</type><name>pwb</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr><name><name>pwb</name>-&gt;<name>cdata_cb</name></name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>SVN_RA_NEON__REQ_ERR</name>
+      <argument_list>(<argument><expr><name><name>pwb</name>-&gt;<name>req</name></name></expr></argument>,
+       <argument><expr><call><name><name>pwb</name>-&gt;<name>cdata_cb</name></name><argument_list>(<argument><expr><name><name>pwb</name>-&gt;<name>baton</name></name></expr></argument>, <argument><expr><name>state</name></expr></argument>, <argument><expr><name>cdata</name></expr></argument>, <argument><expr><name>len</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <if>if <condition>(<expr><name><name>pwb</name>-&gt;<name>req</name>-&gt;<name>err</name></name></expr>)</condition><then>
+    <return>return <expr><name>NE_XML_ABORT</name></expr>;</return></then></if>
+
+  <return>return <expr>0</expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>wrapper_endelm_cb</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>,
+                  <param><decl><type><name>int</name></type> <name>state</name></decl></param>,
+                  <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>nspace</name></decl></param>,
+                  <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>name</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>parser_wrapper_baton_t</name> *</type><name>pwb</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr><name><name>pwb</name>-&gt;<name>endelm_cb</name></name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>SVN_RA_NEON__REQ_ERR</name>
+      <argument_list>(<argument><expr><name><name>pwb</name>-&gt;<name>req</name></name></expr></argument>,
+       <argument><expr><call><name><name>pwb</name>-&gt;<name>endelm_cb</name></name><argument_list>(<argument><expr><name><name>pwb</name>-&gt;<name>baton</name></name></expr></argument>, <argument><expr><name>state</name></expr></argument>, <argument><expr><name>nspace</name></expr></argument>, <argument><expr><name>name</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <if>if <condition>(<expr><name><name>pwb</name>-&gt;<name>req</name>-&gt;<name>err</name></name></expr>)</condition><then>
+    <return>return <expr><name>NE_XML_ABORT</name></expr>;</return></then></if>
+
+  <return>return <expr>0</expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>wrapper_reader_cb</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>data</name></decl></param>, <param><decl><type><name>size_t</name></type> <name>len</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>parser_wrapper_baton_t</name> *</type><name>pwb</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_ra_neon__session_t</name> *</type><name>sess</name> <init>= <expr><name><name>pwb</name>-&gt;<name>req</name>-&gt;<name>sess</name></name></expr></init></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr><name><name>pwb</name>-&gt;<name>req</name>-&gt;<name>err</name></name></expr>)</condition><then>
+    <return>return <expr>1</expr>;</return></then></if>
+
+  <if>if <condition>(<expr><name><name>sess</name>-&gt;<name>callbacks</name>-&gt;<name>cancel_func</name></name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>SVN_RA_NEON__REQ_ERR</name>
+      <argument_list>(<argument><expr><name><name>pwb</name>-&gt;<name>req</name></name></expr></argument>,
+       <argument><expr><call>(<name><name>sess</name>-&gt;<name>callbacks</name>-&gt;<name>cancel_func</name></name>)<argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>callback_baton</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <if>if <condition>(<expr><name><name>pwb</name>-&gt;<name>req</name>-&gt;<name>err</name></name></expr>)</condition><then>
+    <return>return <expr>1</expr>;</return></then></if>
+
+  <return>return <expr><call><name>ne_xml_parse</name><argument_list>(<argument><expr><name><name>pwb</name>-&gt;<name>parser</name></name></expr></argument>, <argument><expr><name>data</name></expr></argument>, <argument><expr><name>len</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><name>ne_xml_parser</name> *</type>
+<name>svn_ra_neon__xml_parser_create</name><parameter_list>(<param><decl><type><name>svn_ra_neon__request_t</name> *</type><name>req</name></decl></param>,
+                               <param><decl><type><name>ne_accept_response</name></type> <name>accpt</name></decl></param>,
+                               <param><decl><type><name>svn_ra_neon__startelm_cb_t</name></type> <name>startelm_cb</name></decl></param>,
+                               <param><decl><type><name>svn_ra_neon__cdata_cb_t</name></type> <name>cdata_cb</name></decl></param>,
+                               <param><decl><type><name>svn_ra_neon__endelm_cb_t</name></type> <name>endelm_cb</name></decl></param>,
+                               <param><decl><type><name>void</name> *</type><name>baton</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>ne_xml_parser</name> *</type><name>p</name> <init>= <expr><call><name>xml_parser_create</name><argument_list>(<argument><expr><name>req</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>parser_wrapper_baton_t</name> *</type><name>pwb</name> <init>= <expr><call><name>apr_palloc</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>pwb</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name><name>pwb</name>-&gt;<name>req</name></name> = <name>req</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>pwb</name>-&gt;<name>parser</name></name> = <name>p</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>pwb</name>-&gt;<name>baton</name></name> = <name>baton</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>pwb</name>-&gt;<name>startelm_cb</name></name> = <name>startelm_cb</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>pwb</name>-&gt;<name>cdata_cb</name></name> = <name>cdata_cb</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>pwb</name>-&gt;<name>endelm_cb</name></name> = <name>endelm_cb</name></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>ne_xml_push_handler</name><argument_list>(<argument><expr><name>p</name></expr></argument>,
+                      <argument><expr><name>wrapper_startelm_cb</name></expr></argument>,
+                      <argument><expr><name>wrapper_cdata_cb</name></expr></argument>,
+                      <argument><expr><name>wrapper_endelm_cb</name></expr></argument>, <argument><expr><name>pwb</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name>accpt</name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>attach_ne_body_reader</name><argument_list>(<argument><expr><name>req</name></expr></argument>, <argument><expr><name>accpt</name></expr></argument>, <argument><expr><name>wrapper_reader_cb</name></expr></argument>, <argument><expr><name>pwb</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <return>return <expr><name>p</name></expr>;</return>
+}</block></function>
+
+<escape char="0xc"/>
+<typedef>typedef <type><struct>struct <name>cancellation_baton_t</name>
+<block>{
+  <decl_stmt><decl><type><name>ne_block_reader</name></type> <name>real_cb</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>void</name> *</type><name>real_userdata</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_ra_neon__request_t</name> *</type><name>req</name></decl>;</decl_stmt>
+}</block></struct></type> <name>cancellation_baton_t</name>;</typedef>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>cancellation_callback</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>userdata</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>block</name></decl></param>, <param><decl><type><name>size_t</name></type> <name>len</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>cancellation_baton_t</name> *</type><name>b</name> <init>= <expr><name>userdata</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_ra_neon__session_t</name> *</type><name>ras</name> <init>= <expr><name><name>b</name>-&gt;<name>req</name>-&gt;<name>sess</name></name></expr></init></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr><name><name>ras</name>-&gt;<name>callbacks</name>-&gt;<name>cancel_func</name></name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>SVN_RA_NEON__REQ_ERR</name>
+      <argument_list>(<argument><expr><name><name>b</name>-&gt;<name>req</name></name></expr></argument>,
+       <argument><expr><call>(<name><name>ras</name>-&gt;<name>callbacks</name>-&gt;<name>cancel_func</name></name>)<argument_list>(<argument><expr><name><name>ras</name>-&gt;<name>callback_baton</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <if>if <condition>(<expr><name><name>b</name>-&gt;<name>req</name>-&gt;<name>err</name></name></expr>)</condition><then>
+    <return>return <expr>1</expr>;</return></then>
+  <else>else
+    <return>return <expr><call>(<name><name>b</name>-&gt;<name>real_cb</name></name>)<argument_list>(<argument><expr><name><name>b</name>-&gt;<name>real_userdata</name></name></expr></argument>, <argument><expr><name>block</name></expr></argument>, <argument><expr><name>len</name></expr></argument>)</argument_list></call></expr>;</return></else></if>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>cancellation_baton_t</name> *</type>
+<name>get_cancellation_baton</name><parameter_list>(<param><decl><type><name>svn_ra_neon__request_t</name> *</type><name>req</name></decl></param>,
+                       <param><decl><type><name>ne_block_reader</name></type> <name>real_cb</name></decl></param>,
+                       <param><decl><type><name>void</name> *</type><name>real_userdata</name></decl></param>,
+                       <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>cancellation_baton_t</name> *</type><name>b</name> <init>= <expr><call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>b</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>real_cb</name></name> = <name>real_cb</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>real_userdata</name></name> = <name>real_userdata</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>req</name></name> = <name>req</name></expr>;</expr_stmt>
+
+  <return>return <expr><name>b</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* See doc string for svn_ra_neon__parsed_request. */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>parsed_request</name><parameter_list>(<param><decl><type><name>svn_ra_neon__request_t</name> *</type><name>req</name></decl></param>,
+               <param><decl><type><name>svn_ra_neon__session_t</name> *</type><name>ras</name></decl></param>,
+               <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>method</name></decl></param>,
+               <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>url</name></decl></param>,
+               <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>body</name></decl></param>,
+               <param><decl><type><name>apr_file_t</name> *</type><name>body_file</name></decl></param>,
+               <param><function_decl><type><name>void</name></type> <name>set_parser</name><parameter_list>(<param><decl><type><name>ne_xml_parser</name> *</type><name>parser</name></decl></param>,
+                               <param><decl><type><name>void</name> *</type><name>baton</name></decl></param>)</parameter_list></function_decl></param>,
+               <param><decl><type><name>svn_ra_neon__startelm_cb_t</name></type> <name>startelm_cb</name></decl></param>,
+               <param><decl><type><name>svn_ra_neon__cdata_cb_t</name></type> <name>cdata_cb</name></decl></param>,
+               <param><decl><type><name>svn_ra_neon__endelm_cb_t</name></type> <name>endelm_cb</name></decl></param>,
+               <param><decl><type><name>void</name> *</type><name>baton</name></decl></param>,
+               <param><decl><type><name>apr_hash_t</name> *</type><name>extra_headers</name></decl></param>,
+               <param><decl><type><name>int</name> *</type><name>status_code</name></decl></param>,
+               <param><decl><type><name>svn_boolean_t</name></type> <name>spool_response</name></decl></param>,
+               <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>ne_xml_parser</name> *</type><name>success_parser</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>msg</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>spool_reader_baton_t</name></type> <name>spool_reader_baton</name></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr><name>body</name> == <name>NULL</name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_ra_neon__set_neon_body_provider</name><argument_list>(<argument><expr><name>req</name></expr></argument>, <argument><expr><name>body_file</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <comment type="block">/* ### use a symbolic name somewhere for this MIME type? */</comment>
+  <expr_stmt><expr><call><name>ne_add_request_header</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>ne_req</name></name></expr></argument>, <argument><expr>"Content-Type"</expr></argument>, <argument><expr>"text/xml"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* create a parser to read the normal response body */</comment>
+  <expr_stmt><expr><name>success_parser</name> = <call><name>svn_ra_neon__xml_parser_create</name><argument_list>(<argument><expr><name>req</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                                  <argument><expr><name>startelm_cb</name></expr></argument>, <argument><expr><name>cdata_cb</name></expr></argument>,
+                                                  <argument><expr><name>endelm_cb</name></expr></argument>, <argument><expr><name>baton</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* if our caller is interested in having access to this parser, call
+     the SET_PARSER callback with BATON. */</comment>
+  <if>if <condition>(<expr><name>set_parser</name> != <name>NULL</name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>set_parser</name><argument_list>(<argument><expr><name>success_parser</name></expr></argument>, <argument><expr><name>baton</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <comment type="block">/* Register the "main" accepter and body-reader with the request --
+     the one to use when the HTTP status is 2XX.  If we are spooling
+     the response to disk first, we use our custom spool reader.  */</comment>
+  <if>if <condition>(<expr><name>spool_response</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>tmpfile_path</name></decl>;</decl_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_io_temp_dir</name><argument_list>(<argument><expr>&amp;<name>tmpfile_path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name>tmpfile_path</name> = <call><name>svn_path_join</name><argument_list>(<argument><expr><name>tmpfile_path</name></expr></argument>, <argument><expr>"dav-spool"</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <comment type="block">/* Blow the temp-file away as soon as we eliminate the entire request */</comment>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_io_open_unique_file2</name><argument_list>(<argument><expr>&amp;<name><name>spool_reader_baton</name>.<name>spool_file</name></name></expr></argument>,
+                                       <argument><expr>&amp;<name><name>spool_reader_baton</name>.<name>spool_file_name</name></name></expr></argument>,
+                                       <argument><expr><name>tmpfile_path</name></expr></argument>, <argument><expr>""</expr></argument>,
+                                       <argument><expr><name>svn_io_file_del_on_pool_cleanup</name></expr></argument>,
+                                       <argument><expr><name><name>req</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>spool_reader_baton</name>.<name>req</name></name> = <name>req</name></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>svn_ra_neon__add_response_body_reader</name><argument_list>(<argument><expr><name>req</name></expr></argument>, <argument><expr><name>ne_accept_2xx</name></expr></argument>, <argument><expr><name>spool_reader</name></expr></argument>,
+                                            <argument><expr>&amp;<name>spool_reader_baton</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else
+    <expr_stmt><expr><call><name>attach_ne_body_reader</name><argument_list>(<argument><expr><name>req</name></expr></argument>, <argument><expr><name>ne_accept_2xx</name></expr></argument>, <argument><expr><name>cancellation_callback</name></expr></argument>,
+                          <argument><expr><call><name>get_cancellation_baton</name><argument_list>(<argument><expr><name>req</name></expr></argument>, <argument><expr><name>ne_xml_parse_v</name></expr></argument>,
+                                                 <argument><expr><name>success_parser</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+
+  <comment type="block">/* run the request and get the resulting status code. */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_ra_neon__request_dispatch</name><argument_list>(<argument><expr><name>status_code</name></expr></argument>,
+                                        <argument><expr><name>req</name></expr></argument>, <argument><expr><name>extra_headers</name></expr></argument>, <argument><expr><name>body</name></expr></argument>,
+                                        <argument><expr>(<call><name>strcmp</name><argument_list>(<argument><expr><name>method</name></expr></argument>, <argument><expr>"PROPFIND"</expr></argument>)</argument_list></call> == 0)
+                                        ? 207 : 200</expr></argument>,
+                                        <argument><expr>0</expr></argument>, <comment type="block">/* not used */</comment>
+                                        <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name>spool_response</name></expr>)</condition><then>
+    <block>{
+      <comment type="block">/* All done with the temporary file we spooled the response into. */</comment>
+      <expr_stmt><expr>(<name>void</name>) <call><name>apr_file_close</name><argument_list>(<argument><expr><name><name>spool_reader_baton</name>.<name>spool_file</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <comment type="block">/* The success parser may set an error value in req-&gt;err */</comment>
+      <expr_stmt><expr><call><name>SVN_RA_NEON__REQ_ERR</name>
+        <argument_list>(<argument><expr><name>req</name></expr></argument>, <argument><expr><call><name>parse_spool_file</name><argument_list>(<argument><expr><name>ras</name></expr></argument>, <argument><expr><name><name>spool_reader_baton</name>.<name>spool_file_name</name></name></expr></argument>,
+                               <argument><expr><name>success_parser</name></expr></argument>, <argument><expr><name><name>req</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name><name>req</name>-&gt;<name>err</name></name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>svn_error_compose</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>err</name></name></expr></argument>, <argument><expr><call><name>svn_error_createf</name>
+                            <argument_list>(<argument><expr><name>SVN_ERR_RA_DAV_REQUEST_FAILED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                             <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Error reading spooled %s request response"</expr></argument>)</argument_list></call></expr></argument>,
+                             <argument><expr><name>method</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <return>return <expr><name><name>req</name>-&gt;<name>err</name></name></expr>;</return>
+        }</block></then></if>
+    }</block></then></if>
+
+  <comment type="block">/* was there an XML parse error somewhere? */</comment>
+  <expr_stmt><expr><name>msg</name> = <call><name>ne_xml_get_error</name><argument_list>(<argument><expr><name>success_parser</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>msg</name> != <name>NULL</name> &amp;&amp; *<name>msg</name> != '\0'</expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_RA_DAV_REQUEST_FAILED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                             <argument><expr><call><name>_</name><argument_list>(<argument><expr>"The %s request returned invalid XML "
+                               "in the response: %s (%s)"</expr></argument>)</argument_list></call></expr></argument>,
+                             <argument><expr><name>method</name></expr></argument>, <argument><expr><name>msg</name></expr></argument>, <argument><expr><name>url</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_ra_neon__parsed_request</name><parameter_list>(<param><decl><type><name>svn_ra_neon__session_t</name> *</type><name>sess</name></decl></param>,
+                            <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>method</name></decl></param>,
+                            <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>url</name></decl></param>,
+                            <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>body</name></decl></param>,
+                            <param><decl><type><name>apr_file_t</name> *</type><name>body_file</name></decl></param>,
+                            <param><function_decl><type><name>void</name></type> <name>set_parser</name><parameter_list>(<param><decl><type><name>ne_xml_parser</name> *</type><name>parser</name></decl></param>,
+                                            <param><decl><type><name>void</name> *</type><name>baton</name></decl></param>)</parameter_list></function_decl></param>,
+                            <param><decl><type><name>svn_ra_neon__startelm_cb_t</name></type> <name>startelm_cb</name></decl></param>,
+                            <param><decl><type><name>svn_ra_neon__cdata_cb_t</name></type> <name>cdata_cb</name></decl></param>,
+                            <param><decl><type><name>svn_ra_neon__endelm_cb_t</name></type> <name>endelm_cb</name></decl></param>,
+                            <param><decl><type><name>void</name> *</type><name>baton</name></decl></param>,
+                            <param><decl><type><name>apr_hash_t</name> *</type><name>extra_headers</name></decl></param>,
+                            <param><decl><type><name>int</name> *</type><name>status_code</name></decl></param>,
+                            <param><decl><type><name>svn_boolean_t</name></type> <name>spool_response</name></decl></param>,
+                            <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <comment type="block">/* create/prep the request */</comment>
+  <decl_stmt><decl><type><name>svn_ra_neon__request_t</name>*</type> <name>req</name> <init>= <expr><call><name>svn_ra_neon__request_create</name><argument_list>(<argument><expr><name>sess</name></expr></argument>, <argument><expr><name>method</name></expr></argument>, <argument><expr><name>url</name></expr></argument>,
+                                                           <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name> <init>= <expr><call><name>parsed_request</name><argument_list>(<argument><expr><name>req</name></expr></argument>,
+                                    <argument><expr><name>sess</name></expr></argument>, <argument><expr><name>method</name></expr></argument>, <argument><expr><name>url</name></expr></argument>, <argument><expr><name>body</name></expr></argument>, <argument><expr><name>body_file</name></expr></argument>,
+                                    <argument><expr><name>set_parser</name></expr></argument>,
+                                    <argument><expr><name>startelm_cb</name></expr></argument>, <argument><expr><name>cdata_cb</name></expr></argument>, <argument><expr><name>endelm_cb</name></expr></argument>,
+                                    <argument><expr><name>baton</name></expr></argument>, <argument><expr><name>extra_headers</name></expr></argument>, <argument><expr><name>status_code</name></expr></argument>,
+                                    <argument><expr><name>spool_response</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <expr_stmt><expr><call><name>svn_ra_neon__request_destroy</name><argument_list>(<argument><expr><name>req</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><name>err</name></expr>;</return>
+}</block></function>
+
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_ra_neon__simple_request</name><parameter_list>(<param><decl><type><name>int</name> *</type><name>code</name></decl></param>,
+                            <param><decl><type><name>svn_ra_neon__session_t</name> *</type><name>ras</name></decl></param>,
+                            <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>method</name></decl></param>,
+                            <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>url</name></decl></param>,
+                            <param><decl><type><name>apr_hash_t</name> *</type><name>extra_headers</name></decl></param>,
+                            <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>body</name></decl></param>,
+                            <param><decl><type><name>int</name></type> <name>okay_1</name></decl></param>, <param><decl><type><name>int</name></type> <name>okay_2</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_neon__request_t</name> *</type><name>req</name> <init>=
+    <expr><call><name>svn_ra_neon__request_create</name><argument_list>(<argument><expr><name>ras</name></expr></argument>, <argument><expr><name>method</name></expr></argument>, <argument><expr><name>url</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name></decl>;</decl_stmt>
+
+  <comment type="block">/* we don't need the status parser: it's attached to the request
+     and detected errors will be returned there... */</comment>
+  <expr_stmt><expr>(<name>void</name>) <call><name>multistatus_parser_create</name><argument_list>(<argument><expr><name>req</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* svn_ra_neon__request_dispatch() adds the custom error response
+     reader.  Neon will take care of the Content-Length calculation */</comment>
+  <expr_stmt><expr><name>err</name> = <call><name>svn_ra_neon__request_dispatch</name><argument_list>(<argument><expr><name>code</name></expr></argument>, <argument><expr><name>req</name></expr></argument>, <argument><expr><name>extra_headers</name></expr></argument>,
+                                      <argument><expr><name>body</name> ? <name>body</name> : ""</expr></argument>,
+                                      <argument><expr><name>okay_1</name></expr></argument>, <argument><expr><name>okay_2</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>svn_ra_neon__request_destroy</name><argument_list>(<argument><expr><name>req</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>err</name></expr>;</return>
+}</block></function>
+
+<function><type><name>void</name></type>
+<name>svn_ra_neon__add_depth_header</name><parameter_list>(<param><decl><type><name>apr_hash_t</name> *</type><name>extra_headers</name></decl></param>, <param><decl><type><name>int</name></type> <name>depth</name></decl></param>)</parameter_list>
+<block>{
+  <comment type="block">/*  assert(extra_headers != NULL);
+  assert(depth == SVN_RA_NEON__DEPTH_ZERO
+         || depth == SVN_RA_NEON__DEPTH_ONE
+         || depth == SVN_RA_NEON__DEPTH_INFINITE); */</comment>
+  <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name>extra_headers</name></expr></argument>, <argument><expr>"Depth"</expr></argument>, <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>,
+               <argument><expr>(<name>depth</name> == <name>SVN_RA_NEON__DEPTH_INFINITE</name>)
+               ? "infinity" : (<name>depth</name> == <name>SVN_RA_NEON__DEPTH_ZERO</name>) ? "0" : "1"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return;</return>
+}</block></function>
+
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_ra_neon__copy</name><parameter_list>(<param><decl><type><name>svn_ra_neon__session_t</name> *</type><name>ras</name></decl></param>,
+                  <param><decl><type><name>svn_boolean_t</name></type> <name>overwrite</name></decl></param>,
+                  <param><decl><type><name>int</name></type> <name>depth</name></decl></param>,
+                  <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>src</name></decl></param>,
+                  <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>dst</name></decl></param>,
+                  <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>abs_dst</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_hash_t</name> *</type><name>extra_headers</name> <init>= <expr><call><name>apr_hash_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name>abs_dst</name> = <call><name>apr_psprintf</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>"%s://%s%s"</expr></argument>, <argument><expr><call><name>ne_get_scheme</name><argument_list>(<argument><expr><name><name>ras</name>-&gt;<name>ne_sess</name></name></expr></argument>)</argument_list></call></expr></argument>,
+                         <argument><expr><call><name>ne_get_server_hostport</name><argument_list>(<argument><expr><name><name>ras</name>-&gt;<name>ne_sess</name></name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>dst</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name>extra_headers</name></expr></argument>, <argument><expr>"Destination"</expr></argument>, <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>, <argument><expr><name>abs_dst</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name>extra_headers</name></expr></argument>, <argument><expr>"Overwrite"</expr></argument>, <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>,
+               <argument><expr><name>overwrite</name> ? "T" : "F"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>svn_ra_neon__add_depth_header</name><argument_list>(<argument><expr><name>extra_headers</name></expr></argument>, <argument><expr><name>depth</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><call><name>svn_ra_neon__simple_request</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>ras</name></expr></argument>, <argument><expr>"COPY"</expr></argument>, <argument><expr><name>src</name></expr></argument>, <argument><expr><name>extra_headers</name></expr></argument>,
+                                     <argument><expr><name>NULL</name></expr></argument>, <argument><expr>201</expr></argument>, <argument><expr>204</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+<escape char="0xc"/>
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_ra_neon__maybe_store_auth_info</name><parameter_list>(<param><decl><type><name>svn_ra_neon__session_t</name> *</type><name>ras</name></decl></param>,
+                                   <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <comment type="block">/* No auth_baton?  Never mind. */</comment>
+  <if>if <condition>(<expr>! <name><name>ras</name>-&gt;<name>callbacks</name>-&gt;<name>auth_baton</name></name></expr>)</condition><then>
+    <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return></then></if>
+
+  <comment type="block">/* If we ever got credentials, ask the iter_baton to save them.  */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_auth_save_credentials</name><argument_list>(<argument><expr><name><name>ras</name>-&gt;<name>auth_iterstate</name></name></expr></argument>,
+                                    <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_ra_neon__maybe_store_auth_info_after_result</name><parameter_list>(<param><decl><type><name>svn_error_t</name> *</type><name>err</name></decl></param>,
+                                                <param><decl><type><name>svn_ra_neon__session_t</name> *</type><name>ras</name></decl></param>,
+                                                <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <if>if <condition>(<expr>! <name>err</name> || (<name><name>err</name>-&gt;<name>apr_err</name></name> != <name>SVN_ERR_RA_NOT_AUTHORIZED</name>)</expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err2</name> <init>= <expr><call><name>svn_ra_neon__maybe_store_auth_info</name><argument_list>(<argument><expr><name>ras</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+      <if>if <condition>(<expr><name>err2</name> &amp;&amp; ! <name>err</name></expr>)</condition><then>
+        <return>return <expr><name>err2</name></expr>;</return></then>
+      <else>else <if>if <condition>(<expr><name>err</name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err2</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <return>return <expr><name>err</name></expr>;</return>
+        }</block></then></if></else></if>
+    }</block></then></if>
+
+  <return>return <expr><name>err</name></expr>;</return>
+}</block></function>
+
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_ra_neon__request_dispatch</name><parameter_list>(<param><decl><type><name>int</name> *</type><name>code_p</name></decl></param>,
+                              <param><decl><type><name>svn_ra_neon__request_t</name> *</type><name>req</name></decl></param>,
+                              <param><decl><type><name>apr_hash_t</name> *</type><name>extra_headers</name></decl></param>,
+                              <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>body</name></decl></param>,
+                              <param><decl><type><name>int</name></type> <name>okay_1</name></decl></param>,
+                              <param><decl><type><name>int</name></type> <name>okay_2</name></decl></param>,
+                              <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>ne_xml_parser</name> *</type><name>error_parser</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>ne_status</name> *</type><name>statstruct</name></decl>;</decl_stmt>
+
+  <comment type="block">/* add any extra headers passed in by caller. */</comment>
+  <if>if <condition>(<expr><name>extra_headers</name> != <name>NULL</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>apr_hash_index_t</name> *</type><name>hi</name></decl>;</decl_stmt>
+      <for>for (<init><expr><name>hi</name> = <call><name>apr_hash_first</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>extra_headers</name></expr></argument>)</argument_list></call></expr>;</init>
+           <condition><expr><name>hi</name></expr>;</condition> <incr><expr><name>hi</name> = <call><name>apr_hash_next</name><argument_list>(<argument><expr><name>hi</name></expr></argument>)</argument_list></call></expr></incr>)
+        <block>{
+          <decl_stmt><decl><type><specifier>const</specifier> <name>void</name> *</type><name>key</name></decl>;</decl_stmt>
+          <decl_stmt><decl><type><name>void</name> *</type><name>val</name></decl>;</decl_stmt>
+          <expr_stmt><expr><call><name>apr_hash_this</name><argument_list>(<argument><expr><name>hi</name></expr></argument>, <argument><expr>&amp;<name>key</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr>&amp;<name>val</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><call><name>ne_add_request_header</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>ne_req</name></name></expr></argument>,
+                                <argument><expr>(const <name>char</name> *) <name>key</name></expr></argument>, <argument><expr>(const <name>char</name> *) <name>val</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></for>
+    }</block></then></if>
+
+  <if>if <condition>(<expr><name>body</name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>ne_set_request_body_buffer</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>ne_req</name></name></expr></argument>, <argument><expr><name>body</name></expr></argument>, <argument><expr><call><name>strlen</name><argument_list>(<argument><expr><name>body</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <comment type="block">/* attach a standard &lt;D:error&gt; body parser to the request */</comment>
+  <expr_stmt><expr><name>error_parser</name> = <call><name>error_parser_create</name><argument_list>(<argument><expr><name>req</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name><name>req</name>-&gt;<name>ne_sess</name></name> == <name><name>req</name>-&gt;<name>sess</name>-&gt;<name>ne_sess</name></name></expr>)</condition><then> <comment type="block">/* We're consuming 'session 1' */</comment>
+    <expr_stmt><expr><name><name>req</name>-&gt;<name>sess</name>-&gt;<name>main_session_busy</name></name> = <name>TRUE</name></expr>;</expr_stmt></then></if>
+  <comment type="block">/* run the request, see what comes back. */</comment>
+  <expr_stmt><expr><name><name>req</name>-&gt;<name>rv</name></name> = <call><name>ne_request_dispatch</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>ne_req</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name><name>req</name>-&gt;<name>ne_sess</name></name> == <name><name>req</name>-&gt;<name>sess</name>-&gt;<name>ne_sess</name></name></expr>)</condition><then> <comment type="block">/* We're done consuming 'session 1' */</comment>
+    <expr_stmt><expr><name><name>req</name>-&gt;<name>sess</name>-&gt;<name>main_session_busy</name></name> = <name>FALSE</name></expr>;</expr_stmt></then></if>
+
+  <comment type="block">/* Save values from the request */</comment>
+  <expr_stmt><expr><name>statstruct</name> = <call><name>ne_get_status</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>ne_req</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>req</name>-&gt;<name>code_desc</name></name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name><name>statstruct</name>-&gt;<name>reason_phrase</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>req</name>-&gt;<name>code</name></name> = <name><name>statstruct</name>-&gt;<name>code</name></name></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name>code_p</name></expr>)</condition><then>
+     <expr_stmt><expr>*<name>code_p</name> = <name><name>req</name>-&gt;<name>code</name></name></expr>;</expr_stmt></then></if>
+
+  <if>if <condition>(<expr>!<name><name>req</name>-&gt;<name>marshalled_error</name></name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>err</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <comment type="block">/* If the status code was one of the two that we expected, then go
+     ahead and return now. IGNORE any marshalled error. */</comment>
+  <if>if <condition>(<expr><name><name>req</name>-&gt;<name>rv</name></name> == <name>NE_OK</name> &amp;&amp; (<name><name>req</name>-&gt;<name>code</name></name> == <name>okay_1</name> || <name><name>req</name>-&gt;<name>code</name></name> == <name>okay_2</name>)</expr>)</condition><then>
+    <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return></then></if>
+
+  <comment type="block">/* Any other errors? Report them */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><name><name>req</name>-&gt;<name>err</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* We either have a neon error, or some other error
+     that we didn't expect. */</comment>
+  <return>return <expr><call><name>generate_error</name><argument_list>(<argument><expr><name>req</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>const</specifier> <name>char</name> *</type>
+<name>svn_ra_neon__request_get_location</name><parameter_list>(<param><decl><type><name>svn_ra_neon__request_t</name> *</type><name>request</name></decl></param>,
+                                  <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>val</name> <init>= <expr><call><name>ne_get_response_header</name><argument_list>(<argument><expr><name><name>request</name>-&gt;<name>ne_req</name></name></expr></argument>, <argument><expr>"Location"</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <return>return <expr><name>val</name> ? <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>val</name></expr></argument>)</argument_list></call> : <name>NULL</name></expr>;</return>
+}</block></function>
+</unit>

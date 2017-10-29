@@ -1,0 +1,913 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/subversion-1.5.1/source/subversion/libsvn_repos/hooks.c"><comment type="block">/* hooks.c : running repository hooks
+ *
+ * ====================================================================
+ * Copyright (c) 2000-2006 CollabNet.  All rights reserved.
+ *
+ * This software is licensed as described in the file COPYING, which
+ * you should have received as part of this distribution.  The terms
+ * are also available at http://subversion.tigris.org/license-1.html.
+ * If newer versions of this license are posted there, you may use a
+ * newer version instead, at your option.
+ *
+ * This software consists of voluntary contributions made by many
+ * individuals.  For exact contribution history, see the revision
+ * history and logs, available at http://subversion.tigris.org/.
+ * ====================================================================
+ */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;stdio.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;string.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;ctype.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_pools.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_file_io.h&gt;</cpp:file></cpp:include>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>AS400</name></cpp:ifdef>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_portable.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;spawn.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;fcntl.h&gt;</cpp:file></cpp:include>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_error.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_path.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_repos.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_utf.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"repos.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_private_config.h"</cpp:file></cpp:include>
+
+
+<escape char="0xc"/>
+<comment type="block">/*** Hook drivers. ***/</comment>
+
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>AS400</name></cpp:ifndef>
+<comment type="block">/* Helper function for run_hook_cmd().  Wait for a hook to finish
+   executing and return either SVN_NO_ERROR if the hook script completed
+   without error, or an error describing the reason for failure.
+
+   NAME and CMD are the name and path of the hook program, CMD_PROC
+   is a pointer to the structure representing the running process,
+   and READ_ERRHANDLE is an open handle to the hook's stderr.
+
+   Hooks are considered to have failed if we are unable to wait for the
+   process, if we are unable to read from the hook's stderr, if the
+   process has failed to exit cleanly (due to a coredump, for example),
+   or if the process returned a non-zero return code.
+
+   Any error output returned by the hook's stderr will be included in an
+   error message, though the presence of output on stderr is not itself
+   a reason to fail a hook. */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>check_hook_result</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>name</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>cmd</name></decl></param>, <param><decl><type><name>apr_proc_t</name> *</type><name>cmd_proc</name></decl></param>,
+                  <param><decl><type><name>apr_file_t</name> *</type><name>read_errhandle</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name></decl>, *<decl><type ref="prev"/><name>err2</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_stringbuf_t</name> *</type><name>native_stderr</name></decl>, *<decl><type ref="prev"/><name>failure_message</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>utf8_stderr</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>exitcode</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_exit_why_e</name></type> <name>exitwhy</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name>err2</name> = <call><name>svn_stringbuf_from_aprfile</name><argument_list>(<argument><expr>&amp;<name>native_stderr</name></expr></argument>, <argument><expr><name>read_errhandle</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name>err</name> = <call><name>svn_io_wait_for_cmd</name><argument_list>(<argument><expr><name>cmd_proc</name></expr></argument>, <argument><expr><name>cmd</name></expr></argument>, <argument><expr>&amp;<name>exitcode</name></expr></argument>, <argument><expr>&amp;<name>exitwhy</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>err</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err2</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <return>return <expr><name>err</name></expr>;</return>
+    }</block></then></if>
+
+  <if>if <condition>(<expr><call><name>APR_PROC_CHECK_EXIT</name><argument_list>(<argument><expr><name>exitwhy</name></expr></argument>)</argument_list></call> &amp;&amp; <name>exitcode</name> == 0</expr>)</condition><then>
+    <block>{
+      <comment type="block">/* The hook exited cleanly.  However, if we got an error reading
+         the hook's stderr, fail the hook anyway, because this might be
+         symptomatic of a more important problem. */</comment>
+      <if>if <condition>(<expr><name>err2</name></expr>)</condition><then>
+        <block>{
+          <return>return <expr><call><name>svn_error_createf</name>
+            <argument_list>(<argument><expr><name>SVN_ERR_REPOS_HOOK_FAILURE</name></expr></argument>, <argument><expr><name>err2</name></expr></argument>,
+             <argument><expr><call><name>_</name><argument_list>(<argument><expr>"'%s' hook succeeded, but error output could not be read"</expr></argument>)</argument_list></call></expr></argument>,
+             <argument><expr><name>name</name></expr></argument>)</argument_list></call></expr>;</return>
+        }</block></then></if>
+
+      <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+    }</block></then></if>
+
+  <comment type="block">/* The hook script failed. */</comment>
+
+  <comment type="block">/* If we got the stderr output okay, try to translate it into UTF-8.
+     Ensure there is something sensible in the UTF-8 string regardless. */</comment>
+  <if>if <condition>(<expr>!<name>err2</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><name>err2</name> = <call><name>svn_utf_cstring_to_utf8</name><argument_list>(<argument><expr>&amp;<name>utf8_stderr</name></expr></argument>, <argument><expr><name><name>native_stderr</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>err2</name></expr>)</condition><then>
+        <expr_stmt><expr><name>utf8_stderr</name> = <call><name>_</name><argument_list>(<argument><expr>"[Error output could not be translated from the "
+                        "native locale to UTF-8.]"</expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+    }</block></then>
+  <else>else
+    <block>{
+      <expr_stmt><expr><name>utf8_stderr</name> = <call><name>_</name><argument_list>(<argument><expr>"[Error output could not be read.]"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if>
+  <comment type="block">/*### It would be nice to include the text of any translation or read
+        error in the messages above before we clear it here. */</comment>
+  <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err2</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr>!<call><name>APR_PROC_CHECK_EXIT</name><argument_list>(<argument><expr><name>exitwhy</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><name>failure_message</name> = <call><name>svn_stringbuf_createf</name><argument_list>(<argument><expr><name>pool</name></expr></argument>,
+        <argument><expr><call><name>_</name><argument_list>(<argument><expr>"'%s' hook failed (did not exit cleanly: "
+          "apr_exit_why_e was %d, exitcode was %d).  "</expr></argument>)</argument_list></call></expr></argument>,
+        <argument><expr><name>name</name></expr></argument>, <argument><expr><name>exitwhy</name></expr></argument>, <argument><expr><name>exitcode</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else
+    <block>{
+      <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>action</name></decl>;</decl_stmt>
+      <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>name</name></expr></argument>, <argument><expr>"start-commit"</expr></argument>)</argument_list></call> == 0
+          || <call><name>strcmp</name><argument_list>(<argument><expr><name>name</name></expr></argument>, <argument><expr>"pre-commit"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <expr_stmt><expr><name>action</name> = <call><name>_</name><argument_list>(<argument><expr>"Commit"</expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+      <else>else <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>name</name></expr></argument>, <argument><expr>"pre-revprop-change"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <expr_stmt><expr><name>action</name> = <call><name>_</name><argument_list>(<argument><expr>"Revprop change"</expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+      <else>else <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>name</name></expr></argument>, <argument><expr>"pre-lock"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <expr_stmt><expr><name>action</name> = <call><name>_</name><argument_list>(<argument><expr>"Lock"</expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+      <else>else <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>name</name></expr></argument>, <argument><expr>"pre-unlock"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <expr_stmt><expr><name>action</name> = <call><name>_</name><argument_list>(<argument><expr>"Unlock"</expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+      <else>else
+        <expr_stmt><expr><name>action</name> = <name>NULL</name></expr>;</expr_stmt></else></if></else></if></else></if></else></if>
+      <if>if <condition>(<expr><name>action</name> == <name>NULL</name></expr>)</condition><then>
+        <expr_stmt><expr><name>failure_message</name> = <call><name>svn_stringbuf_createf</name><argument_list>(
+            <argument><expr><name>pool</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"%s hook failed (exit code %d)"</expr></argument>)</argument_list></call></expr></argument>,
+            <argument><expr><name>name</name></expr></argument>, <argument><expr><name>exitcode</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+      <else>else
+        <expr_stmt><expr><name>failure_message</name> = <call><name>svn_stringbuf_createf</name><argument_list>(
+            <argument><expr><name>pool</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"%s blocked by %s hook (exit code %d)"</expr></argument>)</argument_list></call></expr></argument>,
+            <argument><expr><name>action</name></expr></argument>, <argument><expr><name>name</name></expr></argument>, <argument><expr><name>exitcode</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+    }</block></else></if>
+
+  <if>if <condition>(<expr><name><name>utf8_stderr</name><index>[<expr>0</expr>]</index></name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>svn_stringbuf_appendcstr</name><argument_list>(<argument><expr><name>failure_message</name></expr></argument>,
+                               <argument><expr><call><name>_</name><argument_list>(<argument><expr>" with output:\n"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>svn_stringbuf_appendcstr</name><argument_list>(<argument><expr><name>failure_message</name></expr></argument>, <argument><expr><name>utf8_stderr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else
+    <block>{
+      <expr_stmt><expr><call><name>svn_stringbuf_appendcstr</name><argument_list>(<argument><expr><name>failure_message</name></expr></argument>,
+                               <argument><expr><call><name>_</name><argument_list>(<argument><expr>" with no output."</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if>
+
+  <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_REPOS_HOOK_FAILURE</name></expr></argument>, <argument><expr><name>err</name></expr></argument>,
+                          <argument><expr><name><name>failure_message</name>-&gt;<name>data</name></name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* AS400 */</comment>
+
+<comment type="block">/* NAME, CMD and ARGS are the name, path to and arguments for the hook
+   program that is to be run.  The hook's exit status will be checked,
+   and if an error occurred the hook's stderr output will be added to
+   the returned error.
+
+   If STDIN_HANDLE is non-null, pass it as the hook's stdin, else pass
+   no stdin to the hook. */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>run_hook_cmd</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>name</name></decl></param>,
+             <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>cmd</name></decl></param>,
+             <param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>args</name></decl></param>,
+             <param><decl><type><name>apr_file_t</name> *</type><name>stdin_handle</name></decl></param>,
+             <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>AS400</name></cpp:ifndef>
+<block>{
+  <decl_stmt><decl><type><name>apr_file_t</name> *</type><name>read_errhandle</name></decl>, *<decl><type ref="prev"/><name>write_errhandle</name></decl>, *<decl><type ref="prev"/><name>null_handle</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_status_t</name></type> <name>apr_err</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_proc_t</name></type> <name>cmd_proc</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Create a pipe to access stderr of the child. */</comment>
+  <expr_stmt><expr><name>apr_err</name> = <call><name>apr_file_pipe_create</name><argument_list>(<argument><expr>&amp;<name>read_errhandle</name></expr></argument>, <argument><expr>&amp;<name>write_errhandle</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>apr_err</name></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_wrap_apr</name>
+      <argument_list>(<argument><expr><name>apr_err</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Can't create pipe for hook '%s'"</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>cmd</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <comment type="block">/* Pipes are inherited by default, but we don't want that, since
+     APR will duplicate the write end of the pipe for the child process.
+     Not closing the read end is harmless, but if the write end is inherited,
+     it will be inherited by grandchildren as well.  This causes problems
+     if a hook script puts long-running jobs in the background.  Even if
+     they redirect stderr to something else, the write end of our pipe will
+     still be open, causing us to block. */</comment>
+  <expr_stmt><expr><name>apr_err</name> = <call><name>apr_file_inherit_unset</name><argument_list>(<argument><expr><name>read_errhandle</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>apr_err</name></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_wrap_apr</name>
+      <argument_list>(<argument><expr><name>apr_err</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Can't make pipe read handle non-inherited for hook '%s'"</expr></argument>)</argument_list></call></expr></argument>,
+       <argument><expr><name>cmd</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <expr_stmt><expr><name>apr_err</name> = <call><name>apr_file_inherit_unset</name><argument_list>(<argument><expr><name>write_errhandle</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>apr_err</name></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_wrap_apr</name>
+      <argument_list>(<argument><expr><name>apr_err</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Can't make pipe write handle non-inherited for hook '%s'"</expr></argument>)</argument_list></call></expr></argument>,
+       <argument><expr><name>cmd</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+
+  <comment type="block">/* Redirect stdout to the null device */</comment>
+  <expr_stmt><expr><name>apr_err</name> = <call><name>apr_file_open</name><argument_list>(<argument><expr>&amp;<name>null_handle</name></expr></argument>, <argument><expr><name>SVN_NULL_DEVICE_NAME</name></expr></argument>, <argument><expr><name>APR_WRITE</name></expr></argument>,
+                          <argument><expr><name>APR_OS_DEFAULT</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>apr_err</name></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_wrap_apr</name>
+      <argument_list>(<argument><expr><name>apr_err</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Can't create null stdout for hook '%s'"</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>cmd</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <expr_stmt><expr><name>err</name> = <call><name>svn_io_start_cmd</name><argument_list>(<argument><expr>&amp;<name>cmd_proc</name></expr></argument>, <argument><expr>"."</expr></argument>, <argument><expr><name>cmd</name></expr></argument>, <argument><expr><name>args</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>,
+                         <argument><expr><name>stdin_handle</name></expr></argument>, <argument><expr><name>null_handle</name></expr></argument>, <argument><expr><name>write_errhandle</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* This seems to be done automatically if we pass the third parameter of
+     apr_procattr_child_in/out_set(), but svn_io_run_cmd()'s interface does
+     not support those parameters. We need to close the write end of the
+     pipe so we don't hang on the read end later, if we need to read it. */</comment>
+  <expr_stmt><expr><name>apr_err</name> = <call><name>apr_file_close</name><argument_list>(<argument><expr><name>write_errhandle</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr>!<name>err</name> &amp;&amp; <name>apr_err</name></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_wrap_apr</name>
+      <argument_list>(<argument><expr><name>apr_err</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Error closing write end of stderr pipe"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <if>if <condition>(<expr><name>err</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><name>err</name> = <call><name>svn_error_createf</name>
+        <argument_list>(<argument><expr><name>SVN_ERR_REPOS_HOOK_FAILURE</name></expr></argument>, <argument><expr><name>err</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Failed to start '%s' hook"</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>cmd</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else
+    <block>{
+      <expr_stmt><expr><name>err</name> = <call><name>check_hook_result</name><argument_list>(<argument><expr><name>name</name></expr></argument>, <argument><expr><name>cmd</name></expr></argument>, <argument><expr>&amp;<name>cmd_proc</name></expr></argument>, <argument><expr><name>read_errhandle</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if>
+
+  <comment type="block">/* Hooks are fallible, and so hook failure is "expected" to occur at
+     times.  When such a failure happens we still want to close the pipe
+     and null file */</comment>
+  <expr_stmt><expr><name>apr_err</name> = <call><name>apr_file_close</name><argument_list>(<argument><expr><name>read_errhandle</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr>!<name>err</name> &amp;&amp; <name>apr_err</name></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_wrap_apr</name>
+      <argument_list>(<argument><expr><name>apr_err</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Error closing read end of stderr pipe"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <expr_stmt><expr><name>apr_err</name> = <call><name>apr_file_close</name><argument_list>(<argument><expr><name>null_handle</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr>!<name>err</name> &amp;&amp; <name>apr_err</name></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_wrap_apr</name><argument_list>(<argument><expr><name>apr_err</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Error closing null file"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <return>return <expr><name>err</name></expr>;</return>
+}</block></function>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else> <comment type="block">/* Run hooks with spawn() on OS400. */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>AS400_BUFFER_SIZE</name></cpp:macro> <cpp:value>256</cpp:value></cpp:define>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> **</type><name>native_args</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name><name>fd_map</name><index>[<expr>3</expr>]</index></name></decl>, <decl><type ref="prev"/><name><name>stderr_pipe</name><index>[<expr>2</expr>]</index></name></decl>, <decl><type ref="prev"/><name>exitcode</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_stringbuf_t</name> *</type><name>script_output</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>pid_t</name></type> <name>child_pid</name></decl>, <decl><type ref="prev"/><name>wait_rv</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>args_arr_size</name> <init>= <expr>0</expr></init>, <name>i</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type>struct <name>inheritance</name></type> <name>xmp_inherit</name> <init>= <expr><block>{<expr>0</expr>}</block></expr></init></decl>;</decl_stmt>
+<cpp:pragma>#<cpp:directive>pragma</cpp:directive> convert(0)</cpp:pragma>
+  <comment type="block">/* Despite the UTF support in V5R4 a few functions still require
+   * EBCDIC args. */</comment>
+  <decl_stmt><decl><type><name>char</name> *</type><name><name>xmp_envp</name><index>[<expr>2</expr>]</index></name> <init>= <expr><block>{<expr>"QIBM_USE_DESCRIPTOR_STDIO=Y"</expr>, <expr><name>NULL</name></expr>}</block></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>dev_null_ebcdic</name> <init>= <expr><name>SVN_NULL_DEVICE_NAME</name></expr></init></decl>;</decl_stmt>
+<cpp:pragma>#<cpp:directive>pragma</cpp:directive> convert(1208)</cpp:pragma>
+
+  <comment type="block">/* Find number of elements in args array. */</comment>
+  <while>while <condition>(<expr><name><name>args</name><index>[<expr><name>args_arr_size</name></expr>]</index></name> != <name>NULL</name></expr>)</condition>
+    <expr_stmt><expr><name>args_arr_size</name>++</expr>;</expr_stmt></while>
+
+  <comment type="block">/* Allocate memory for the native_args string array plus one for
+   * the ending null element. */</comment>
+  <expr_stmt><expr><name>native_args</name> = <call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>char</name> *</expr></argument>)</argument_list></sizeof> * <name>args_arr_size</name> + 1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Convert UTF-8 args to EBCDIC for use by spawn(). */</comment>
+  <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name><name>args</name><index>[<expr><name>i</name></expr>]</index></name> != <name>NULL</name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>)
+    <block>{
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_utf_cstring_from_utf8_ex2</name><argument_list>(<argument><expr>(const <name>char</name>**)(&amp;(<name><name>native_args</name><index>[<expr><name>i</name></expr>]</index></name>))</expr></argument>,
+                                            <argument><expr><name><name>args</name><index>[<expr><name>i</name></expr>]</index></name></expr></argument>, <argument><expr>(const <name>char</name> *)0</expr></argument>,
+                                            <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></for>
+
+  <comment type="block">/* Make the last element in the array a NULL pointer as required
+   * by spawn. */</comment>
+  <expr_stmt><expr><name><name>native_args</name><index>[<expr><name>args_arr_size</name></expr>]</index></name> = <name>NULL</name></expr>;</expr_stmt>
+
+  <comment type="block">/* Map stdin. */</comment>
+  <if>if <condition>(<expr><name>stdin_handle</name></expr>)</condition><then>
+    <block>{
+      <comment type="block">/* Get OS400 file descriptor of APR stdin file and map it. */</comment>
+      <if>if <condition>(<expr><call><name>apr_os_file_get</name><argument_list>(<argument><expr>&amp;<name><name>fd_map</name><index>[<expr>0</expr>]</index></name></expr></argument>, <argument><expr><name>stdin_handle</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+        <block>{
+          <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_REPOS_HOOK_FAILURE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                   <argument><expr>"Error converting APR file to OS400 "
+                                   "type for hook script '%s'"</expr></argument>, <argument><expr><name>cmd</name></expr></argument>)</argument_list></call></expr>;</return>
+        }</block></then></if>
+    }</block></then>
+  <else>else
+    <block>{
+      <expr_stmt><expr><name><name>fd_map</name><index>[<expr>0</expr>]</index></name> = <call><name>open</name><argument_list>(<argument><expr><name>dev_null_ebcdic</name></expr></argument>, <argument><expr><name>O_RDONLY</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name><name>fd_map</name><index>[<expr>0</expr>]</index></name> == -1</expr>)</condition><then>
+
+        <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_REPOS_HOOK_FAILURE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                 <argument><expr>"Error opening /dev/null for hook "
+                                 "script '%s'"</expr></argument>, <argument><expr><name>cmd</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+    }</block></else></if>
+
+
+  <comment type="block">/* Map stdout. */</comment>
+  <expr_stmt><expr><name><name>fd_map</name><index>[<expr>1</expr>]</index></name> = <call><name>open</name><argument_list>(<argument><expr><name>dev_null_ebcdic</name></expr></argument>, <argument><expr><name>O_WRONLY</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name><name>fd_map</name><index>[<expr>1</expr>]</index></name> == -1</expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_REPOS_HOOK_FAILURE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                             <argument><expr>"Error opening /dev/null for hook script '%s'"</expr></argument>,
+                             <argument><expr><name>cmd</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <comment type="block">/* Map stderr. */</comment>
+  <comment type="block">/* Get pipe for hook's stderr. */</comment>
+  <if>if <condition>(<expr><call><name>pipe</name><argument_list>(<argument><expr><name>stderr_pipe</name></expr></argument>)</argument_list></call> != 0</expr>)</condition><then>
+    <block>{
+      <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_REPOS_HOOK_FAILURE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                               <argument><expr>"Can't create stderr pipe for "
+                               "hook '%s'"</expr></argument>, <argument><expr><name>cmd</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+  <expr_stmt><expr><name><name>fd_map</name><index>[<expr>2</expr>]</index></name> = <name><name>stderr_pipe</name><index>[<expr>1</expr>]</index></name></expr>;</expr_stmt>
+
+  <comment type="block">/* Spawn the hook command. */</comment>
+  <expr_stmt><expr><name>child_pid</name> = <call><name>spawn</name><argument_list>(<argument><expr><name><name>native_args</name><index>[<expr>0</expr>]</index></name></expr></argument>, <argument><expr>3</expr></argument>, <argument><expr><name>fd_map</name></expr></argument>, <argument><expr>&amp;<name>xmp_inherit</name></expr></argument>, <argument><expr><name>native_args</name></expr></argument>,
+                    <argument><expr><name>xmp_envp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>child_pid</name> == -1</expr>)</condition><then>
+    <block>{
+      <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_REPOS_HOOK_FAILURE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                               <argument><expr>"Error spawning process for hook script '%s'"</expr></argument>,
+                               <argument><expr><name>cmd</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+
+  <comment type="block">/* Close the stdout file descriptor. */</comment>
+  <if>if <condition>(<expr><call><name>close</name><argument_list>(<argument><expr><name><name>fd_map</name><index>[<expr>1</expr>]</index></name></expr></argument>)</argument_list></call> == -1</expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_REPOS_HOOK_FAILURE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                             <argument><expr>"Error closing write end of stdout pipe to "
+                             "hook script '%s'"</expr></argument>, <argument><expr><name>cmd</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <comment type="block">/* Close the write end of the stderr pipe so any subsequent reads
+   * don't hang. */</comment>
+  <if>if <condition>(<expr><call><name>close</name><argument_list>(<argument><expr><name><name>fd_map</name><index>[<expr>2</expr>]</index></name></expr></argument>)</argument_list></call> == -1</expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_REPOS_HOOK_FAILURE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                             <argument><expr>"Error closing write end of stderr pipe to "
+                             "hook script '%s'"</expr></argument>, <argument><expr><name>cmd</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <expr_stmt><expr><name>script_output</name> = <call><name>svn_stringbuf_create</name><argument_list>(<argument><expr>""</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <while>while <condition>(<expr>1</expr>)</condition>
+    <block>{
+      <decl_stmt><decl><type><name>int</name></type> <name>rc</name></decl>;</decl_stmt>
+
+      <expr_stmt><expr><call><name>svn_stringbuf_ensure</name><argument_list>(<argument><expr><name>script_output</name></expr></argument>,
+                           <argument><expr><name><name>script_output</name>-&gt;<name>len</name></name> + <name>AS400_BUFFER_SIZE</name> + 1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name>rc</name> = <call><name>read</name><argument_list>(<argument><expr><name><name>stderr_pipe</name><index>[<expr>0</expr>]</index></name></expr></argument>,
+                <argument><expr>&amp;(<name><name>script_output</name>-&gt;<name>data</name><index>[<expr><name><name>script_output</name>-&gt;<name>len</name></name></expr>]</index></name>)</expr></argument>,
+                <argument><expr><name>AS400_BUFFER_SIZE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <if>if <condition>(<expr><name>rc</name> == -1</expr>)</condition><then>
+        <block>{
+          <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_REPOS_HOOK_FAILURE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                   <argument><expr>"Error reading stderr of hook "
+                                   "script '%s'"</expr></argument>, <argument><expr><name>cmd</name></expr></argument>)</argument_list></call></expr>;</return>
+        }</block></then></if>
+
+      <expr_stmt><expr><name><name>script_output</name>-&gt;<name>len</name></name> += <name>rc</name></expr>;</expr_stmt>
+
+      <comment type="block">/* If read() returned 0 then EOF was found and we are done reading
+       * stderr. */</comment>
+      <if>if <condition>(<expr><name>rc</name> == 0</expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><name><name>script_output</name>-&gt;<name>data</name><index>[<expr><name><name>script_output</name>-&gt;<name>len</name></name></expr>]</index></name> = '\0'</expr>;</expr_stmt>
+          <break>break;</break>
+        }</block></then></if>
+    }</block></while>
+
+  <comment type="block">/* Close the read end of the stderr pipe. */</comment>
+  <if>if <condition>(<expr><call><name>close</name><argument_list>(<argument><expr><name><name>stderr_pipe</name><index>[<expr>0</expr>]</index></name></expr></argument>)</argument_list></call> == -1</expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_REPOS_HOOK_FAILURE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                             <argument><expr>"Error closing read end of stderr "
+                             "pipe to hook script '%s'"</expr></argument>, <argument><expr><name>cmd</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <comment type="block">/* Wait for the child process to complete. */</comment>
+  <expr_stmt><expr><name>wait_rv</name> = <call><name>waitpid</name><argument_list>(<argument><expr><name>child_pid</name></expr></argument>, <argument><expr>&amp;<name>exitcode</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>wait_rv</name> == -1</expr>)</condition><then>
+    <block>{
+      <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_REPOS_HOOK_FAILURE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                               <argument><expr>"Error waiting for process completion of "
+                               "hook script '%s'"</expr></argument>, <argument><expr><name>cmd</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+
+
+  <if>if <condition>(<expr><call><name>WIFEXITED</name><argument_list>(<argument><expr><name>exitcode</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <block>{
+      <if>if <condition>(<expr><call><name>WEXITSTATUS</name><argument_list>(<argument><expr><name>exitcode</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+        <block>{
+          <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name></decl>;</decl_stmt>
+          <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>utf8_stderr</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+          <decl_stmt><decl><type><name>svn_stringbuf_t</name> *</type><name>failure_message</name> <init>= <expr><call><name>svn_stringbuf_createf</name><argument_list>(
+            <argument><expr><name>pool</name></expr></argument>, <argument><expr>"'%s' hook failed (exited with a non-zero exitcode "
+            "of %d).  "</expr></argument>, <argument><expr><name>name</name></expr></argument>, <argument><expr><name>exitcode</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+          <if>if <condition>(<expr>!<call><name>svn_stringbuf_isempty</name><argument_list>(<argument><expr><name>script_output</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+            <block>{
+              <comment type="block">/* OS400 scripts produce EBCDIC stderr, so convert it. */</comment>
+              <expr_stmt><expr><name>err</name> = <call><name>svn_utf_cstring_to_utf8_ex2</name><argument_list>(<argument><expr>&amp;<name>utf8_stderr</name></expr></argument>,
+                                                <argument><expr><name><name>script_output</name>-&gt;<name>data</name></name></expr></argument>,
+                                                <argument><expr>(const <name>char</name>*)0</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+              <if>if <condition>(<expr><name>err</name></expr>)</condition><then>
+                <block>{
+                  <expr_stmt><expr><name>utf8_stderr</name> = "[Error output could not be translated from "
+                                "the native locale to UTF-8.]"</expr>;</expr_stmt>
+                  <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+                }</block></then></if>
+            }</block></then></if>
+
+          <if>if <condition>(<expr><name>utf8_stderr</name></expr>)</condition><then>
+            <block>{
+              <expr_stmt><expr><call><name>svn_stringbuf_appendcstr</name><argument_list>(<argument><expr><name>failure_message</name></expr></argument>,
+                                       <argument><expr>"The following error output was "
+                                       "produced by the hook:\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+              <expr_stmt><expr><call><name>svn_stringbuf_appendcstr</name><argument_list>(<argument><expr><name>failure_message</name></expr></argument>, <argument><expr><name>utf8_stderr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></then>
+          <else>else
+            <block>{
+              <expr_stmt><expr><call><name>svn_stringbuf_appendcstr</name><argument_list>(<argument><expr><name>failure_message</name></expr></argument>,
+                                       <argument><expr>"No error output was produced by "
+                                       "the hook."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></else></if>
+          <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_REPOS_HOOK_FAILURE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                  <argument><expr><name><name>failure_message</name>-&gt;<name>data</name></name></expr></argument>)</argument_list></call></expr>;</return>
+        }</block></then>
+      <else>else
+        <comment type="block">/* Success! */</comment>
+        <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return></else></if>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><call><name>WIFSIGNALED</name><argument_list>(<argument><expr><name>exitcode</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <block>{
+      <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_REPOS_HOOK_FAILURE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                               <argument><expr>"Process '%s' failed because of an "
+                               "uncaught terminating signal"</expr></argument>, <argument><expr><name>cmd</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><call><name>WIFEXCEPTION</name><argument_list>(<argument><expr><name>exitcode</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <block>{
+      <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_REPOS_HOOK_FAILURE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                               <argument><expr>"Process '%s' failed unexpectedly with "
+                               "OS400 exception %d"</expr></argument>, <argument><expr><name>cmd</name></expr></argument>,
+                               <argument><expr><call><name>WEXCEPTNUMBER</name><argument_list>(<argument><expr><name>exitcode</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><call><name>WIFSTOPPED</name><argument_list>(<argument><expr><name>exitcode</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <block>{
+      <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_REPOS_HOOK_FAILURE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                               <argument><expr>"Process '%s' stopped unexpectedly by "
+                               "signal %d"</expr></argument>, <argument><expr><name>cmd</name></expr></argument>, <argument><expr><call><name>WSTOPSIG</name><argument_list>(<argument><expr><name>exitcode</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then>
+  <else>else
+    <block>{
+      <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_REPOS_HOOK_FAILURE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                               <argument><expr>"Process '%s' failed unexpectedly"</expr></argument>, <argument><expr><name>cmd</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></else></if></else></if></else></if></else></if>
+}</block>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* AS400 */</comment>
+
+
+<comment type="block">/* Create a temporary file F that will automatically be deleted when it is
+   closed.  Fill it with VALUE, and leave it open and rewound, ready to be
+   read from. */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>create_temp_file</name><parameter_list>(<param><decl><type><name>apr_file_t</name> **</type><name>f</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>svn_string_t</name> *</type><name>value</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>dir</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_off_t</name></type> <name>offset</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_io_temp_dir</name><argument_list>(<argument><expr>&amp;<name>dir</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_io_open_unique_file2</name><argument_list>(<argument><expr><name>f</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                   <argument><expr><call><name>svn_path_join</name><argument_list>(<argument><expr><name>dir</name></expr></argument>, <argument><expr>"hook-input"</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>,
+                                   <argument><expr>""</expr></argument>, <argument><expr><name>svn_io_file_del_on_close</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_io_file_write_full</name><argument_list>(<argument><expr>*<name>f</name></expr></argument>, <argument><expr><name><name>value</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name><name>value</name>-&gt;<name>len</name></name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_io_file_seek</name><argument_list>(<argument><expr>*<name>f</name></expr></argument>, <argument><expr><name>APR_SET</name></expr></argument>, <argument><expr>&amp;<name>offset</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* Check if the HOOK program exists and is a file or a symbolic link, using
+   POOL for temporary allocations.
+
+   If the hook exists but is a broken symbolic link, set *BROKEN_LINK
+   to TRUE, else if the hook program exists set *BROKEN_LINK to FALSE.
+
+   Return the hook program if found, else return NULL and don't touch
+   *BROKEN_LINK.
+*/</comment>
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name>*</type>
+<name>check_hook_cmd</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>hook</name></decl></param>, <param><decl><type><name>svn_boolean_t</name> *</type><name>broken_link</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name>* <specifier>const</specifier></type> <name><name>check_extns</name><index>[]</index></name> <init>= <expr><block>{
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>WIN32</name></cpp:ifdef>
+  <comment type="block">/* For WIN32, we need to check with file name extension(s) added.
+
+     As Windows Scripting Host (.wsf) files can accomodate (at least)
+     JavaScript (.js) and VB Script (.vbs) code, extensions for the
+     corresponding file types need not be enumerated explicitly. */</comment>
+    <expr>".exe"</expr>, <expr>".cmd"</expr>, <expr>".bat"</expr>, <expr>".wsf"</expr>, <comment type="block">/* ### Any other extensions? */</comment>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+    <expr>""</expr>,
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+    <expr><name>NULL</name></expr>
+  }</block></expr></init></decl>;</decl_stmt>
+
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *<specifier>const</specifier> *</type><name>extn</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>is_special</name></decl>;</decl_stmt>
+  <for>for (<init><expr><name>extn</name> = <name>check_extns</name></expr>;</init> <condition><expr>*<name>extn</name></expr>;</condition> <incr><expr>++<name>extn</name></expr></incr>)
+    <block>{
+      <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *<specifier>const</specifier></type> <name>hook_path</name> <init>=
+        <expr>(**<name>extn</name> ? <call><name>apr_pstrcat</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>hook</name></expr></argument>, <argument><expr>*<name>extn</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call> : <name>hook</name>)</expr></init></decl>;</decl_stmt>
+
+      <decl_stmt><decl><type><name>svn_node_kind_t</name></type> <name>kind</name></decl>;</decl_stmt>
+      <if>if <condition>(<expr>!(<name>err</name> = <call><name>svn_io_check_resolved_path</name><argument_list>(<argument><expr><name>hook_path</name></expr></argument>, <argument><expr>&amp;<name>kind</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call>)
+          &amp;&amp; <name>kind</name> == <name>svn_node_file</name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr>*<name>broken_link</name> = <name>FALSE</name></expr>;</expr_stmt>
+          <return>return <expr><name>hook_path</name></expr>;</return>
+        }</block></then></if>
+      <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr>!(<name>err</name> = <call><name>svn_io_check_special_path</name><argument_list>(<argument><expr><name>hook_path</name></expr></argument>, <argument><expr>&amp;<name>kind</name></expr></argument>, <argument><expr>&amp;<name>is_special</name></expr></argument>,
+                                            <argument><expr><name>pool</name></expr></argument>)</argument_list></call>)
+          &amp;&amp; <name>is_special</name> == <name>TRUE</name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr>*<name>broken_link</name> = <name>TRUE</name></expr>;</expr_stmt>
+          <return>return <expr><name>hook_path</name></expr>;</return>
+        }</block></then></if>
+      <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></for>
+  <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* Return an error for the failure of HOOK due to a broken symlink. */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>hook_symlink_error</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>hook</name></decl></param>)</parameter_list>
+<block>{
+  <return>return <expr><call><name>svn_error_createf</name>
+    <argument_list>(<argument><expr><name>SVN_ERR_REPOS_HOOK_FAILURE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+     <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Failed to run '%s' hook; broken symlink"</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>hook</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_repos__hooks_start_commit</name><parameter_list>(<param><decl><type><name>svn_repos_t</name> *</type><name>repos</name></decl></param>,
+                              <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>user</name></decl></param>,
+                              <param><decl><type><name>apr_array_header_t</name> *</type><name>capabilities</name></decl></param>,
+                              <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>hook</name> <init>= <expr><call><name>svn_repos_start_commit_hook</name><argument_list>(<argument><expr><name>repos</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>broken_link</name></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr>(<name>hook</name> = <call><name>check_hook_cmd</name><argument_list>(<argument><expr><name>hook</name></expr></argument>, <argument><expr>&amp;<name>broken_link</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call>) &amp;&amp; <name>broken_link</name></expr>)</condition><then>
+    <block>{
+      <return>return <expr><call><name>hook_symlink_error</name><argument_list>(<argument><expr><name>hook</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>hook</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name><name>args</name><index>[<expr>5</expr>]</index></name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>char</name> *</type><name>capabilities_string</name></decl>;</decl_stmt>
+
+      <if>if <condition>(<expr><name>capabilities</name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><name>capabilities_string</name> = <call><name>svn_cstring_join</name><argument_list>(<argument><expr><name>capabilities</name></expr></argument>, <argument><expr>":"</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+          <comment type="block">/* Get rid of that annoying final colon. */</comment>
+          <if>if <condition>(<expr><name><name>capabilities_string</name><index>[<expr>0</expr>]</index></name></expr>)</condition><then>
+            <expr_stmt><expr><name><name>capabilities_string</name><index>[<expr><call><name>strlen</name><argument_list>(<argument><expr><name>capabilities_string</name></expr></argument>)</argument_list></call> - 1</expr>]</index></name> = '\0'</expr>;</expr_stmt></then></if>
+        }</block></then>
+      <else>else
+        <block>{
+          <expr_stmt><expr><name>capabilities_string</name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></else></if>
+
+      <expr_stmt><expr><name><name>args</name><index>[<expr>0</expr>]</index></name> = <name>hook</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>1</expr>]</index></name> = <call><name>svn_path_local_style</name><argument_list>(<argument><expr><call><name>svn_repos_path</name><argument_list>(<argument><expr><name>repos</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>2</expr>]</index></name> = <name>user</name> ? <name>user</name> : ""</expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>3</expr>]</index></name> = <name>capabilities_string</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>4</expr>]</index></name> = <name>NULL</name></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>run_hook_cmd</name><argument_list>(<argument><expr><name>SVN_REPOS__HOOK_START_COMMIT</name></expr></argument>, <argument><expr><name>hook</name></expr></argument>, <argument><expr><name>args</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                           <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if></else></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><name>svn_error_t</name>  *</type>
+<name>svn_repos__hooks_pre_commit</name><parameter_list>(<param><decl><type><name>svn_repos_t</name> *</type><name>repos</name></decl></param>,
+                            <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>txn_name</name></decl></param>,
+                            <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>hook</name> <init>= <expr><call><name>svn_repos_pre_commit_hook</name><argument_list>(<argument><expr><name>repos</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>broken_link</name></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr>(<name>hook</name> = <call><name>check_hook_cmd</name><argument_list>(<argument><expr><name>hook</name></expr></argument>, <argument><expr>&amp;<name>broken_link</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call>) &amp;&amp; <name>broken_link</name></expr>)</condition><then>
+    <block>{
+      <return>return <expr><call><name>hook_symlink_error</name><argument_list>(<argument><expr><name>hook</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>hook</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name><name>args</name><index>[<expr>4</expr>]</index></name></decl>;</decl_stmt>
+
+      <expr_stmt><expr><name><name>args</name><index>[<expr>0</expr>]</index></name> = <name>hook</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>1</expr>]</index></name> = <call><name>svn_path_local_style</name><argument_list>(<argument><expr><call><name>svn_repos_path</name><argument_list>(<argument><expr><name>repos</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>2</expr>]</index></name> = <name>txn_name</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>3</expr>]</index></name> = <name>NULL</name></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>run_hook_cmd</name><argument_list>(<argument><expr><name>SVN_REPOS__HOOK_PRE_COMMIT</name></expr></argument>, <argument><expr><name>hook</name></expr></argument>, <argument><expr><name>args</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                           <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if></else></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><name>svn_error_t</name>  *</type>
+<name>svn_repos__hooks_post_commit</name><parameter_list>(<param><decl><type><name>svn_repos_t</name> *</type><name>repos</name></decl></param>,
+                             <param><decl><type><name>svn_revnum_t</name></type> <name>rev</name></decl></param>,
+                             <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>hook</name> <init>= <expr><call><name>svn_repos_post_commit_hook</name><argument_list>(<argument><expr><name>repos</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>broken_link</name></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr>(<name>hook</name> = <call><name>check_hook_cmd</name><argument_list>(<argument><expr><name>hook</name></expr></argument>, <argument><expr>&amp;<name>broken_link</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call>) &amp;&amp; <name>broken_link</name></expr>)</condition><then>
+    <block>{
+      <return>return <expr><call><name>hook_symlink_error</name><argument_list>(<argument><expr><name>hook</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>hook</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name><name>args</name><index>[<expr>4</expr>]</index></name></decl>;</decl_stmt>
+
+      <expr_stmt><expr><name><name>args</name><index>[<expr>0</expr>]</index></name> = <name>hook</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>1</expr>]</index></name> = <call><name>svn_path_local_style</name><argument_list>(<argument><expr><call><name>svn_repos_path</name><argument_list>(<argument><expr><name>repos</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>2</expr>]</index></name> = <call><name>apr_psprintf</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>"%ld"</expr></argument>, <argument><expr><name>rev</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>3</expr>]</index></name> = <name>NULL</name></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>run_hook_cmd</name><argument_list>(<argument><expr><name>SVN_REPOS__HOOK_POST_COMMIT</name></expr></argument>, <argument><expr><name>hook</name></expr></argument>, <argument><expr><name>args</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                           <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if></else></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><name>svn_error_t</name>  *</type>
+<name>svn_repos__hooks_pre_revprop_change</name><parameter_list>(<param><decl><type><name>svn_repos_t</name> *</type><name>repos</name></decl></param>,
+                                    <param><decl><type><name>svn_revnum_t</name></type> <name>rev</name></decl></param>,
+                                    <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>author</name></decl></param>,
+                                    <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>name</name></decl></param>,
+                                    <param><decl><type><specifier>const</specifier> <name>svn_string_t</name> *</type><name>new_value</name></decl></param>,
+                                    <param><decl><type><name>char</name></type> <name>action</name></decl></param>,
+                                    <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>hook</name> <init>= <expr><call><name>svn_repos_pre_revprop_change_hook</name><argument_list>(<argument><expr><name>repos</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>broken_link</name></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr>(<name>hook</name> = <call><name>check_hook_cmd</name><argument_list>(<argument><expr><name>hook</name></expr></argument>, <argument><expr>&amp;<name>broken_link</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call>) &amp;&amp; <name>broken_link</name></expr>)</condition><then>
+    <block>{
+      <return>return <expr><call><name>hook_symlink_error</name><argument_list>(<argument><expr><name>hook</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>hook</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name><name>args</name><index>[<expr>7</expr>]</index></name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>apr_file_t</name> *</type><name>stdin_handle</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>char</name></type> <name><name>action_string</name><index>[<expr>2</expr>]</index></name></decl>;</decl_stmt>
+
+      <comment type="block">/* Pass the new value as stdin to hook */</comment>
+      <if>if <condition>(<expr><name>new_value</name></expr>)</condition><then>
+        <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>create_temp_file</name><argument_list>(<argument><expr>&amp;<name>stdin_handle</name></expr></argument>, <argument><expr><name>new_value</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+      <else>else
+        <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_io_file_open</name><argument_list>(<argument><expr>&amp;<name>stdin_handle</name></expr></argument>, <argument><expr><name>SVN_NULL_DEVICE_NAME</name></expr></argument>,
+                                 <argument><expr><name>APR_READ</name></expr></argument>, <argument><expr><name>APR_OS_DEFAULT</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+
+      <expr_stmt><expr><name><name>action_string</name><index>[<expr>0</expr>]</index></name> = <name>action</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>action_string</name><index>[<expr>1</expr>]</index></name> = '\0'</expr>;</expr_stmt>
+
+      <expr_stmt><expr><name><name>args</name><index>[<expr>0</expr>]</index></name> = <name>hook</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>1</expr>]</index></name> = <call><name>svn_path_local_style</name><argument_list>(<argument><expr><call><name>svn_repos_path</name><argument_list>(<argument><expr><name>repos</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>2</expr>]</index></name> = <call><name>apr_psprintf</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>"%ld"</expr></argument>, <argument><expr><name>rev</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>3</expr>]</index></name> = <name>author</name> ? <name>author</name> : ""</expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>4</expr>]</index></name> = <name>name</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>5</expr>]</index></name> = <name>action_string</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>6</expr>]</index></name> = <name>NULL</name></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>run_hook_cmd</name><argument_list>(<argument><expr><name>SVN_REPOS__HOOK_PRE_REVPROP_CHANGE</name></expr></argument>, <argument><expr><name>hook</name></expr></argument>, <argument><expr><name>args</name></expr></argument>,
+                           <argument><expr><name>stdin_handle</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_io_file_close</name><argument_list>(<argument><expr><name>stdin_handle</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else
+    <block>{
+      <comment type="block">/* If the pre- hook doesn't exist at all, then default to
+         MASSIVE PARANOIA.  Changing revision properties is a lossy
+         operation; so unless the repository admininstrator has
+         *deliberately* created the pre-hook, disallow all changes. */</comment>
+      <return>return
+        <expr><call><name>svn_error_create</name>
+        <argument_list>(<argument><expr><name>SVN_ERR_REPOS_DISABLED_FEATURE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+         <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Repository has not been enabled to accept revision propchanges;\n"
+           "ask the administrator to create a pre-revprop-change hook"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></else></if></else></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><name>svn_error_t</name>  *</type>
+<name>svn_repos__hooks_post_revprop_change</name><parameter_list>(<param><decl><type><name>svn_repos_t</name> *</type><name>repos</name></decl></param>,
+                                     <param><decl><type><name>svn_revnum_t</name></type> <name>rev</name></decl></param>,
+                                     <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>author</name></decl></param>,
+                                     <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>name</name></decl></param>,
+                                     <param><decl><type><name>svn_string_t</name> *</type><name>old_value</name></decl></param>,
+                                     <param><decl><type><name>char</name></type> <name>action</name></decl></param>,
+                                     <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>hook</name> <init>= <expr><call><name>svn_repos_post_revprop_change_hook</name><argument_list>(<argument><expr><name>repos</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>broken_link</name></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr>(<name>hook</name> = <call><name>check_hook_cmd</name><argument_list>(<argument><expr><name>hook</name></expr></argument>, <argument><expr>&amp;<name>broken_link</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call>) &amp;&amp; <name>broken_link</name></expr>)</condition><then>
+    <block>{
+      <return>return <expr><call><name>hook_symlink_error</name><argument_list>(<argument><expr><name>hook</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>hook</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name><name>args</name><index>[<expr>7</expr>]</index></name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>apr_file_t</name> *</type><name>stdin_handle</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>char</name></type> <name><name>action_string</name><index>[<expr>2</expr>]</index></name></decl>;</decl_stmt>
+
+      <comment type="block">/* Pass the old value as stdin to hook */</comment>
+      <if>if <condition>(<expr><name>old_value</name></expr>)</condition><then>
+        <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>create_temp_file</name><argument_list>(<argument><expr>&amp;<name>stdin_handle</name></expr></argument>, <argument><expr><name>old_value</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+      <else>else
+        <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_io_file_open</name><argument_list>(<argument><expr>&amp;<name>stdin_handle</name></expr></argument>, <argument><expr><name>SVN_NULL_DEVICE_NAME</name></expr></argument>,
+                                 <argument><expr><name>APR_READ</name></expr></argument>, <argument><expr><name>APR_OS_DEFAULT</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+
+      <expr_stmt><expr><name><name>action_string</name><index>[<expr>0</expr>]</index></name> = <name>action</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>action_string</name><index>[<expr>1</expr>]</index></name> = '\0'</expr>;</expr_stmt>
+
+      <expr_stmt><expr><name><name>args</name><index>[<expr>0</expr>]</index></name> = <name>hook</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>1</expr>]</index></name> = <call><name>svn_path_local_style</name><argument_list>(<argument><expr><call><name>svn_repos_path</name><argument_list>(<argument><expr><name>repos</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>2</expr>]</index></name> = <call><name>apr_psprintf</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>"%ld"</expr></argument>, <argument><expr><name>rev</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>3</expr>]</index></name> = <name>author</name> ? <name>author</name> : ""</expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>4</expr>]</index></name> = <name>name</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>5</expr>]</index></name> = <name>action_string</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>6</expr>]</index></name> = <name>NULL</name></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>run_hook_cmd</name><argument_list>(<argument><expr><name>SVN_REPOS__HOOK_POST_REVPROP_CHANGE</name></expr></argument>, <argument><expr><name>hook</name></expr></argument>, <argument><expr><name>args</name></expr></argument>,
+                           <argument><expr><name>stdin_handle</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_io_file_close</name><argument_list>(<argument><expr><name>stdin_handle</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if></else></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+
+<function><type><name>svn_error_t</name>  *</type>
+<name>svn_repos__hooks_pre_lock</name><parameter_list>(<param><decl><type><name>svn_repos_t</name> *</type><name>repos</name></decl></param>,
+                          <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+                          <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>username</name></decl></param>,
+                          <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>hook</name> <init>= <expr><call><name>svn_repos_pre_lock_hook</name><argument_list>(<argument><expr><name>repos</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>broken_link</name></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr>(<name>hook</name> = <call><name>check_hook_cmd</name><argument_list>(<argument><expr><name>hook</name></expr></argument>, <argument><expr>&amp;<name>broken_link</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call>) &amp;&amp; <name>broken_link</name></expr>)</condition><then>
+    <block>{
+      <return>return <expr><call><name>hook_symlink_error</name><argument_list>(<argument><expr><name>hook</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>hook</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name><name>args</name><index>[<expr>5</expr>]</index></name></decl>;</decl_stmt>
+
+      <expr_stmt><expr><name><name>args</name><index>[<expr>0</expr>]</index></name> = <name>hook</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>1</expr>]</index></name> = <call><name>svn_path_local_style</name><argument_list>(<argument><expr><call><name>svn_repos_path</name><argument_list>(<argument><expr><name>repos</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>2</expr>]</index></name> = <name>path</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>3</expr>]</index></name> = <name>username</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>4</expr>]</index></name> = <name>NULL</name></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>run_hook_cmd</name><argument_list>(<argument><expr><name>SVN_REPOS__HOOK_PRE_LOCK</name></expr></argument>, <argument><expr><name>hook</name></expr></argument>, <argument><expr><name>args</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if></else></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><name>svn_error_t</name>  *</type>
+<name>svn_repos__hooks_post_lock</name><parameter_list>(<param><decl><type><name>svn_repos_t</name> *</type><name>repos</name></decl></param>,
+                           <param><decl><type><name>apr_array_header_t</name> *</type><name>paths</name></decl></param>,
+                           <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>username</name></decl></param>,
+                           <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>hook</name> <init>= <expr><call><name>svn_repos_post_lock_hook</name><argument_list>(<argument><expr><name>repos</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>broken_link</name></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr>(<name>hook</name> = <call><name>check_hook_cmd</name><argument_list>(<argument><expr><name>hook</name></expr></argument>, <argument><expr>&amp;<name>broken_link</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call>) &amp;&amp; <name>broken_link</name></expr>)</condition><then>
+    <block>{
+      <return>return <expr><call><name>hook_symlink_error</name><argument_list>(<argument><expr><name>hook</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>hook</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name><name>args</name><index>[<expr>5</expr>]</index></name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>apr_file_t</name> *</type><name>stdin_handle</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>svn_string_t</name> *</type><name>paths_str</name> <init>= <expr><call><name>svn_string_create</name><argument_list>(<argument><expr><call><name>svn_cstring_join</name>
+                                                  <argument_list>(<argument><expr><name>paths</name></expr></argument>, <argument><expr>"\n"</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>,
+                                                  <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>create_temp_file</name><argument_list>(<argument><expr>&amp;<name>stdin_handle</name></expr></argument>, <argument><expr><name>paths_str</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name><name>args</name><index>[<expr>0</expr>]</index></name> = <name>hook</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>1</expr>]</index></name> = <call><name>svn_path_local_style</name><argument_list>(<argument><expr><call><name>svn_repos_path</name><argument_list>(<argument><expr><name>repos</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>2</expr>]</index></name> = <name>username</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>3</expr>]</index></name> = <name>NULL</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>4</expr>]</index></name> = <name>NULL</name></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>run_hook_cmd</name><argument_list>(<argument><expr><name>SVN_REPOS__HOOK_POST_LOCK</name></expr></argument>, <argument><expr><name>hook</name></expr></argument>, <argument><expr><name>args</name></expr></argument>, <argument><expr><name>stdin_handle</name></expr></argument>,
+                           <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_io_file_close</name><argument_list>(<argument><expr><name>stdin_handle</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if></else></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><name>svn_error_t</name>  *</type>
+<name>svn_repos__hooks_pre_unlock</name><parameter_list>(<param><decl><type><name>svn_repos_t</name> *</type><name>repos</name></decl></param>,
+                            <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+                            <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>username</name></decl></param>,
+                            <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>hook</name> <init>= <expr><call><name>svn_repos_pre_unlock_hook</name><argument_list>(<argument><expr><name>repos</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>broken_link</name></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr>(<name>hook</name> = <call><name>check_hook_cmd</name><argument_list>(<argument><expr><name>hook</name></expr></argument>, <argument><expr>&amp;<name>broken_link</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call>) &amp;&amp; <name>broken_link</name></expr>)</condition><then>
+    <block>{
+      <return>return <expr><call><name>hook_symlink_error</name><argument_list>(<argument><expr><name>hook</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>hook</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name><name>args</name><index>[<expr>5</expr>]</index></name></decl>;</decl_stmt>
+
+      <expr_stmt><expr><name><name>args</name><index>[<expr>0</expr>]</index></name> = <name>hook</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>1</expr>]</index></name> = <call><name>svn_path_local_style</name><argument_list>(<argument><expr><call><name>svn_repos_path</name><argument_list>(<argument><expr><name>repos</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>2</expr>]</index></name> = <name>path</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>3</expr>]</index></name> = <name>username</name> ? <name>username</name> : ""</expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>4</expr>]</index></name> = <name>NULL</name></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>run_hook_cmd</name><argument_list>(<argument><expr><name>SVN_REPOS__HOOK_PRE_UNLOCK</name></expr></argument>, <argument><expr><name>hook</name></expr></argument>, <argument><expr><name>args</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                           <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if></else></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><name>svn_error_t</name>  *</type>
+<name>svn_repos__hooks_post_unlock</name><parameter_list>(<param><decl><type><name>svn_repos_t</name> *</type><name>repos</name></decl></param>,
+                             <param><decl><type><name>apr_array_header_t</name> *</type><name>paths</name></decl></param>,
+                             <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>username</name></decl></param>,
+                             <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>hook</name> <init>= <expr><call><name>svn_repos_post_unlock_hook</name><argument_list>(<argument><expr><name>repos</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>broken_link</name></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr>(<name>hook</name> = <call><name>check_hook_cmd</name><argument_list>(<argument><expr><name>hook</name></expr></argument>, <argument><expr>&amp;<name>broken_link</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call>) &amp;&amp; <name>broken_link</name></expr>)</condition><then>
+    <block>{
+      <return>return <expr><call><name>hook_symlink_error</name><argument_list>(<argument><expr><name>hook</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>hook</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name><name>args</name><index>[<expr>5</expr>]</index></name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>apr_file_t</name> *</type><name>stdin_handle</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>svn_string_t</name> *</type><name>paths_str</name> <init>= <expr><call><name>svn_string_create</name><argument_list>(<argument><expr><call><name>svn_cstring_join</name>
+                                                  <argument_list>(<argument><expr><name>paths</name></expr></argument>, <argument><expr>"\n"</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>,
+                                                  <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>create_temp_file</name><argument_list>(<argument><expr>&amp;<name>stdin_handle</name></expr></argument>, <argument><expr><name>paths_str</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name><name>args</name><index>[<expr>0</expr>]</index></name> = <name>hook</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>1</expr>]</index></name> = <call><name>svn_path_local_style</name><argument_list>(<argument><expr><call><name>svn_repos_path</name><argument_list>(<argument><expr><name>repos</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>2</expr>]</index></name> = <name>username</name> ? <name>username</name> : ""</expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>3</expr>]</index></name> = <name>NULL</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>args</name><index>[<expr>4</expr>]</index></name> = <name>NULL</name></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>run_hook_cmd</name><argument_list>(<argument><expr><name>SVN_REPOS__HOOK_POST_UNLOCK</name></expr></argument>, <argument><expr><name>hook</name></expr></argument>, <argument><expr><name>args</name></expr></argument>,
+                           <argument><expr><name>stdin_handle</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_io_file_close</name><argument_list>(<argument><expr><name>stdin_handle</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if></else></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<escape char="0xc"/>
+<comment type="block">/*
+ * vim:ts=4:sw=4:expandtab:tw=80:fo=tcroq
+ * vim:isk=a-z,A-Z,48-57,_,.,-,&gt;
+ * vim:cino=&gt;1s,e0,n0,f0,{.5s,}0,^-.5s,=.5s,t0,+1s,c3,(0,u0,\:0
+ */</comment>
+</unit>

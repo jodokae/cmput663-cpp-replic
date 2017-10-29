@@ -1,0 +1,582 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/cpython-2.6.1/source/Modules/_randommodule.c"><comment type="block">/* Random objects */</comment>
+
+<comment type="block">/* ------------------------------------------------------------------
+   The code in this module was based on a download from:
+	  http://www.math.keio.ac.jp/~matumoto/MT2002/emt19937ar.html
+
+   It was modified in 2002 by Raymond Hettinger as follows:
+
+	* the principal computational lines untouched except for tabbing.
+
+	* renamed genrand_res53() to random_random() and wrapped
+	  in python calling/return code.
+
+	* genrand_int32() and the helper functions, init_genrand()
+	  and init_by_array(), were declared static, wrapped in
+	  Python calling/return code.  also, their global data
+	  references were replaced with structure references.
+
+	* unused functions from the original were deleted.
+	  new, original C python code was added to implement the
+	  Random() interface.
+
+   The following are the verbatim comments from the original code:
+
+   A C-program for MT19937, with initialization improved 2002/1/26.
+   Coded by Takuji Nishimura and Makoto Matsumoto.
+
+   Before using, initialize the state by using init_genrand(seed)
+   or init_by_array(init_key, key_length).
+
+   Copyright (C) 1997 - 2002, Makoto Matsumoto and Takuji Nishimura,
+   All rights reserved.
+
+   Redistribution and use in source and binary forms, with or without
+   modification, are permitted provided that the following conditions
+   are met:
+
+     1. Redistributions of source code must retain the above copyright
+	notice, this list of conditions and the following disclaimer.
+
+     2. Redistributions in binary form must reproduce the above copyright
+	notice, this list of conditions and the following disclaimer in the
+	documentation and/or other materials provided with the distribution.
+
+     3. The names of its contributors may not be used to endorse or promote
+	products derived from this software without specific prior written
+	permission.
+
+   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+   A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+   CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+   EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+   PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+   PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+   LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+   NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+   SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+   Any feedback is very welcome.
+   http://www.math.keio.ac.jp/matumoto/emt.html
+   email: matumoto@math.keio.ac.jp
+*/</comment>
+
+<comment type="block">/* ---------------------------------------------------------------*/</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"Python.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;time.h&gt;</cpp:file></cpp:include>		<comment type="block">/* for seeding to current time */</comment>
+
+<comment type="block">/* Period parameters -- These are all magic.  Don't change. */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>N</name></cpp:macro> <cpp:value>624</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>M</name></cpp:macro> <cpp:value>397</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>MATRIX_A</name></cpp:macro> <cpp:value>0x9908b0dfUL</cpp:value></cpp:define>	<comment type="block">/* constant vector a */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>UPPER_MASK</name></cpp:macro> <cpp:value>0x80000000UL</cpp:value></cpp:define> <comment type="block">/* most significant w-r bits */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>LOWER_MASK</name></cpp:macro> <cpp:value>0x7fffffffUL</cpp:value></cpp:define> <comment type="block">/* least significant r bits */</comment>
+
+<typedef>typedef <type><struct>struct <block>{
+	<decl_stmt><decl><type><name>PyObject_HEAD</name>
+	<name>unsigned</name> <name>long</name></type> <name><name>state</name><index>[<expr><name>N</name></expr>]</index></name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>index</name></decl>;</decl_stmt>
+}</block></struct></type> <name>RandomObject</name>;</typedef>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyTypeObject</name></type> <name>Random_Type</name></decl>;</decl_stmt>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>RandomObject_Check</name><parameter_list>(<param><type><name>v</name></type></param>)</parameter_list></cpp:macro>	   <cpp:value>(Py_TYPE(v) == &amp;Random_Type)</cpp:value></cpp:define>
+
+
+<comment type="block">/* Random methods */</comment>
+
+
+<comment type="block">/* generates a random number on [0,0xffffffff]-interval */</comment>
+<function><type><specifier>static</specifier> <name>unsigned</name> <name>long</name></type>
+<name>genrand_int32</name><parameter_list>(<param><decl><type><name>RandomObject</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>unsigned</name> <name>long</name></type> <name>y</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><specifier>static</specifier> <name>unsigned</name> <name>long</name></type> <name><name>mag01</name><index>[<expr>2</expr>]</index></name><init>=<expr><block>{<expr>0x0UL</expr>, <expr><name>MATRIX_A</name></expr>}</block></expr></init></decl>;</decl_stmt>
+	<comment type="block">/* mag01[x] = x * MATRIX_A  for x=0,1 */</comment>
+	<decl_stmt><decl><type><name>unsigned</name> <name>long</name> *</type><name>mt</name></decl>;</decl_stmt>
+
+	<expr_stmt><expr><name>mt</name> = <name><name>self</name>-&gt;<name>state</name></name></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name><name>self</name>-&gt;<name>index</name></name> &gt;= <name>N</name></expr>)</condition><then> <block>{ <comment type="block">/* generate N words at one time */</comment>
+		<decl_stmt><decl><type><name>int</name></type> <name>kk</name></decl>;</decl_stmt>
+
+		<for>for (<init><expr><name>kk</name>=0</expr>;</init><condition><expr><name>kk</name>&lt;<name>N</name>-<name>M</name></expr>;</condition><incr><expr><name>kk</name>++</expr></incr>) <block>{
+			<expr_stmt><expr><name>y</name> = (<name><name>mt</name><index>[<expr><name>kk</name></expr>]</index></name>&amp;<name>UPPER_MASK</name>)|(<name><name>mt</name><index>[<expr><name>kk</name>+1</expr>]</index></name>&amp;<name>LOWER_MASK</name>)</expr>;</expr_stmt>
+			<expr_stmt><expr><name><name>mt</name><index>[<expr><name>kk</name></expr>]</index></name> = <name><name>mt</name><index>[<expr><name>kk</name>+<name>M</name></expr>]</index></name> ^ (<name>y</name> &gt;&gt; 1) ^ <name><name>mag01</name><index>[<expr><name>y</name> &amp; 0x1UL</expr>]</index></name></expr>;</expr_stmt>
+		}</block></for>
+		<for>for (<init>;</init><condition><expr><name>kk</name>&lt;<name>N</name>-1</expr>;</condition><incr><expr><name>kk</name>++</expr></incr>) <block>{
+			<expr_stmt><expr><name>y</name> = (<name><name>mt</name><index>[<expr><name>kk</name></expr>]</index></name>&amp;<name>UPPER_MASK</name>)|(<name><name>mt</name><index>[<expr><name>kk</name>+1</expr>]</index></name>&amp;<name>LOWER_MASK</name>)</expr>;</expr_stmt>
+			<expr_stmt><expr><name><name>mt</name><index>[<expr><name>kk</name></expr>]</index></name> = <name><name>mt</name><index>[<expr><name>kk</name>+(<name>M</name>-<name>N</name>)</expr>]</index></name> ^ (<name>y</name> &gt;&gt; 1) ^ <name><name>mag01</name><index>[<expr><name>y</name> &amp; 0x1UL</expr>]</index></name></expr>;</expr_stmt>
+		}</block></for>
+		<expr_stmt><expr><name>y</name> = (<name><name>mt</name><index>[<expr><name>N</name>-1</expr>]</index></name>&amp;<name>UPPER_MASK</name>)|(<name><name>mt</name><index>[<expr>0</expr>]</index></name>&amp;<name>LOWER_MASK</name>)</expr>;</expr_stmt>
+		<expr_stmt><expr><name><name>mt</name><index>[<expr><name>N</name>-1</expr>]</index></name> = <name><name>mt</name><index>[<expr><name>M</name>-1</expr>]</index></name> ^ (<name>y</name> &gt;&gt; 1) ^ <name><name>mag01</name><index>[<expr><name>y</name> &amp; 0x1UL</expr>]</index></name></expr>;</expr_stmt>
+
+		<expr_stmt><expr><name><name>self</name>-&gt;<name>index</name></name> = 0</expr>;</expr_stmt>
+	}</block></then></if>
+
+    <expr_stmt><expr><name>y</name> = <name><name>mt</name><index>[<expr><name><name>self</name>-&gt;<name>index</name></name>++</expr>]</index></name></expr>;</expr_stmt>
+    <expr_stmt><expr><name>y</name> ^= (<name>y</name> &gt;&gt; 11)</expr>;</expr_stmt>
+    <expr_stmt><expr><name>y</name> ^= (<name>y</name> &lt;&lt; 7) &amp; 0x9d2c5680UL</expr>;</expr_stmt>
+    <expr_stmt><expr><name>y</name> ^= (<name>y</name> &lt;&lt; 15) &amp; 0xefc60000UL</expr>;</expr_stmt>
+    <expr_stmt><expr><name>y</name> ^= (<name>y</name> &gt;&gt; 18)</expr>;</expr_stmt>
+    <return>return <expr><name>y</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* random_random is the function named genrand_res53 in the original code;
+ * generates a random number on [0,1) with 53-bit resolution; note that
+ * 9007199254740992 == 2**53; I assume they're spelling "/2**53" as
+ * multiply-by-reciprocal in the (likely vain) hope that the compiler will
+ * optimize the division away at compile-time.  67108864 is 2**26.  In
+ * effect, a contains 27 random bits shifted left 26, and b fills in the
+ * lower 26 bits of the 53-bit numerator.
+ * The orginal code credited Isaku Wada for this algorithm, 2002/01/09.
+ */</comment>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>random_random</name><parameter_list>(<param><decl><type><name>RandomObject</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>unsigned</name> <name>long</name></type> <name>a</name><init>=<expr><call><name>genrand_int32</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call>&gt;&gt;5</expr></init>, <name>b</name><init>=<expr><call><name>genrand_int32</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call>&gt;&gt;6</expr></init></decl>;</decl_stmt>
+    	<return>return <expr><call><name>PyFloat_FromDouble</name><argument_list>(<argument><expr>(<name>a</name>*67108864.0+<name>b</name>)*(1.0/9007199254740992.0)</expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<comment type="block">/* initializes mt[N] with a seed */</comment>
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>init_genrand</name><parameter_list>(<param><decl><type><name>RandomObject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>unsigned</name> <name>long</name></type> <name>s</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>int</name></type> <name>mti</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>unsigned</name> <name>long</name> *</type><name>mt</name></decl>;</decl_stmt>
+
+	<expr_stmt><expr><name>mt</name> = <name><name>self</name>-&gt;<name>state</name></name></expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>mt</name><index>[<expr>0</expr>]</index></name>= <name>s</name> &amp; 0xffffffffUL</expr>;</expr_stmt>
+	<for>for (<init><expr><name>mti</name>=1</expr>;</init> <condition><expr><name>mti</name>&lt;<name>N</name></expr>;</condition> <incr><expr><name>mti</name>++</expr></incr>) <block>{
+		<expr_stmt><expr><name><name>mt</name><index>[<expr><name>mti</name></expr>]</index></name> =
+		(1812433253UL * (<name><name>mt</name><index>[<expr><name>mti</name>-1</expr>]</index></name> ^ (<name><name>mt</name><index>[<expr><name>mti</name>-1</expr>]</index></name> &gt;&gt; 30)) + <name>mti</name>)</expr>;</expr_stmt>
+		<comment type="block">/* See Knuth TAOCP Vol2. 3rd Ed. P.106 for multiplier. */</comment>
+		<comment type="block">/* In the previous versions, MSBs of the seed affect   */</comment>
+		<comment type="block">/* only MSBs of the array mt[]. 		       */</comment>
+		<comment type="block">/* 2002/01/09 modified by Makoto Matsumoto	       */</comment>
+		<expr_stmt><expr><name><name>mt</name><index>[<expr><name>mti</name></expr>]</index></name> &amp;= 0xffffffffUL</expr>;</expr_stmt>
+		<comment type="block">/* for &gt;32 bit machines */</comment>
+	}</block></for>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>index</name></name> = <name>mti</name></expr>;</expr_stmt>
+	<return>return;</return>
+}</block></function>
+
+<comment type="block">/* initialize by an array with array-length */</comment>
+<comment type="block">/* init_key is the array for initializing keys */</comment>
+<comment type="block">/* key_length is its length */</comment>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>init_by_array</name><parameter_list>(<param><decl><type><name>RandomObject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>unsigned</name> <name>long</name></type> <name><name>init_key</name><index>[]</index></name></decl></param>, <param><decl><type><name>unsigned</name> <name>long</name></type> <name>key_length</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>unsigned</name> <name>int</name></type> <name>i</name></decl>, <decl><type ref="prev"/><name>j</name></decl>, <decl><type ref="prev"/><name>k</name></decl>;</decl_stmt>	<comment type="block">/* was signed in the original code. RDH 12/16/2002 */</comment>
+	<decl_stmt><decl><type><name>unsigned</name> <name>long</name> *</type><name>mt</name></decl>;</decl_stmt>
+
+	<expr_stmt><expr><name>mt</name> = <name><name>self</name>-&gt;<name>state</name></name></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>init_genrand</name><argument_list>(<argument><expr><name>self</name></expr></argument>, <argument><expr>19650218UL</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>i</name>=1</expr>;</expr_stmt> <expr_stmt><expr><name>j</name>=0</expr>;</expr_stmt>
+	<expr_stmt><expr><name>k</name> = (<name>N</name>&gt;<name>key_length</name> ? <name>N</name> : <name>key_length</name>)</expr>;</expr_stmt>
+	<for>for (<init>;</init> <condition><expr><name>k</name></expr>;</condition> <incr><expr><name>k</name>--</expr></incr>) <block>{
+		<expr_stmt><expr><name><name>mt</name><index>[<expr><name>i</name></expr>]</index></name> = (<name><name>mt</name><index>[<expr><name>i</name></expr>]</index></name> ^ ((<name><name>mt</name><index>[<expr><name>i</name>-1</expr>]</index></name> ^ (<name><name>mt</name><index>[<expr><name>i</name>-1</expr>]</index></name> &gt;&gt; 30)) * 1664525UL))
+			 + <name><name>init_key</name><index>[<expr><name>j</name></expr>]</index></name> + <name>j</name></expr>;</expr_stmt> <comment type="block">/* non linear */</comment>
+		<expr_stmt><expr><name><name>mt</name><index>[<expr><name>i</name></expr>]</index></name> &amp;= 0xffffffffUL</expr>;</expr_stmt> <comment type="block">/* for WORDSIZE &gt; 32 machines */</comment>
+		<expr_stmt><expr><name>i</name>++</expr>;</expr_stmt> <expr_stmt><expr><name>j</name>++</expr>;</expr_stmt>
+		<if>if <condition>(<expr><name>i</name>&gt;=<name>N</name></expr>)</condition><then> <block>{ <expr_stmt><expr><name><name>mt</name><index>[<expr>0</expr>]</index></name> = <name><name>mt</name><index>[<expr><name>N</name>-1</expr>]</index></name></expr>;</expr_stmt> <expr_stmt><expr><name>i</name>=1</expr>;</expr_stmt> }</block></then></if>
+		<if>if <condition>(<expr><name>j</name>&gt;=<name>key_length</name></expr>)</condition><then> <expr_stmt><expr><name>j</name>=0</expr>;</expr_stmt></then></if>
+	}</block></for>
+	<for>for (<init><expr><name>k</name>=<name>N</name>-1</expr>;</init> <condition><expr><name>k</name></expr>;</condition> <incr><expr><name>k</name>--</expr></incr>) <block>{
+		<expr_stmt><expr><name><name>mt</name><index>[<expr><name>i</name></expr>]</index></name> = (<name><name>mt</name><index>[<expr><name>i</name></expr>]</index></name> ^ ((<name><name>mt</name><index>[<expr><name>i</name>-1</expr>]</index></name> ^ (<name><name>mt</name><index>[<expr><name>i</name>-1</expr>]</index></name> &gt;&gt; 30)) * 1566083941UL))
+			 - <name>i</name></expr>;</expr_stmt> <comment type="block">/* non linear */</comment>
+		<expr_stmt><expr><name><name>mt</name><index>[<expr><name>i</name></expr>]</index></name> &amp;= 0xffffffffUL</expr>;</expr_stmt> <comment type="block">/* for WORDSIZE &gt; 32 machines */</comment>
+		<expr_stmt><expr><name>i</name>++</expr>;</expr_stmt>
+		<if>if <condition>(<expr><name>i</name>&gt;=<name>N</name></expr>)</condition><then> <block>{ <expr_stmt><expr><name><name>mt</name><index>[<expr>0</expr>]</index></name> = <name><name>mt</name><index>[<expr><name>N</name>-1</expr>]</index></name></expr>;</expr_stmt> <expr_stmt><expr><name>i</name>=1</expr>;</expr_stmt> }</block></then></if>
+	}</block></for>
+
+    <expr_stmt><expr><name><name>mt</name><index>[<expr>0</expr>]</index></name> = 0x80000000UL</expr>;</expr_stmt> <comment type="block">/* MSB is 1; assuring non-zero initial array */</comment>
+    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/*
+ * The rest is Python-specific code, neither part of, nor derived from, the
+ * Twister download.
+ */</comment>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>random_seed</name><parameter_list>(<param><decl><type><name>RandomObject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>result</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>	<comment type="block">/* guilty until proved innocent */</comment>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>masklower</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>thirtytwo</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>n</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>unsigned</name> <name>long</name> *</type><name>key</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>unsigned</name> <name>long</name></type> <name>keymax</name></decl>;</decl_stmt>		<comment type="block">/* # of allocated slots in key */</comment>
+	<decl_stmt><decl><type><name>unsigned</name> <name>long</name></type> <name>keyused</name></decl>;</decl_stmt>		<comment type="block">/* # of used slots in key */</comment>
+	<decl_stmt><decl><type><name>int</name></type> <name>err</name></decl>;</decl_stmt>
+
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>arg</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+
+	<if>if <condition>(<expr>!<call><name>PyArg_UnpackTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"seed"</expr></argument>, <argument><expr>0</expr></argument>, <argument><expr>1</expr></argument>, <argument><expr>&amp;<name>arg</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+	<if>if <condition>(<expr><name>arg</name> == <name>NULL</name> || <name>arg</name> == <name>Py_None</name></expr>)</condition><then> <block>{
+		<decl_stmt><decl><type><name>time_t</name></type> <name>now</name></decl>;</decl_stmt>
+
+		<expr_stmt><expr><call><name>time</name><argument_list>(<argument><expr>&amp;<name>now</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><call><name>init_genrand</name><argument_list>(<argument><expr><name>self</name></expr></argument>, <argument><expr>(<name>unsigned</name> <name>long</name>)<name>now</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<return>return <expr><name>Py_None</name></expr>;</return>
+	}</block></then></if>
+	<comment type="block">/* If the arg is an int or long, use its absolute value; else use
+	 * the absolute value of its hash code.
+	 */</comment>
+	<if>if <condition>(<expr><call><name>PyInt_Check</name><argument_list>(<argument><expr><name>arg</name></expr></argument>)</argument_list></call> || <call><name>PyLong_Check</name><argument_list>(<argument><expr><name>arg</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<expr_stmt><expr><name>n</name> = <call><name>PyNumber_Absolute</name><argument_list>(<argument><expr><name>arg</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+	<else>else <block>{
+		<decl_stmt><decl><type><name>long</name></type> <name>hash</name> <init>= <expr><call><name>PyObject_Hash</name><argument_list>(<argument><expr><name>arg</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>hash</name> == -1</expr>)</condition><then>
+			<goto>goto <name>Done</name>;</goto></then></if>
+		<expr_stmt><expr><name>n</name> = <call><name>PyLong_FromUnsignedLong</name><argument_list>(<argument><expr>(<name>unsigned</name> <name>long</name>)<name>hash</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	}</block></else></if>
+	<if>if <condition>(<expr><name>n</name> == <name>NULL</name></expr>)</condition><then>
+		<goto>goto <name>Done</name>;</goto></then></if>
+
+	<comment type="block">/* Now split n into 32-bit chunks, from the right.  Each piece is
+	 * stored into key, which has a capacity of keymax chunks, of which
+	 * keyused are filled.  Alas, the repeated shifting makes this a
+	 * quadratic-time algorithm; we'd really like to use
+	 * _PyLong_AsByteArray here, but then we'd have to break into the
+	 * long representation to figure out how big an array was needed
+	 * in advance.
+	 */</comment>
+	<expr_stmt><expr><name>keymax</name> = 8</expr>;</expr_stmt> 	<comment type="block">/* arbitrary; grows later if needed */</comment>
+	<expr_stmt><expr><name>keyused</name> = 0</expr>;</expr_stmt>
+	<expr_stmt><expr><name>key</name> = (<name>unsigned</name> <name>long</name> *)<call><name>PyMem_Malloc</name><argument_list>(<argument><expr><name>keymax</name> * <sizeof>sizeof<argument_list>(<argument><expr>*<name>key</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>key</name> == <name>NULL</name></expr>)</condition><then>
+		<goto>goto <name>Done</name>;</goto></then></if>
+
+	<expr_stmt><expr><name>masklower</name> = <call><name>PyLong_FromUnsignedLong</name><argument_list>(<argument><expr>0xffffffffU</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>masklower</name> == <name>NULL</name></expr>)</condition><then>
+		<goto>goto <name>Done</name>;</goto></then></if>
+	<expr_stmt><expr><name>thirtytwo</name> = <call><name>PyInt_FromLong</name><argument_list>(<argument><expr>32L</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>thirtytwo</name> == <name>NULL</name></expr>)</condition><then>
+		<goto>goto <name>Done</name>;</goto></then></if>
+	<while>while <condition>(<expr>(<name>err</name>=<call><name>PyObject_IsTrue</name><argument_list>(<argument><expr><name>n</name></expr></argument>)</argument_list></call>)</expr>)</condition> <block>{
+		<decl_stmt><decl><type><name>PyObject</name> *</type><name>newn</name></decl>;</decl_stmt>
+		<decl_stmt><decl><type><name>PyObject</name> *</type><name>pychunk</name></decl>;</decl_stmt>
+		<decl_stmt><decl><type><name>unsigned</name> <name>long</name></type> <name>chunk</name></decl>;</decl_stmt>
+
+		<if>if <condition>(<expr><name>err</name> == -1</expr>)</condition><then>
+			<goto>goto <name>Done</name>;</goto></then></if>
+		<expr_stmt><expr><name>pychunk</name> = <call><name>PyNumber_And</name><argument_list>(<argument><expr><name>n</name></expr></argument>, <argument><expr><name>masklower</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<if>if <condition>(<expr><name>pychunk</name> == <name>NULL</name></expr>)</condition><then>
+			<goto>goto <name>Done</name>;</goto></then></if>
+		<expr_stmt><expr><name>chunk</name> = <call><name>PyLong_AsUnsignedLong</name><argument_list>(<argument><expr><name>pychunk</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>pychunk</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<if>if <condition>(<expr><name>chunk</name> == (<name>unsigned</name> <name>long</name>)-1 &amp;&amp; <call><name>PyErr_Occurred</name><argument_list>()</argument_list></call></expr>)</condition><then>
+			<goto>goto <name>Done</name>;</goto></then></if>
+		<expr_stmt><expr><name>newn</name> = <call><name>PyNumber_Rshift</name><argument_list>(<argument><expr><name>n</name></expr></argument>, <argument><expr><name>thirtytwo</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<if>if <condition>(<expr><name>newn</name> == <name>NULL</name></expr>)</condition><then>
+			<goto>goto <name>Done</name>;</goto></then></if>
+		<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>n</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><name>n</name> = <name>newn</name></expr>;</expr_stmt>
+		<if>if <condition>(<expr><name>keyused</name> &gt;= <name>keymax</name></expr>)</condition><then> <block>{
+			<decl_stmt><decl><type><name>unsigned</name> <name>long</name></type> <name>bigger</name> <init>= <expr><name>keymax</name> &lt;&lt; 1</expr></init></decl>;</decl_stmt>
+			<if>if <condition>(<expr>(<name>bigger</name> &gt;&gt; 1) != <name>keymax</name></expr>)</condition><then> <block>{
+				<expr_stmt><expr><call><name>PyErr_NoMemory</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+				<goto>goto <name>Done</name>;</goto>
+			}</block></then></if>
+			<expr_stmt><expr><name>key</name> = (<name>unsigned</name> <name>long</name> *)<call><name>PyMem_Realloc</name><argument_list>(<argument><expr><name>key</name></expr></argument>,
+						<argument><expr><name>bigger</name> * <sizeof>sizeof<argument_list>(<argument><expr>*<name>key</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<if>if <condition>(<expr><name>key</name> == <name>NULL</name></expr>)</condition><then>
+				<goto>goto <name>Done</name>;</goto></then></if>
+			<expr_stmt><expr><name>keymax</name> = <name>bigger</name></expr>;</expr_stmt>
+		}</block></then></if>
+		<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>keyused</name> &lt; <name>keymax</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><name><name>key</name><index>[<expr><name>keyused</name>++</expr>]</index></name> = <name>chunk</name></expr>;</expr_stmt>
+	}</block></while>
+
+	<if>if <condition>(<expr><name>keyused</name> == 0</expr>)</condition><then>
+		<expr_stmt><expr><name><name>key</name><index>[<expr><name>keyused</name>++</expr>]</index></name> = 0UL</expr>;</expr_stmt></then></if>
+	<expr_stmt><expr><name>result</name> = <call><name>init_by_array</name><argument_list>(<argument><expr><name>self</name></expr></argument>, <argument><expr><name>key</name></expr></argument>, <argument><expr><name>keyused</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<label><name>Done</name>:</label>
+	<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>masklower</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>thirtytwo</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>n</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>PyMem_Free</name><argument_list>(<argument><expr><name>key</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>result</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>random_getstate</name><parameter_list>(<param><decl><type><name>RandomObject</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>state</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>element</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+
+	<expr_stmt><expr><name>state</name> = <call><name>PyTuple_New</name><argument_list>(<argument><expr><name>N</name>+1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>state</name> == <name>NULL</name></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<for>for (<init><expr><name>i</name>=0</expr>;</init> <condition><expr><name>i</name>&lt;<name>N</name></expr> ;</condition> <incr><expr><name>i</name>++</expr></incr>) <block>{
+		<expr_stmt><expr><name>element</name> = <call><name>PyLong_FromUnsignedLong</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>state</name><index>[<expr><name>i</name></expr>]</index></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<if>if <condition>(<expr><name>element</name> == <name>NULL</name></expr>)</condition><then>
+			<goto>goto <name>Fail</name>;</goto></then></if>
+		<expr_stmt><expr><call><name>PyTuple_SET_ITEM</name><argument_list>(<argument><expr><name>state</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr><name>element</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	}</block></for>
+	<expr_stmt><expr><name>element</name> = <call><name>PyLong_FromLong</name><argument_list>(<argument><expr><call>(<name>long</name>)<argument_list>(<argument><expr><name><name>self</name>-&gt;<name>index</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>element</name> == <name>NULL</name></expr>)</condition><then>
+		<goto>goto <name>Fail</name>;</goto></then></if>
+	<expr_stmt><expr><call><name>PyTuple_SET_ITEM</name><argument_list>(<argument><expr><name>state</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr><name>element</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>state</name></expr>;</return>
+
+<label><name>Fail</name>:</label>
+	<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>state</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>random_setstate</name><parameter_list>(<param><decl><type><name>RandomObject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>state</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>unsigned</name> <name>long</name></type> <name>element</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>long</name></type> <name>index</name></decl>;</decl_stmt>
+
+	<if>if <condition>(<expr>!<call><name>PyTuple_Check</name><argument_list>(<argument><expr><name>state</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+		<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_TypeError</name></expr></argument>,
+			<argument><expr>"state vector must be a tuple"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<return>return <expr><name>NULL</name></expr>;</return>
+	}</block></then></if>
+	<if>if <condition>(<expr><call><name>PyTuple_Size</name><argument_list>(<argument><expr><name>state</name></expr></argument>)</argument_list></call> != <name>N</name>+1</expr>)</condition><then> <block>{
+		<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>,
+			<argument><expr>"state vector is the wrong size"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<return>return <expr><name>NULL</name></expr>;</return>
+	}</block></then></if>
+
+	<for>for (<init><expr><name>i</name>=0</expr>;</init> <condition><expr><name>i</name>&lt;<name>N</name></expr> ;</condition> <incr><expr><name>i</name>++</expr></incr>) <block>{
+		<expr_stmt><expr><name>element</name> = <call><name>PyLong_AsUnsignedLong</name><argument_list>(<argument><expr><call><name>PyTuple_GET_ITEM</name><argument_list>(<argument><expr><name>state</name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<if>if <condition>(<expr><name>element</name> == -1 &amp;&amp; <call><name>PyErr_Occurred</name><argument_list>()</argument_list></call></expr>)</condition><then>
+			<return>return <expr><name>NULL</name></expr>;</return></then></if>
+		<expr_stmt><expr><name><name>self</name>-&gt;<name>state</name><index>[<expr><name>i</name></expr>]</index></name> = <name>element</name> &amp; 0xffffffffUL</expr>;</expr_stmt> <comment type="block">/* Make sure we get sane state */</comment>
+	}</block></for>
+
+	<expr_stmt><expr><name>index</name> = <call><name>PyLong_AsLong</name><argument_list>(<argument><expr><call><name>PyTuple_GET_ITEM</name><argument_list>(<argument><expr><name>state</name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>index</name> == -1 &amp;&amp; <call><name>PyErr_Occurred</name><argument_list>()</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>index</name></name> = (<name>int</name>)<name>index</name></expr>;</expr_stmt>
+
+	<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/*
+Jumpahead should be a fast way advance the generator n-steps ahead, but
+lacking a formula for that, the next best is to use n and the existing
+state to create a new state far away from the original.
+
+The generator uses constant spaced additive feedback, so shuffling the
+state elements ought to produce a state which would not be encountered
+(in the near term) by calls to random().  Shuffling is normally
+implemented by swapping the ith element with another element ranging
+from 0 to i inclusive.  That allows the element to have the possibility
+of not being moved.  Since the goal is to produce a new, different
+state, the swap element is ranged from 0 to i-1 inclusive.  This assures
+that each element gets moved at least once.
+
+To make sure that consecutive calls to jumpahead(n) produce different
+states (even in the rare case of involutory shuffles), i+1 is added to
+each element at position i.  Successive calls are then guaranteed to
+have changing (growing) values as well as shuffled positions.
+
+Finally, the self-&gt;index value is set to N so that the generator itself
+kicks in on the next call to random().	This assures that all results
+have been through the generator and do not just reflect alterations to
+the underlying state.
+*/</comment>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>random_jumpahead</name><parameter_list>(<param><decl><type><name>RandomObject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>n</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>long</name></type> <name>i</name></decl>, <decl><type ref="prev"/><name>j</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>iobj</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>remobj</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>unsigned</name> <name>long</name> *</type><name>mt</name></decl>, <decl><type ref="prev"/><name>tmp</name></decl>;</decl_stmt>
+
+	<if>if <condition>(<expr>!<call><name>PyInt_Check</name><argument_list>(<argument><expr><name>n</name></expr></argument>)</argument_list></call> &amp;&amp; !<call><name>PyLong_Check</name><argument_list>(<argument><expr><name>n</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+		<expr_stmt><expr><call><name>PyErr_Format</name><argument_list>(<argument><expr><name>PyExc_TypeError</name></expr></argument>, <argument><expr>"jumpahead requires an "
+			     "integer, not '%s'"</expr></argument>,
+			     <argument><expr><call><name>Py_TYPE</name><argument_list>(<argument><expr><name>n</name></expr></argument>)</argument_list></call>-&gt;<name>tp_name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<return>return <expr><name>NULL</name></expr>;</return>
+	}</block></then></if>
+
+	<expr_stmt><expr><name>mt</name> = <name><name>self</name>-&gt;<name>state</name></name></expr>;</expr_stmt>
+	<for>for (<init><expr><name>i</name> = <name>N</name>-1</expr>;</init> <condition><expr><name>i</name> &gt; 1</expr>;</condition> <incr><expr><name>i</name>--</expr></incr>) <block>{
+		<expr_stmt><expr><name>iobj</name> = <call><name>PyInt_FromLong</name><argument_list>(<argument><expr><name>i</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<if>if <condition>(<expr><name>iobj</name> == <name>NULL</name></expr>)</condition><then>
+			<return>return <expr><name>NULL</name></expr>;</return></then></if>
+		<expr_stmt><expr><name>remobj</name> = <call><name>PyNumber_Remainder</name><argument_list>(<argument><expr><name>n</name></expr></argument>, <argument><expr><name>iobj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>iobj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<if>if <condition>(<expr><name>remobj</name> == <name>NULL</name></expr>)</condition><then>
+			<return>return <expr><name>NULL</name></expr>;</return></then></if>
+		<expr_stmt><expr><name>j</name> = <call><name>PyInt_AsLong</name><argument_list>(<argument><expr><name>remobj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>remobj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<if>if <condition>(<expr><name>j</name> == -1L &amp;&amp; <call><name>PyErr_Occurred</name><argument_list>()</argument_list></call></expr>)</condition><then>
+			<return>return <expr><name>NULL</name></expr>;</return></then></if>
+		<expr_stmt><expr><name>tmp</name> = <name><name>mt</name><index>[<expr><name>i</name></expr>]</index></name></expr>;</expr_stmt>
+		<expr_stmt><expr><name><name>mt</name><index>[<expr><name>i</name></expr>]</index></name> = <name><name>mt</name><index>[<expr><name>j</name></expr>]</index></name></expr>;</expr_stmt>
+		<expr_stmt><expr><name><name>mt</name><index>[<expr><name>j</name></expr>]</index></name> = <name>tmp</name></expr>;</expr_stmt>
+	}</block></for>
+
+	<for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name>N</name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>)
+		<expr_stmt><expr><name><name>mt</name><index>[<expr><name>i</name></expr>]</index></name> += <name>i</name>+1</expr>;</expr_stmt></for>
+
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>index</name></name> = <name>N</name></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>random_getrandbits</name><parameter_list>(<param><decl><type><name>RandomObject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>int</name></type> <name>k</name></decl>, <decl><type ref="prev"/><name>i</name></decl>, <decl><type ref="prev"/><name>bytes</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>unsigned</name> <name>long</name></type> <name>r</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>unsigned</name> <name>char</name> *</type><name>bytearray</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>result</name></decl>;</decl_stmt>
+
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"i:getrandbits"</expr></argument>, <argument><expr>&amp;<name>k</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+	<if>if <condition>(<expr><name>k</name> &lt;= 0</expr>)</condition><then> <block>{
+		<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>,
+				<argument><expr>"number of bits must be greater than zero"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<return>return <expr><name>NULL</name></expr>;</return>
+	}</block></then></if>
+
+	<expr_stmt><expr><name>bytes</name> = ((<name>k</name> - 1) / 32 + 1) * 4</expr>;</expr_stmt>
+	<expr_stmt><expr><name>bytearray</name> = (<name>unsigned</name> <name>char</name> *)<call><name>PyMem_Malloc</name><argument_list>(<argument><expr><name>bytes</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>bytearray</name> == <name>NULL</name></expr>)</condition><then> <block>{
+		<expr_stmt><expr><call><name>PyErr_NoMemory</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+		<return>return <expr><name>NULL</name></expr>;</return>
+	}</block></then></if>
+
+	<comment type="block">/* Fill-out whole words, byte-by-byte to avoid endianness issues */</comment>
+	<for>for (<init><expr><name>i</name>=0</expr> ;</init> <condition><expr><name>i</name>&lt;<name>bytes</name></expr> ;</condition> <incr><expr><name>i</name>+=4</expr>, <expr><name>k</name>-=32</expr></incr>) <block>{
+		<expr_stmt><expr><name>r</name> = <call><name>genrand_int32</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<if>if <condition>(<expr><name>k</name> &lt; 32</expr>)</condition><then>
+			<expr_stmt><expr><name>r</name> &gt;&gt;= (32 - <name>k</name>)</expr>;</expr_stmt></then></if>
+		<expr_stmt><expr><name><name>bytearray</name><index>[<expr><name>i</name>+0</expr>]</index></name> = (<name>unsigned</name> <name>char</name>)<name>r</name></expr>;</expr_stmt>
+		<expr_stmt><expr><name><name>bytearray</name><index>[<expr><name>i</name>+1</expr>]</index></name> = <call>(<name>unsigned</name> <name>char</name>)<argument_list>(<argument><expr><name>r</name> &gt;&gt; 8</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><name><name>bytearray</name><index>[<expr><name>i</name>+2</expr>]</index></name> = <call>(<name>unsigned</name> <name>char</name>)<argument_list>(<argument><expr><name>r</name> &gt;&gt; 16</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><name><name>bytearray</name><index>[<expr><name>i</name>+3</expr>]</index></name> = <call>(<name>unsigned</name> <name>char</name>)<argument_list>(<argument><expr><name>r</name> &gt;&gt; 24</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	}</block></for>
+
+	<comment type="block">/* little endian order to match bytearray assignment order */</comment>
+	<expr_stmt><expr><name>result</name> = <call><name>_PyLong_FromByteArray</name><argument_list>(<argument><expr><name>bytearray</name></expr></argument>, <argument><expr><name>bytes</name></expr></argument>, <argument><expr>1</expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>PyMem_Free</name><argument_list>(<argument><expr><name>bytearray</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>result</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>random_new</name><parameter_list>(<param><decl><type><name>PyTypeObject</name> *</type><name>type</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>kwds</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>RandomObject</name> *</type><name>self</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>tmp</name></decl>;</decl_stmt>
+
+	<if>if <condition>(<expr><name>type</name> == &amp;<name>Random_Type</name> &amp;&amp; !<call><name>_PyArg_NoKeywords</name><argument_list>(<argument><expr>"Random()"</expr></argument>, <argument><expr><name>kwds</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+	<expr_stmt><expr><name>self</name> = (<name>RandomObject</name> *)<call><name><name>type</name>-&gt;<name>tp_alloc</name></name><argument_list>(<argument><expr><name>type</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>self</name> == <name>NULL</name></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>tmp</name> = <call><name>random_seed</name><argument_list>(<argument><expr><name>self</name></expr></argument>, <argument><expr><name>args</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>tmp</name> == <name>NULL</name></expr>)</condition><then> <block>{
+		<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<return>return <expr><name>NULL</name></expr>;</return>
+	}</block></then></if>
+	<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>tmp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr>(<name>PyObject</name> *)<name>self</name></expr>;</return>
+}</block></function>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyMethodDef</name></type> <name><name>random_methods</name><index>[]</index></name> <init>= <expr><block>{
+	<expr><block>{<expr>"random"</expr>,	<expr>(<name>PyCFunction</name>)<name>random_random</name></expr>,  <expr><name>METH_NOARGS</name></expr>,
+		<macro><name>PyDoc_STR</name><argument_list>(<argument>"random() -&gt; x in the interval [0, 1)."</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"seed"</expr>,	<expr>(<name>PyCFunction</name>)<name>random_seed</name></expr>,  <expr><name>METH_VARARGS</name></expr>,
+		<macro><name>PyDoc_STR</name><argument_list>(<argument>"seed([n]) -&gt; None.  Defaults to current time."</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"getstate"</expr>,	<expr>(<name>PyCFunction</name>)<name>random_getstate</name></expr>,  <expr><name>METH_NOARGS</name></expr>,
+		<macro><name>PyDoc_STR</name><argument_list>(<argument>"getstate() -&gt; tuple containing the current state."</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"setstate"</expr>,	  <expr>(<name>PyCFunction</name>)<name>random_setstate</name></expr>,  <expr><name>METH_O</name></expr>,
+		<macro><name>PyDoc_STR</name><argument_list>(<argument>"setstate(state) -&gt; None.  Restores generator state."</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"jumpahead"</expr>,	<expr>(<name>PyCFunction</name>)<name>random_jumpahead</name></expr>,	<expr><name>METH_O</name></expr>,
+		<macro><name>PyDoc_STR</name><argument_list>(<argument>"jumpahead(int) -&gt; None.  Create new state from "
+			  "existing state and integer."</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"getrandbits"</expr>,	<expr>(<name>PyCFunction</name>)<name>random_getrandbits</name></expr>,  <expr><name>METH_VARARGS</name></expr>,
+		<macro><name>PyDoc_STR</name><argument_list>(<argument>"getrandbits(k) -&gt; x.  Generates a long int with "
+			  "k random bits."</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr><name>NULL</name></expr>,		<expr><name>NULL</name></expr>}</block></expr>		<comment type="block">/* sentinel */</comment>
+}</block></expr></init></decl>;</decl_stmt>
+
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>random_doc</name></expr></argument>,
+<argument><expr>"Random() -&gt; create a random number generator with its own internal state."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyTypeObject</name></type> <name>Random_Type</name> <init>= <expr><block>{
+	<expr><call><name>PyVarObject_HEAD_INIT</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call>
+	"_random.Random"</expr>,		<comment type="block">/*tp_name*/</comment>
+	<expr><sizeof>sizeof<argument_list>(<argument><expr><name>RandomObject</name></expr></argument>)</argument_list></sizeof></expr>,		<comment type="block">/*tp_basicsize*/</comment>
+	<expr>0</expr>,				<comment type="block">/*tp_itemsize*/</comment>
+	<comment type="block">/* methods */</comment>
+	<expr>0</expr>,				<comment type="block">/*tp_dealloc*/</comment>
+	<expr>0</expr>,				<comment type="block">/*tp_print*/</comment>
+	<expr>0</expr>,				<comment type="block">/*tp_getattr*/</comment>
+	<expr>0</expr>,				<comment type="block">/*tp_setattr*/</comment>
+	<expr>0</expr>,				<comment type="block">/*tp_compare*/</comment>
+	<expr>0</expr>,				<comment type="block">/*tp_repr*/</comment>
+	<expr>0</expr>,				<comment type="block">/*tp_as_number*/</comment>
+	<expr>0</expr>,				<comment type="block">/*tp_as_sequence*/</comment>
+	<expr>0</expr>,				<comment type="block">/*tp_as_mapping*/</comment>
+	<expr>0</expr>,				<comment type="block">/*tp_hash*/</comment>
+	<expr>0</expr>,				<comment type="block">/*tp_call*/</comment>
+	<expr>0</expr>,				<comment type="block">/*tp_str*/</comment>
+	<expr><name>PyObject_GenericGetAttr</name></expr>,	<comment type="block">/*tp_getattro*/</comment>
+	<expr>0</expr>,				<comment type="block">/*tp_setattro*/</comment>
+	<expr>0</expr>,				<comment type="block">/*tp_as_buffer*/</comment>
+	<expr><name>Py_TPFLAGS_DEFAULT</name> | <name>Py_TPFLAGS_BASETYPE</name></expr>,	<comment type="block">/*tp_flags*/</comment>
+	<expr><name>random_doc</name></expr>,			<comment type="block">/*tp_doc*/</comment>
+	<expr>0</expr>,				<comment type="block">/*tp_traverse*/</comment>
+	<expr>0</expr>,				<comment type="block">/*tp_clear*/</comment>
+	<expr>0</expr>,				<comment type="block">/*tp_richcompare*/</comment>
+	<expr>0</expr>,				<comment type="block">/*tp_weaklistoffset*/</comment>
+	<expr>0</expr>,				<comment type="block">/*tp_iter*/</comment>
+	<expr>0</expr>,				<comment type="block">/*tp_iternext*/</comment>
+	<expr><name>random_methods</name></expr>, 		<comment type="block">/*tp_methods*/</comment>
+	<expr>0</expr>,				<comment type="block">/*tp_members*/</comment>
+	<expr>0</expr>,				<comment type="block">/*tp_getset*/</comment>
+	<expr>0</expr>,				<comment type="block">/*tp_base*/</comment>
+	<expr>0</expr>,				<comment type="block">/*tp_dict*/</comment>
+	<expr>0</expr>,				<comment type="block">/*tp_descr_get*/</comment>
+	<expr>0</expr>,				<comment type="block">/*tp_descr_set*/</comment>
+	<expr>0</expr>,				<comment type="block">/*tp_dictoffset*/</comment>
+	<expr>0</expr>,				<comment type="block">/*tp_init*/</comment>
+	<expr>0</expr>,				<comment type="block">/*tp_alloc*/</comment>
+	<expr><name>random_new</name></expr>,			<comment type="block">/*tp_new*/</comment>
+	<expr><name>_PyObject_Del</name></expr>,			<comment type="block">/*tp_free*/</comment>
+	<expr>0</expr>,				<comment type="block">/*tp_is_gc*/</comment>
+}</block></expr></init></decl>;</decl_stmt>
+
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>module_doc</name></expr></argument>,
+<argument><expr>"Module implements the Mersenne Twister random number generator."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<function><type><name>PyMODINIT_FUNC</name></type>
+<name>init_random</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>m</name></decl>;</decl_stmt>
+
+	<if>if <condition>(<expr><call><name>PyType_Ready</name><argument_list>(<argument><expr>&amp;<name>Random_Type</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+		<return>return;</return></then></if>
+	<expr_stmt><expr><name>m</name> = <call><name>Py_InitModule3</name><argument_list>(<argument><expr>"_random"</expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>module_doc</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>m</name> == <name>NULL</name></expr>)</condition><then>
+		<return>return;</return></then></if>
+	<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr>&amp;<name>Random_Type</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>PyModule_AddObject</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"Random"</expr></argument>, <argument><expr>(<name>PyObject</name> *)&amp;<name>Random_Type</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+</unit>

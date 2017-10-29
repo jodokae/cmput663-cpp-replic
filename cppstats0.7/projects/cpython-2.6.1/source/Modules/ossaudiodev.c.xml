@@ -1,0 +1,1138 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/cpython-2.6.1/source/Modules/ossaudiodev.c"><comment type="block">/*
+ * ossaudiodev -- Python interface to the OSS (Open Sound System) API.
+ *                This is the standard audio API for Linux and some
+ *                flavours of BSD [XXX which ones?]; it is also available
+ *                for a wide range of commercial Unices.
+ *
+ * Originally written by Peter Bosch, March 2000, as linuxaudiodev.
+ *
+ * Renamed to ossaudiodev and rearranged/revised/hacked up
+ * by Greg Ward &lt;gward@python.net&gt;, November 2002.
+ * Mixer interface by Nicholas FitzRoy-Dale &lt;wzdd@lardcave.net&gt;, Dec 2002.
+ *
+ * (c) 2000 Peter Bosch.  All Rights Reserved.
+ * (c) 2002 Gregory P. Ward.  All Rights Reserved.
+ * (c) 2002 Python Software Foundation.  All Rights Reserved.
+ *
+ * XXX need a license statement
+ *
+ * $Id$
+ */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"Python.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"structmember.h"</cpp:file></cpp:include>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>HAVE_FCNTL_H</name></cpp:ifdef>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;fcntl.h&gt;</cpp:file></cpp:include>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>O_RDONLY</name></cpp:macro> <cpp:value>00</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>O_WRONLY</name></cpp:macro> <cpp:value>01</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;sys/ioctl.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;sys/soundcard.h&gt;</cpp:file></cpp:include>
+
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>linux</name></expr></argument>)</argument_list></call></expr></cpp:if>
+
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>HAVE_STDINT_H</name></cpp:ifndef>
+<typedef>typedef <type><name>unsigned</name> <name>long</name></type> <name>uint32_t</name>;</typedef>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<cpp:elif>#<cpp:directive>elif</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>__FreeBSD__</name></expr></argument>)</argument_list></call></expr></cpp:elif>
+
+<cpp:ifndef># <cpp:directive>ifndef</cpp:directive> <name>SNDCTL_DSP_CHANNELS</name></cpp:ifndef>
+<cpp:define>#  <cpp:directive>define</cpp:directive> <cpp:macro><name>SNDCTL_DSP_CHANNELS</name></cpp:macro> <cpp:value>SOUND_PCM_WRITE_CHANNELS</cpp:value></cpp:define>
+<cpp:endif># <cpp:directive>endif</cpp:directive></cpp:endif>
+
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<typedef>typedef <type><struct>struct <block>{
+    <decl_stmt><decl><type><name>PyObject_HEAD</name>
+    <name>char</name>    *</type><name>devicename</name></decl>;</decl_stmt>              <comment type="block">/* name of the device file */</comment>
+    <decl_stmt><decl><type><name>int</name></type>      <name>fd</name></decl>;</decl_stmt>                      <comment type="block">/* file descriptor */</comment>
+    <decl_stmt><decl><type><name>int</name></type>      <name>mode</name></decl>;</decl_stmt>                    <comment type="block">/* file mode (O_RDONLY, etc.) */</comment>
+    <decl_stmt><decl><type><name>int</name></type>      <name>icount</name></decl>;</decl_stmt>                  <comment type="block">/* input count */</comment>
+    <decl_stmt><decl><type><name>int</name></type>      <name>ocount</name></decl>;</decl_stmt>                  <comment type="block">/* output count */</comment>
+    <decl_stmt><decl><type><name>uint32_t</name></type> <name>afmts</name></decl>;</decl_stmt>                   <comment type="block">/* audio formats supported by hardware */</comment>
+}</block></struct></type> <name>oss_audio_t</name>;</typedef>
+
+<typedef>typedef <type><struct>struct <block>{
+    <decl_stmt><decl><type><name>PyObject_HEAD</name>
+    <name>int</name></type>      <name>fd</name></decl>;</decl_stmt>                      <comment type="block">/* The open mixer device */</comment>
+}</block></struct></type> <name>oss_mixer_t</name>;</typedef>
+
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyTypeObject</name></type> <name>OSSAudioType</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyTypeObject</name></type> <name>OSSMixerType</name></decl>;</decl_stmt>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyObject</name> *</type><name>OSSAudioError</name></decl>;</decl_stmt>
+
+
+<comment type="block">/* ----------------------------------------------------------------------
+ * DSP object initialization/deallocation
+ */</comment>
+
+<function><type><specifier>static</specifier> <name>oss_audio_t</name> *</type>
+<name>newossobject</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>arg</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>oss_audio_t</name> *</type><name>self</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>fd</name></decl>, <decl><type ref="prev"/><name>afmts</name></decl>, <decl><type ref="prev"/><name>imode</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name> *</type><name>devicename</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name> *</type><name>mode</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+
+    <comment type="block">/* Two ways to call open():
+         open(device, mode) (for consistency with builtin open())
+         open(mode)         (for backwards compatibility)
+       because the *first* argument is optional, parsing args is
+       a wee bit tricky. */</comment>
+    <if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>arg</name></expr></argument>, <argument><expr>"s|s:open"</expr></argument>, <argument><expr>&amp;<name>devicename</name></expr></argument>, <argument><expr>&amp;<name>mode</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+       <return>return <expr><name>NULL</name></expr>;</return></then></if>
+    <if>if <condition>(<expr><name>mode</name> == <name>NULL</name></expr>)</condition><then> <block>{                 <comment type="block">/* only one arg supplied */</comment>
+       <expr_stmt><expr><name>mode</name> = <name>devicename</name></expr>;</expr_stmt>
+       <expr_stmt><expr><name>devicename</name> = <name>NULL</name></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>mode</name></expr></argument>, <argument><expr>"r"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <expr_stmt><expr><name>imode</name> = <name>O_RDONLY</name></expr>;</expr_stmt></then>
+    <else>else <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>mode</name></expr></argument>, <argument><expr>"w"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <expr_stmt><expr><name>imode</name> = <name>O_WRONLY</name></expr>;</expr_stmt></then>
+    <else>else <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>mode</name></expr></argument>, <argument><expr>"rw"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <expr_stmt><expr><name>imode</name> = <name>O_RDWR</name></expr>;</expr_stmt></then>
+    <else>else <block>{
+        <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>OSSAudioError</name></expr></argument>, <argument><expr>"mode must be 'r', 'w', or 'rw'"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></else></if></else></if></else></if>
+
+    <comment type="block">/* Open the correct device: either the 'device' argument,
+       or the AUDIODEV environment variable, or "/dev/dsp". */</comment>
+    <if>if <condition>(<expr><name>devicename</name> == <name>NULL</name></expr>)</condition><then> <block>{              <comment type="block">/* called with one arg */</comment>
+       <expr_stmt><expr><name>devicename</name> = <call><name>getenv</name><argument_list>(<argument><expr>"AUDIODEV"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+       <if>if <condition>(<expr><name>devicename</name> == <name>NULL</name></expr>)</condition><then>             <comment type="block">/* $AUDIODEV not set */</comment>
+          <expr_stmt><expr><name>devicename</name> = "/dev/dsp"</expr>;</expr_stmt></then></if>
+    }</block></then></if>
+
+    <comment type="block">/* Open with O_NONBLOCK to avoid hanging on devices that only allow
+       one open at a time.  This does *not* affect later I/O; OSS
+       provides a special ioctl() for non-blocking read/write, which is
+       exposed via oss_nonblock() below. */</comment>
+    <if>if <condition>(<expr>(<name>fd</name> = <call><name>open</name><argument_list>(<argument><expr><name>devicename</name></expr></argument>, <argument><expr><name>imode</name>|<name>O_NONBLOCK</name></expr></argument>)</argument_list></call>) == -1</expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>PyErr_SetFromErrnoWithFilename</name><argument_list>(<argument><expr><name>PyExc_IOError</name></expr></argument>, <argument><expr><name>devicename</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/* And (try to) put it back in blocking mode so we get the
+       expected write() semantics. */</comment>
+    <if>if <condition>(<expr><call><name>fcntl</name><argument_list>(<argument><expr><name>fd</name></expr></argument>, <argument><expr><name>F_SETFL</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call> == -1</expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>close</name><argument_list>(<argument><expr><name>fd</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>PyErr_SetFromErrnoWithFilename</name><argument_list>(<argument><expr><name>PyExc_IOError</name></expr></argument>, <argument><expr><name>devicename</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+
+    <if>if <condition>(<expr><call><name>ioctl</name><argument_list>(<argument><expr><name>fd</name></expr></argument>, <argument><expr><name>SNDCTL_DSP_GETFMTS</name></expr></argument>, <argument><expr>&amp;<name>afmts</name></expr></argument>)</argument_list></call> == -1</expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>PyErr_SetFromErrnoWithFilename</name><argument_list>(<argument><expr><name>PyExc_IOError</name></expr></argument>, <argument><expr><name>devicename</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+    <comment type="block">/* Create and initialize the object */</comment>
+    <if>if <condition>(<expr>(<name>self</name> = <call><name>PyObject_New</name><argument_list>(<argument><expr><name>oss_audio_t</name></expr></argument>, <argument><expr>&amp;<name>OSSAudioType</name></expr></argument>)</argument_list></call>) == <name>NULL</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>close</name><argument_list>(<argument><expr><name>fd</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>devicename</name></name> = <name>devicename</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>fd</name></name> = <name>fd</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>mode</name></name> = <name>imode</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>icount</name></name> = <name><name>self</name>-&gt;<name>ocount</name></name> = 0</expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>afmts</name></name>  = <name>afmts</name></expr>;</expr_stmt>
+    <return>return <expr><name>self</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>oss_dealloc</name><parameter_list>(<param><decl><type><name>oss_audio_t</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+    <comment type="block">/* if already closed, don't reclose it */</comment>
+    <if>if <condition>(<expr><name><name>self</name>-&gt;<name>fd</name></name> != -1</expr>)</condition><then>
+        <expr_stmt><expr><call><name>close</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+    <expr_stmt><expr><call><name>PyObject_Del</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+
+<comment type="block">/* ----------------------------------------------------------------------
+ * Mixer object initialization/deallocation
+ */</comment>
+
+<function><type><specifier>static</specifier> <name>oss_mixer_t</name> *</type>
+<name>newossmixerobject</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>arg</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>char</name> *</type><name>devicename</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>fd</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>oss_mixer_t</name> *</type><name>self</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>arg</name></expr></argument>, <argument><expr>"|s"</expr></argument>, <argument><expr>&amp;<name>devicename</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+
+    <if>if <condition>(<expr><name>devicename</name> == <name>NULL</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>devicename</name> = <call><name>getenv</name><argument_list>(<argument><expr>"MIXERDEV"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>devicename</name> == <name>NULL</name></expr>)</condition><then>            <comment type="block">/* MIXERDEV not set */</comment>
+            <expr_stmt><expr><name>devicename</name> = "/dev/mixer"</expr>;</expr_stmt></then></if>
+    }</block></then></if>
+
+    <if>if <condition>(<expr>(<name>fd</name> = <call><name>open</name><argument_list>(<argument><expr><name>devicename</name></expr></argument>, <argument><expr><name>O_RDWR</name></expr></argument>)</argument_list></call>) == -1</expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>PyErr_SetFromErrnoWithFilename</name><argument_list>(<argument><expr><name>PyExc_IOError</name></expr></argument>, <argument><expr><name>devicename</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+
+    <if>if <condition>(<expr>(<name>self</name> = <call><name>PyObject_New</name><argument_list>(<argument><expr><name>oss_mixer_t</name></expr></argument>, <argument><expr>&amp;<name>OSSMixerType</name></expr></argument>)</argument_list></call>) == <name>NULL</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>close</name><argument_list>(<argument><expr><name>fd</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>fd</name></name> = <name>fd</name></expr>;</expr_stmt>
+
+    <return>return <expr><name>self</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>oss_mixer_dealloc</name><parameter_list>(<param><decl><type><name>oss_mixer_t</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+    <comment type="block">/* if already closed, don't reclose it */</comment>
+    <if>if <condition>(<expr><name><name>self</name>-&gt;<name>fd</name></name> != -1</expr>)</condition><then>
+        <expr_stmt><expr><call><name>close</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+    <expr_stmt><expr><call><name>PyObject_Del</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+
+<comment type="block">/* Methods to wrap the OSS ioctls.  The calling convention is pretty
+   simple:
+     nonblock()        -&gt; ioctl(fd, SNDCTL_DSP_NONBLOCK)
+     fmt = setfmt(fmt) -&gt; ioctl(fd, SNDCTL_DSP_SETFMT, &amp;fmt)
+     etc.
+*/</comment>
+
+
+<comment type="block">/* ----------------------------------------------------------------------
+ * Helper functions
+ */</comment>
+
+<comment type="block">/* _do_ioctl_1() is a private helper function used for the OSS ioctls --
+   SNDCTL_DSP_{SETFMT,CHANNELS,SPEED} -- that that are called from C
+   like this:
+     ioctl(fd, SNDCTL_DSP_cmd, &amp;arg)
+
+   where arg is the value to set, and on return the driver sets arg to
+   the value that was actually set.  Mapping this to Python is obvious:
+     arg = dsp.xxx(arg)
+*/</comment>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>_do_ioctl_1</name><parameter_list>(<param><decl><type><name>int</name></type> <name>fd</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>, <param><decl><type><name>char</name> *</type><name>fname</name></decl></param>, <param><decl><type><name>int</name></type> <name>cmd</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>char</name></type> <name><name>argfmt</name><index>[<expr>33</expr>]</index></name> <init>= <expr>"i:"</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>arg</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><call><name>strlen</name><argument_list>(<argument><expr><name>fname</name></expr></argument>)</argument_list></call> &lt;= 30</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>strcat</name><argument_list>(<argument><expr><name>argfmt</name></expr></argument>, <argument><expr><name>fname</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr><name>argfmt</name></expr></argument>, <argument><expr>&amp;<name>arg</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+        <return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+    <if>if <condition>(<expr><call><name>ioctl</name><argument_list>(<argument><expr><name>fd</name></expr></argument>, <argument><expr><name>cmd</name></expr></argument>, <argument><expr>&amp;<name>arg</name></expr></argument>)</argument_list></call> == -1</expr>)</condition><then>
+        <return>return <expr><call><name>PyErr_SetFromErrno</name><argument_list>(<argument><expr><name>PyExc_IOError</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+    <return>return <expr><call><name>PyInt_FromLong</name><argument_list>(<argument><expr><name>arg</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* _do_ioctl_1_internal() is a wrapper for ioctls that take no inputs
+   but return an output -- ie. we need to pass a pointer to a local C
+   variable so the driver can write its output there, but from Python
+   all we see is the return value.  For example,
+   SOUND_MIXER_READ_DEVMASK returns a bitmask of available mixer
+   devices, but does not use the value of the parameter passed-in in any
+   way.
+*/</comment>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>_do_ioctl_1_internal</name><parameter_list>(<param><decl><type><name>int</name></type> <name>fd</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>, <param><decl><type><name>char</name> *</type><name>fname</name></decl></param>, <param><decl><type><name>int</name></type> <name>cmd</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>char</name></type> <name><name>argfmt</name><index>[<expr>32</expr>]</index></name> <init>= <expr>":"</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>arg</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+
+    <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><call><name>strlen</name><argument_list>(<argument><expr><name>fname</name></expr></argument>)</argument_list></call> &lt;= 30</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>strcat</name><argument_list>(<argument><expr><name>argfmt</name></expr></argument>, <argument><expr><name>fname</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr><name>argfmt</name></expr></argument>, <argument><expr>&amp;<name>arg</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+        <return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+    <if>if <condition>(<expr><call><name>ioctl</name><argument_list>(<argument><expr><name>fd</name></expr></argument>, <argument><expr><name>cmd</name></expr></argument>, <argument><expr>&amp;<name>arg</name></expr></argument>)</argument_list></call> == -1</expr>)</condition><then>
+        <return>return <expr><call><name>PyErr_SetFromErrno</name><argument_list>(<argument><expr><name>PyExc_IOError</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+    <return>return <expr><call><name>PyInt_FromLong</name><argument_list>(<argument><expr><name>arg</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+
+<comment type="block">/* _do_ioctl_0() is a private helper for the no-argument ioctls:
+   SNDCTL_DSP_{SYNC,RESET,POST}. */</comment>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>_do_ioctl_0</name><parameter_list>(<param><decl><type><name>int</name></type> <name>fd</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>, <param><decl><type><name>char</name> *</type><name>fname</name></decl></param>, <param><decl><type><name>int</name></type> <name>cmd</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>char</name></type> <name><name>argfmt</name><index>[<expr>32</expr>]</index></name> <init>= <expr>":"</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>rv</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><call><name>strlen</name><argument_list>(<argument><expr><name>fname</name></expr></argument>)</argument_list></call> &lt;= 30</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>strcat</name><argument_list>(<argument><expr><name>argfmt</name></expr></argument>, <argument><expr><name>fname</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr><name>argfmt</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+        <return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+    <comment type="block">/* According to hannu@opensound.com, all three of the ioctls that
+       use this function can block, so release the GIL.  This is
+       especially important for SYNC, which can block for several
+       seconds. */</comment>
+    <decl_stmt><decl><type><name>Py_BEGIN_ALLOW_THREADS</name></type>
+    <name>rv</name> <init>= <expr><call><name>ioctl</name><argument_list>(<argument><expr><name>fd</name></expr></argument>, <argument><expr><name>cmd</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <macro><name>Py_END_ALLOW_THREADS</name></macro>
+
+    <if>if <condition>(<expr><name>rv</name> == -1</expr>)</condition><then>
+        <return>return <expr><call><name>PyErr_SetFromErrno</name><argument_list>(<argument><expr><name>PyExc_IOError</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* ----------------------------------------------------------------------
+ * Methods of DSP objects (OSSAudioType)
+ */</comment>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>oss_nonblock</name><parameter_list>(<param><decl><type><name>oss_audio_t</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>unused</name></decl></param>)</parameter_list>
+<block>{
+    <comment type="block">/* Hmmm: it doesn't appear to be possible to return to blocking
+       mode once we're in non-blocking mode! */</comment>
+    <if>if <condition>(<expr><call><name>ioctl</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name></expr></argument>, <argument><expr><name>SNDCTL_DSP_NONBLOCK</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call> == -1</expr>)</condition><then>
+        <return>return <expr><call><name>PyErr_SetFromErrno</name><argument_list>(<argument><expr><name>PyExc_IOError</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>oss_setfmt</name><parameter_list>(<param><decl><type><name>oss_audio_t</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+    <return>return <expr><call><name>_do_ioctl_1</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name></expr></argument>, <argument><expr><name>args</name></expr></argument>, <argument><expr>"setfmt"</expr></argument>, <argument><expr><name>SNDCTL_DSP_SETFMT</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>oss_getfmts</name><parameter_list>(<param><decl><type><name>oss_audio_t</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>unused</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>mask</name></decl>;</decl_stmt>
+    <if>if <condition>(<expr><call><name>ioctl</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name></expr></argument>, <argument><expr><name>SNDCTL_DSP_GETFMTS</name></expr></argument>, <argument><expr>&amp;<name>mask</name></expr></argument>)</argument_list></call> == -1</expr>)</condition><then>
+        <return>return <expr><call><name>PyErr_SetFromErrno</name><argument_list>(<argument><expr><name>PyExc_IOError</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+    <return>return <expr><call><name>PyInt_FromLong</name><argument_list>(<argument><expr><name>mask</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>oss_channels</name><parameter_list>(<param><decl><type><name>oss_audio_t</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+    <return>return <expr><call><name>_do_ioctl_1</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name></expr></argument>, <argument><expr><name>args</name></expr></argument>, <argument><expr>"channels"</expr></argument>, <argument><expr><name>SNDCTL_DSP_CHANNELS</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>oss_speed</name><parameter_list>(<param><decl><type><name>oss_audio_t</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+    <return>return <expr><call><name>_do_ioctl_1</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name></expr></argument>, <argument><expr><name>args</name></expr></argument>, <argument><expr>"speed"</expr></argument>, <argument><expr><name>SNDCTL_DSP_SPEED</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>oss_sync</name><parameter_list>(<param><decl><type><name>oss_audio_t</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+    <return>return <expr><call><name>_do_ioctl_0</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name></expr></argument>, <argument><expr><name>args</name></expr></argument>, <argument><expr>"sync"</expr></argument>, <argument><expr><name>SNDCTL_DSP_SYNC</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>oss_reset</name><parameter_list>(<param><decl><type><name>oss_audio_t</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+    <return>return <expr><call><name>_do_ioctl_0</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name></expr></argument>, <argument><expr><name>args</name></expr></argument>, <argument><expr>"reset"</expr></argument>, <argument><expr><name>SNDCTL_DSP_RESET</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>oss_post</name><parameter_list>(<param><decl><type><name>oss_audio_t</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+    <return>return <expr><call><name>_do_ioctl_0</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name></expr></argument>, <argument><expr><name>args</name></expr></argument>, <argument><expr>"post"</expr></argument>, <argument><expr><name>SNDCTL_DSP_POST</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* Regular file methods: read(), write(), close(), etc. as well
+   as one convenience method, writeall(). */</comment>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>oss_read</name><parameter_list>(<param><decl><type><name>oss_audio_t</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>size</name></decl>, <decl><type ref="prev"/><name>count</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name> *</type><name>cp</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name> *</type><name>rv</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"i:read"</expr></argument>, <argument><expr>&amp;<name>size</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+        <return>return <expr><name>NULL</name></expr>;</return></then></if>
+    <expr_stmt><expr><name>rv</name> = <call><name>PyString_FromStringAndSize</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>size</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>rv</name> == <name>NULL</name></expr>)</condition><then>
+        <return>return <expr><name>NULL</name></expr>;</return></then></if>
+    <expr_stmt><expr><name>cp</name> = <call><name>PyString_AS_STRING</name><argument_list>(<argument><expr><name>rv</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <decl_stmt><decl><type><name>Py_BEGIN_ALLOW_THREADS</name></type>
+    <name>count</name> <init>= <expr><call><name>read</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name></expr></argument>, <argument><expr><name>cp</name></expr></argument>, <argument><expr><name>size</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <macro><name>Py_END_ALLOW_THREADS</name></macro>
+
+    <if>if <condition>(<expr><name>count</name> &lt; 0</expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>PyErr_SetFromErrno</name><argument_list>(<argument><expr><name>PyExc_IOError</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>rv</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>icount</name></name> += <name>count</name></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_PyString_Resize</name><argument_list>(<argument><expr>&amp;<name>rv</name></expr></argument>, <argument><expr><name>count</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>rv</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>oss_write</name><parameter_list>(<param><decl><type><name>oss_audio_t</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>char</name> *</type><name>cp</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>rv</name></decl>, <decl><type ref="prev"/><name>size</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"s#:write"</expr></argument>, <argument><expr>&amp;<name>cp</name></expr></argument>, <argument><expr>&amp;<name>size</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+
+    <decl_stmt><decl><type><name>Py_BEGIN_ALLOW_THREADS</name></type>
+    <name>rv</name> <init>= <expr><call><name>write</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name></expr></argument>, <argument><expr><name>cp</name></expr></argument>, <argument><expr><name>size</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <macro><name>Py_END_ALLOW_THREADS</name></macro>
+
+    <if>if <condition>(<expr><name>rv</name> == -1</expr>)</condition><then> <block>{
+        <return>return <expr><call><name>PyErr_SetFromErrno</name><argument_list>(<argument><expr><name>PyExc_IOError</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then> <else>else <block>{
+        <expr_stmt><expr><name><name>self</name>-&gt;<name>ocount</name></name> += <name>rv</name></expr>;</expr_stmt>
+    }</block></else></if>
+    <return>return <expr><call><name>PyInt_FromLong</name><argument_list>(<argument><expr><name>rv</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>oss_writeall</name><parameter_list>(<param><decl><type><name>oss_audio_t</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>char</name> *</type><name>cp</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>rv</name></decl>, <decl><type ref="prev"/><name>size</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>fd_set</name></type> <name>write_set_fds</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>select_rv</name></decl>;</decl_stmt>
+
+    <comment type="block">/* NB. writeall() is only useful in non-blocking mode: according to
+       Guenter Geiger &lt;geiger@xdv.org&gt; on the linux-audio-dev list
+       (http://eca.cx/lad/2002/11/0380.html), OSS guarantees that
+       write() in blocking mode consumes the whole buffer.  In blocking
+       mode, the behaviour of write() and writeall() from Python is
+       indistinguishable. */</comment>
+
+    <if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"s#:write"</expr></argument>, <argument><expr>&amp;<name>cp</name></expr></argument>, <argument><expr>&amp;<name>size</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+        <return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+    <comment type="block">/* use select to wait for audio device to be available */</comment>
+    <expr_stmt><expr><call><name>FD_ZERO</name><argument_list>(<argument><expr>&amp;<name>write_set_fds</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>FD_SET</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name></expr></argument>, <argument><expr>&amp;<name>write_set_fds</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <while>while <condition>(<expr><name>size</name> &gt; 0</expr>)</condition> <block>{
+        <decl_stmt><decl><type><name>Py_BEGIN_ALLOW_THREADS</name></type>
+        <name>select_rv</name> <init>= <expr><call><name>select</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name>+1</expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr>&amp;<name>write_set_fds</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>Py_END_ALLOW_THREADS</name></type>
+        <name>assert</name><argument_list>(<argument><expr><name>select_rv</name> != 0</expr></argument>)</argument_list></decl>;</decl_stmt>         <comment type="block">/* no timeout, can't expire */</comment>
+        <if>if <condition>(<expr><name>select_rv</name> == -1</expr>)</condition><then>
+            <return>return <expr><call><name>PyErr_SetFromErrno</name><argument_list>(<argument><expr><name>PyExc_IOError</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+        <decl_stmt><decl><type><name>Py_BEGIN_ALLOW_THREADS</name></type>
+        <name>rv</name> <init>= <expr><call><name>write</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name></expr></argument>, <argument><expr><name>cp</name></expr></argument>, <argument><expr><name>size</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+        <macro><name>Py_END_ALLOW_THREADS</name></macro>
+        <if>if <condition>(<expr><name>rv</name> == -1</expr>)</condition><then> <block>{
+            <if>if <condition>(<expr><name>errno</name> == <name>EAGAIN</name></expr>)</condition><then> <block>{      <comment type="block">/* buffer is full, try again */</comment>
+                <expr_stmt><expr><name>errno</name> = 0</expr>;</expr_stmt>
+                <continue>continue;</continue>
+            }</block></then> <else>else                      <comment type="block">/* it's a real error */</comment>
+                <return>return <expr><call><name>PyErr_SetFromErrno</name><argument_list>(<argument><expr><name>PyExc_IOError</name></expr></argument>)</argument_list></call></expr>;</return></else></if>
+        }</block></then> <else>else <block>{                        <comment type="block">/* wrote rv bytes */</comment>
+            <expr_stmt><expr><name><name>self</name>-&gt;<name>ocount</name></name> += <name>rv</name></expr>;</expr_stmt>
+            <expr_stmt><expr><name>size</name> -= <name>rv</name></expr>;</expr_stmt>
+            <expr_stmt><expr><name>cp</name> += <name>rv</name></expr>;</expr_stmt>
+        }</block></else></if>
+    }</block></while>
+    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>oss_close</name><parameter_list>(<param><decl><type><name>oss_audio_t</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>unused</name></decl></param>)</parameter_list>
+<block>{
+    <if>if <condition>(<expr><name><name>self</name>-&gt;<name>fd</name></name> &gt;= 0</expr>)</condition><then> <block>{
+        <function_decl><type><name>Py_BEGIN_ALLOW_THREADS</name></type>
+        <name>close</name><parameter_list>(<param><decl><type><name><name>self</name>-&gt;<name>fd</name></name></type></decl></param>)</parameter_list>;</function_decl>
+        <decl_stmt><decl><type><name>Py_END_ALLOW_THREADS</name></type>
+        <name><name>self</name>-&gt;<name>fd</name></name> <init>= <expr>-1</expr></init></decl>;</decl_stmt>
+    }</block></then></if>
+    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>oss_fileno</name><parameter_list>(<param><decl><type><name>oss_audio_t</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>unused</name></decl></param>)</parameter_list>
+<block>{
+    <return>return <expr><call><name>PyInt_FromLong</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* Convenience methods: these generally wrap a couple of ioctls into one
+   common task. */</comment>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>oss_setparameters</name><parameter_list>(<param><decl><type><name>oss_audio_t</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>wanted_fmt</name></decl>, <decl><type ref="prev"/><name>wanted_channels</name></decl>, <decl><type ref="prev"/><name>wanted_rate</name></decl>, <decl><type ref="prev"/><name>strict</name><init>=<expr>0</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>fmt</name></decl>, <decl><type ref="prev"/><name>channels</name></decl>, <decl><type ref="prev"/><name>rate</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name> *</type> <name>rv</name></decl>;</decl_stmt>                    <comment type="block">/* return tuple (fmt, channels, rate) */</comment>
+
+    <if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"iii|i:setparameters"</expr></argument>,
+                          <argument><expr>&amp;<name>wanted_fmt</name></expr></argument>, <argument><expr>&amp;<name>wanted_channels</name></expr></argument>, <argument><expr>&amp;<name>wanted_rate</name></expr></argument>,
+                          <argument><expr>&amp;<name>strict</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+        <return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+    <expr_stmt><expr><name>fmt</name> = <name>wanted_fmt</name></expr>;</expr_stmt>
+    <if>if <condition>(<expr><call><name>ioctl</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name></expr></argument>, <argument><expr><name>SNDCTL_DSP_SETFMT</name></expr></argument>, <argument><expr>&amp;<name>fmt</name></expr></argument>)</argument_list></call> == -1</expr>)</condition><then> <block>{
+        <return>return <expr><call><name>PyErr_SetFromErrno</name><argument_list>(<argument><expr><name>PyExc_IOError</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+    <if>if <condition>(<expr><name>strict</name> &amp;&amp; <name>fmt</name> != <name>wanted_fmt</name></expr>)</condition><then> <block>{
+        <return>return <expr><call><name>PyErr_Format</name>
+            <argument_list>(<argument><expr><name>OSSAudioError</name></expr></argument>,
+             <argument><expr>"unable to set requested format (wanted %d, got %d)"</expr></argument>,
+             <argument><expr><name>wanted_fmt</name></expr></argument>, <argument><expr><name>fmt</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><name>channels</name> = <name>wanted_channels</name></expr>;</expr_stmt>
+    <if>if <condition>(<expr><call><name>ioctl</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name></expr></argument>, <argument><expr><name>SNDCTL_DSP_CHANNELS</name></expr></argument>, <argument><expr>&amp;<name>channels</name></expr></argument>)</argument_list></call> == -1</expr>)</condition><then> <block>{
+        <return>return <expr><call><name>PyErr_SetFromErrno</name><argument_list>(<argument><expr><name>PyExc_IOError</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+    <if>if <condition>(<expr><name>strict</name> &amp;&amp; <name>channels</name> != <name>wanted_channels</name></expr>)</condition><then> <block>{
+        <return>return <expr><call><name>PyErr_Format</name>
+            <argument_list>(<argument><expr><name>OSSAudioError</name></expr></argument>,
+             <argument><expr>"unable to set requested channels (wanted %d, got %d)"</expr></argument>,
+             <argument><expr><name>wanted_channels</name></expr></argument>, <argument><expr><name>channels</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><name>rate</name> = <name>wanted_rate</name></expr>;</expr_stmt>
+    <if>if <condition>(<expr><call><name>ioctl</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name></expr></argument>, <argument><expr><name>SNDCTL_DSP_SPEED</name></expr></argument>, <argument><expr>&amp;<name>rate</name></expr></argument>)</argument_list></call> == -1</expr>)</condition><then> <block>{
+        <return>return <expr><call><name>PyErr_SetFromErrno</name><argument_list>(<argument><expr><name>PyExc_IOError</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+    <if>if <condition>(<expr><name>strict</name> &amp;&amp; <name>rate</name> != <name>wanted_rate</name></expr>)</condition><then> <block>{
+        <return>return <expr><call><name>PyErr_Format</name>
+            <argument_list>(<argument><expr><name>OSSAudioError</name></expr></argument>,
+             <argument><expr>"unable to set requested rate (wanted %d, got %d)"</expr></argument>,
+             <argument><expr><name>wanted_rate</name></expr></argument>, <argument><expr><name>rate</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/* Construct the return value: a (fmt, channels, rate) tuple that
+       tells what the audio hardware was actually set to. */</comment>
+    <expr_stmt><expr><name>rv</name> = <call><name>PyTuple_New</name><argument_list>(<argument><expr>3</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>rv</name> == <name>NULL</name></expr>)</condition><then>
+        <return>return <expr><name>NULL</name></expr>;</return></then></if>
+    <expr_stmt><expr><call><name>PyTuple_SET_ITEM</name><argument_list>(<argument><expr><name>rv</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><call><name>PyInt_FromLong</name><argument_list>(<argument><expr><name>fmt</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>PyTuple_SET_ITEM</name><argument_list>(<argument><expr><name>rv</name></expr></argument>, <argument><expr>1</expr></argument>, <argument><expr><call><name>PyInt_FromLong</name><argument_list>(<argument><expr><name>channels</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>PyTuple_SET_ITEM</name><argument_list>(<argument><expr><name>rv</name></expr></argument>, <argument><expr>2</expr></argument>, <argument><expr><call><name>PyInt_FromLong</name><argument_list>(<argument><expr><name>rate</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>rv</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>_ssize</name><parameter_list>(<param><decl><type><name>oss_audio_t</name> *</type><name>self</name></decl></param>, <param><decl><type><name>int</name> *</type><name>nchannels</name></decl></param>, <param><decl><type><name>int</name> *</type><name>ssize</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>fmt</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>fmt</name> = 0</expr>;</expr_stmt>
+    <if>if <condition>(<expr><call><name>ioctl</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name></expr></argument>, <argument><expr><name>SNDCTL_DSP_SETFMT</name></expr></argument>, <argument><expr>&amp;<name>fmt</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+        <return>return <expr>-<name>errno</name></expr>;</return></then></if>
+
+    <switch>switch <condition>(<expr><name>fmt</name></expr>)</condition> <block>{
+    <case>case <expr><name>AFMT_MU_LAW</name></expr>:
+    </case><case>case <expr><name>AFMT_A_LAW</name></expr>:
+    </case><case>case <expr><name>AFMT_U8</name></expr>:
+    </case><case>case <expr><name>AFMT_S8</name></expr>:
+        <expr_stmt><expr>*<name>ssize</name> = 1</expr>;</expr_stmt>                     <comment type="block">/* 8 bit formats: 1 byte */</comment>
+        <break>break;</break>
+    </case><case>case <expr><name>AFMT_S16_LE</name></expr>:
+    </case><case>case <expr><name>AFMT_S16_BE</name></expr>:
+    </case><case>case <expr><name>AFMT_U16_LE</name></expr>:
+    </case><case>case <expr><name>AFMT_U16_BE</name></expr>:
+        <expr_stmt><expr>*<name>ssize</name> = 2</expr>;</expr_stmt>                     <comment type="block">/* 16 bit formats: 2 byte */</comment>
+        <break>break;</break>
+    </case><case>case <expr><name>AFMT_MPEG</name></expr>:
+    </case><case>case <expr><name>AFMT_IMA_ADPCM</name></expr>:
+    </case><default>default:
+        <return>return <expr>-<name>EOPNOTSUPP</name></expr>;</return>
+    </default>}</block></switch>
+    <if>if <condition>(<expr><call><name>ioctl</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name></expr></argument>, <argument><expr><name>SNDCTL_DSP_CHANNELS</name></expr></argument>, <argument><expr><name>nchannels</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+        <return>return <expr>-<name>errno</name></expr>;</return></then></if>
+    <return>return <expr>0</expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* bufsize returns the size of the hardware audio buffer in number
+   of samples */</comment>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>oss_bufsize</name><parameter_list>(<param><decl><type><name>oss_audio_t</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>unused</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>audio_buf_info</name></type> <name>ai</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>nchannels</name><init>=<expr>0</expr></init>, <name>ssize</name><init>=<expr>0</expr></init></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr><call><name>_ssize</name><argument_list>(<argument><expr><name>self</name></expr></argument>, <argument><expr>&amp;<name>nchannels</name></expr></argument>, <argument><expr>&amp;<name>ssize</name></expr></argument>)</argument_list></call> &lt; 0 || !<name>nchannels</name> || !<name>ssize</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>PyErr_SetFromErrno</name><argument_list>(<argument><expr><name>PyExc_IOError</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+    <if>if <condition>(<expr><call><name>ioctl</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name></expr></argument>, <argument><expr><name>SNDCTL_DSP_GETOSPACE</name></expr></argument>, <argument><expr>&amp;<name>ai</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>PyErr_SetFromErrno</name><argument_list>(<argument><expr><name>PyExc_IOError</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+    <return>return <expr><call><name>PyInt_FromLong</name><argument_list>(<argument><expr>(<name><name>ai</name>.<name>fragstotal</name></name> * <name><name>ai</name>.<name>fragsize</name></name>) / (<name>nchannels</name> * <name>ssize</name>)</expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<comment type="block">/* obufcount returns the number of samples that are available in the
+   hardware for playing */</comment>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>oss_obufcount</name><parameter_list>(<param><decl><type><name>oss_audio_t</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>unused</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>audio_buf_info</name></type> <name>ai</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>nchannels</name><init>=<expr>0</expr></init>, <name>ssize</name><init>=<expr>0</expr></init></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr><call><name>_ssize</name><argument_list>(<argument><expr><name>self</name></expr></argument>, <argument><expr>&amp;<name>nchannels</name></expr></argument>, <argument><expr>&amp;<name>ssize</name></expr></argument>)</argument_list></call> &lt; 0 || !<name>nchannels</name> || !<name>ssize</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>PyErr_SetFromErrno</name><argument_list>(<argument><expr><name>PyExc_IOError</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+    <if>if <condition>(<expr><call><name>ioctl</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name></expr></argument>, <argument><expr><name>SNDCTL_DSP_GETOSPACE</name></expr></argument>, <argument><expr>&amp;<name>ai</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>PyErr_SetFromErrno</name><argument_list>(<argument><expr><name>PyExc_IOError</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+    <return>return <expr><call><name>PyInt_FromLong</name><argument_list>(<argument><expr>(<name><name>ai</name>.<name>fragstotal</name></name> * <name><name>ai</name>.<name>fragsize</name></name> - <name><name>ai</name>.<name>bytes</name></name>) /
+                          (<name>ssize</name> * <name>nchannels</name>)</expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<comment type="block">/* obufcount returns the number of samples that can be played without
+   blocking */</comment>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>oss_obuffree</name><parameter_list>(<param><decl><type><name>oss_audio_t</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>unused</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>audio_buf_info</name></type> <name>ai</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>nchannels</name><init>=<expr>0</expr></init>, <name>ssize</name><init>=<expr>0</expr></init></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr><call><name>_ssize</name><argument_list>(<argument><expr><name>self</name></expr></argument>, <argument><expr>&amp;<name>nchannels</name></expr></argument>, <argument><expr>&amp;<name>ssize</name></expr></argument>)</argument_list></call> &lt; 0 || !<name>nchannels</name> || !<name>ssize</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>PyErr_SetFromErrno</name><argument_list>(<argument><expr><name>PyExc_IOError</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+    <if>if <condition>(<expr><call><name>ioctl</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name></expr></argument>, <argument><expr><name>SNDCTL_DSP_GETOSPACE</name></expr></argument>, <argument><expr>&amp;<name>ai</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>PyErr_SetFromErrno</name><argument_list>(<argument><expr><name>PyExc_IOError</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+    <return>return <expr><call><name>PyInt_FromLong</name><argument_list>(<argument><expr><name><name>ai</name>.<name>bytes</name></name> / (<name>ssize</name> * <name>nchannels</name>)</expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>oss_getptr</name><parameter_list>(<param><decl><type><name>oss_audio_t</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>unused</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>count_info</name></type> <name>info</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>req</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr><name><name>self</name>-&gt;<name>mode</name></name> == <name>O_RDONLY</name></expr>)</condition><then>
+        <expr_stmt><expr><name>req</name> = <name>SNDCTL_DSP_GETIPTR</name></expr>;</expr_stmt></then>
+    <else>else
+        <expr_stmt><expr><name>req</name> = <name>SNDCTL_DSP_GETOPTR</name></expr>;</expr_stmt></else></if>
+    <if>if <condition>(<expr><call><name>ioctl</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name></expr></argument>, <argument><expr><name>req</name></expr></argument>, <argument><expr>&amp;<name>info</name></expr></argument>)</argument_list></call> == -1</expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>PyErr_SetFromErrno</name><argument_list>(<argument><expr><name>PyExc_IOError</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+    <return>return <expr><call><name>Py_BuildValue</name><argument_list>(<argument><expr>"iii"</expr></argument>, <argument><expr><name><name>info</name>.<name>bytes</name></name></expr></argument>, <argument><expr><name><name>info</name>.<name>blocks</name></name></expr></argument>, <argument><expr><name><name>info</name>.<name>ptr</name></name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* ----------------------------------------------------------------------
+ * Methods of mixer objects (OSSMixerType)
+ */</comment>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>oss_mixer_close</name><parameter_list>(<param><decl><type><name>oss_mixer_t</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>unused</name></decl></param>)</parameter_list>
+<block>{
+    <if>if <condition>(<expr><name><name>self</name>-&gt;<name>fd</name></name> &gt;= 0</expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>close</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>self</name>-&gt;<name>fd</name></name> = -1</expr>;</expr_stmt>
+    }</block></then></if>
+    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>oss_mixer_fileno</name><parameter_list>(<param><decl><type><name>oss_mixer_t</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>unused</name></decl></param>)</parameter_list>
+<block>{
+    <return>return <expr><call><name>PyInt_FromLong</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<comment type="block">/* Simple mixer interface methods */</comment>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>oss_mixer_controls</name><parameter_list>(<param><decl><type><name>oss_mixer_t</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+    <return>return <expr><call><name>_do_ioctl_1_internal</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name></expr></argument>, <argument><expr><name>args</name></expr></argument>, <argument><expr>"controls"</expr></argument>,
+        <argument><expr><name>SOUND_MIXER_READ_DEVMASK</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>oss_mixer_stereocontrols</name><parameter_list>(<param><decl><type><name>oss_mixer_t</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+    <return>return <expr><call><name>_do_ioctl_1_internal</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name></expr></argument>, <argument><expr><name>args</name></expr></argument>, <argument><expr>"stereocontrols"</expr></argument>,
+        <argument><expr><name>SOUND_MIXER_READ_STEREODEVS</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>oss_mixer_reccontrols</name><parameter_list>(<param><decl><type><name>oss_mixer_t</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+    <return>return <expr><call><name>_do_ioctl_1_internal</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name></expr></argument>, <argument><expr><name>args</name></expr></argument>, <argument><expr>"reccontrols"</expr></argument>,
+        <argument><expr><name>SOUND_MIXER_READ_RECMASK</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>oss_mixer_get</name><parameter_list>(<param><decl><type><name>oss_mixer_t</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>channel</name></decl>, <decl><type ref="prev"/><name>volume</name></decl>;</decl_stmt>
+
+    <comment type="block">/* Can't use _do_ioctl_1 because of encoded arg thingy. */</comment>
+    <if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"i:get"</expr></argument>, <argument><expr>&amp;<name>channel</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+        <return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+    <if>if <condition>(<expr><name>channel</name> &lt; 0 || <name>channel</name> &gt; <name>SOUND_MIXER_NRDEVICES</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>OSSAudioError</name></expr></argument>, <argument><expr>"Invalid mixer channel specified."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+
+    <if>if <condition>(<expr><call><name>ioctl</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name></expr></argument>, <argument><expr><call><name>MIXER_READ</name><argument_list>(<argument><expr><name>channel</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr>&amp;<name>volume</name></expr></argument>)</argument_list></call> == -1</expr>)</condition><then>
+        <return>return <expr><call><name>PyErr_SetFromErrno</name><argument_list>(<argument><expr><name>PyExc_IOError</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+    <return>return <expr><call><name>Py_BuildValue</name><argument_list>(<argument><expr>"(ii)"</expr></argument>, <argument><expr><name>volume</name> &amp; 0xff</expr></argument>, <argument><expr>(<name>volume</name> &amp; 0xff00) &gt;&gt; 8</expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>oss_mixer_set</name><parameter_list>(<param><decl><type><name>oss_mixer_t</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>channel</name></decl>, <decl><type ref="prev"/><name>volume</name></decl>, <decl><type ref="prev"/><name>leftVol</name></decl>, <decl><type ref="prev"/><name>rightVol</name></decl>;</decl_stmt>
+
+    <comment type="block">/* Can't use _do_ioctl_1 because of encoded arg thingy. */</comment>
+    <if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"i(ii):set"</expr></argument>, <argument><expr>&amp;<name>channel</name></expr></argument>, <argument><expr>&amp;<name>leftVol</name></expr></argument>, <argument><expr>&amp;<name>rightVol</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+        <return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+    <if>if <condition>(<expr><name>channel</name> &lt; 0 || <name>channel</name> &gt; <name>SOUND_MIXER_NRDEVICES</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>OSSAudioError</name></expr></argument>, <argument><expr>"Invalid mixer channel specified."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+
+    <if>if <condition>(<expr><name>leftVol</name> &lt; 0 || <name>rightVol</name> &lt; 0 || <name>leftVol</name> &gt; 100 || <name>rightVol</name> &gt; 100</expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>OSSAudioError</name></expr></argument>, <argument><expr>"Volumes must be between 0 and 100."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><name>volume</name> = (<name>rightVol</name> &lt;&lt; 8) | <name>leftVol</name></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr><call><name>ioctl</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name></expr></argument>, <argument><expr><call><name>MIXER_WRITE</name><argument_list>(<argument><expr><name>channel</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr>&amp;<name>volume</name></expr></argument>)</argument_list></call> == -1</expr>)</condition><then>
+        <return>return <expr><call><name>PyErr_SetFromErrno</name><argument_list>(<argument><expr><name>PyExc_IOError</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+    <return>return <expr><call><name>Py_BuildValue</name><argument_list>(<argument><expr>"(ii)"</expr></argument>, <argument><expr><name>volume</name> &amp; 0xff</expr></argument>, <argument><expr>(<name>volume</name> &amp; 0xff00) &gt;&gt; 8</expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>oss_mixer_get_recsrc</name><parameter_list>(<param><decl><type><name>oss_mixer_t</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+    <return>return <expr><call><name>_do_ioctl_1_internal</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name></expr></argument>, <argument><expr><name>args</name></expr></argument>, <argument><expr>"get_recsrc"</expr></argument>,
+        <argument><expr><name>SOUND_MIXER_READ_RECSRC</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>oss_mixer_set_recsrc</name><parameter_list>(<param><decl><type><name>oss_mixer_t</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+    <return>return <expr><call><name>_do_ioctl_1</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fd</name></name></expr></argument>, <argument><expr><name>args</name></expr></argument>, <argument><expr>"set_recsrc"</expr></argument>,
+        <argument><expr><name>SOUND_MIXER_WRITE_RECSRC</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* ----------------------------------------------------------------------
+ * Method tables and other bureaucracy
+ */</comment>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyMethodDef</name></type> <name><name>oss_methods</name><index>[]</index></name> <init>= <expr><block>{
+    <comment type="block">/* Regular file methods */</comment>
+    <expr><block>{ <expr>"read"</expr>,           <expr>(<name>PyCFunction</name>)<name>oss_read</name></expr>, <expr><name>METH_VARARGS</name></expr> }</block></expr>,
+    <expr><block>{ <expr>"write"</expr>,          <expr>(<name>PyCFunction</name>)<name>oss_write</name></expr>, <expr><name>METH_VARARGS</name></expr> }</block></expr>,
+    <expr><block>{ <expr>"writeall"</expr>,       <expr>(<name>PyCFunction</name>)<name>oss_writeall</name></expr>, <expr><name>METH_VARARGS</name></expr> }</block></expr>,
+    <expr><block>{ <expr>"close"</expr>,          <expr>(<name>PyCFunction</name>)<name>oss_close</name></expr>, <expr><name>METH_NOARGS</name></expr> }</block></expr>,
+    <expr><block>{ <expr>"fileno"</expr>,         <expr>(<name>PyCFunction</name>)<name>oss_fileno</name></expr>, <expr><name>METH_NOARGS</name></expr> }</block></expr>,
+
+    <comment type="block">/* Simple ioctl wrappers */</comment>
+    <expr><block>{ <expr>"nonblock"</expr>,       <expr>(<name>PyCFunction</name>)<name>oss_nonblock</name></expr>, <expr><name>METH_NOARGS</name></expr> }</block></expr>,
+    <expr><block>{ <expr>"setfmt"</expr>,         <expr>(<name>PyCFunction</name>)<name>oss_setfmt</name></expr>, <expr><name>METH_VARARGS</name></expr> }</block></expr>,
+    <expr><block>{ <expr>"getfmts"</expr>,        <expr>(<name>PyCFunction</name>)<name>oss_getfmts</name></expr>, <expr><name>METH_NOARGS</name></expr> }</block></expr>,
+    <expr><block>{ <expr>"channels"</expr>,       <expr>(<name>PyCFunction</name>)<name>oss_channels</name></expr>, <expr><name>METH_VARARGS</name></expr> }</block></expr>,
+    <expr><block>{ <expr>"speed"</expr>,          <expr>(<name>PyCFunction</name>)<name>oss_speed</name></expr>, <expr><name>METH_VARARGS</name></expr> }</block></expr>,
+    <expr><block>{ <expr>"sync"</expr>,           <expr>(<name>PyCFunction</name>)<name>oss_sync</name></expr>, <expr><name>METH_VARARGS</name></expr> }</block></expr>,
+    <expr><block>{ <expr>"reset"</expr>,          <expr>(<name>PyCFunction</name>)<name>oss_reset</name></expr>, <expr><name>METH_VARARGS</name></expr> }</block></expr>,
+    <expr><block>{ <expr>"post"</expr>,           <expr>(<name>PyCFunction</name>)<name>oss_post</name></expr>, <expr><name>METH_VARARGS</name></expr> }</block></expr>,
+
+    <comment type="block">/* Convenience methods -- wrap a couple of ioctls together */</comment>
+    <expr><block>{ <expr>"setparameters"</expr>,  <expr>(<name>PyCFunction</name>)<name>oss_setparameters</name></expr>, <expr><name>METH_VARARGS</name></expr> }</block></expr>,
+    <expr><block>{ <expr>"bufsize"</expr>,        <expr>(<name>PyCFunction</name>)<name>oss_bufsize</name></expr>, <expr><name>METH_NOARGS</name></expr> }</block></expr>,
+    <expr><block>{ <expr>"obufcount"</expr>,      <expr>(<name>PyCFunction</name>)<name>oss_obufcount</name></expr>, <expr><name>METH_NOARGS</name></expr> }</block></expr>,
+    <expr><block>{ <expr>"obuffree"</expr>,       <expr>(<name>PyCFunction</name>)<name>oss_obuffree</name></expr>, <expr><name>METH_NOARGS</name></expr> }</block></expr>,
+    <expr><block>{ <expr>"getptr"</expr>,         <expr>(<name>PyCFunction</name>)<name>oss_getptr</name></expr>, <expr><name>METH_NOARGS</name></expr> }</block></expr>,
+
+    <comment type="block">/* Aliases for backwards compatibility */</comment>
+    <expr><block>{ <expr>"flush"</expr>,          <expr>(<name>PyCFunction</name>)<name>oss_sync</name></expr>, <expr><name>METH_VARARGS</name></expr> }</block></expr>,
+
+    <expr><block>{ <expr><name>NULL</name></expr>,             <expr><name>NULL</name></expr>}</block></expr>           <comment type="block">/* sentinel */</comment>
+}</block></expr></init></decl>;</decl_stmt>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyMethodDef</name></type> <name><name>oss_mixer_methods</name><index>[]</index></name> <init>= <expr><block>{
+    <comment type="block">/* Regular file method - OSS mixers are ioctl-only interface */</comment>
+    <expr><block>{ <expr>"close"</expr>,          <expr>(<name>PyCFunction</name>)<name>oss_mixer_close</name></expr>, <expr><name>METH_NOARGS</name></expr> }</block></expr>,
+    <expr><block>{ <expr>"fileno"</expr>,         <expr>(<name>PyCFunction</name>)<name>oss_mixer_fileno</name></expr>, <expr><name>METH_NOARGS</name></expr> }</block></expr>,
+
+    <comment type="block">/* Simple ioctl wrappers */</comment>
+    <expr><block>{ <expr>"controls"</expr>,       <expr>(<name>PyCFunction</name>)<name>oss_mixer_controls</name></expr>, <expr><name>METH_VARARGS</name></expr> }</block></expr>,
+    <expr><block>{ <expr>"stereocontrols"</expr>, <expr>(<name>PyCFunction</name>)<name>oss_mixer_stereocontrols</name></expr>, <expr><name>METH_VARARGS</name></expr>}</block></expr>,
+    <expr><block>{ <expr>"reccontrols"</expr>,    <expr>(<name>PyCFunction</name>)<name>oss_mixer_reccontrols</name></expr>, <expr><name>METH_VARARGS</name></expr>}</block></expr>,
+    <expr><block>{ <expr>"get"</expr>,            <expr>(<name>PyCFunction</name>)<name>oss_mixer_get</name></expr>, <expr><name>METH_VARARGS</name></expr> }</block></expr>,
+    <expr><block>{ <expr>"set"</expr>,            <expr>(<name>PyCFunction</name>)<name>oss_mixer_set</name></expr>, <expr><name>METH_VARARGS</name></expr> }</block></expr>,
+    <expr><block>{ <expr>"get_recsrc"</expr>,     <expr>(<name>PyCFunction</name>)<name>oss_mixer_get_recsrc</name></expr>, <expr><name>METH_VARARGS</name></expr> }</block></expr>,
+    <expr><block>{ <expr>"set_recsrc"</expr>,     <expr>(<name>PyCFunction</name>)<name>oss_mixer_set_recsrc</name></expr>, <expr><name>METH_VARARGS</name></expr> }</block></expr>,
+
+    <expr><block>{ <expr><name>NULL</name></expr>,             <expr><name>NULL</name></expr>}</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>oss_getattr</name><parameter_list>(<param><decl><type><name>oss_audio_t</name> *</type><name>self</name></decl></param>, <param><decl><type><name>char</name> *</type><name>name</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>PyObject</name> *</type> <name>rval</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>name</name></expr></argument>, <argument><expr>"closed"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>rval</name> = (<name><name>self</name>-&gt;<name>fd</name></name> == -1) ? <name>Py_True</name> : <name>Py_False</name></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>rval</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+    <else>else <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>name</name></expr></argument>, <argument><expr>"name"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>rval</name> = <call><name>PyString_FromString</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>devicename</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+    <else>else <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>name</name></expr></argument>, <argument><expr>"mode"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then> <block>{
+        <comment type="block">/* No need for a "default" in this switch: from newossobject(),
+           self-&gt;mode can only be one of these three values. */</comment>
+        <switch>switch<condition>(<expr><name><name>self</name>-&gt;<name>mode</name></name></expr>)</condition> <block>{
+            <case>case <expr><name>O_RDONLY</name></expr>:
+                <expr_stmt><expr><name>rval</name> = <call><name>PyString_FromString</name><argument_list>(<argument><expr>"r"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <break>break;</break>
+            </case><case>case <expr><name>O_RDWR</name></expr>:
+                <expr_stmt><expr><name>rval</name> = <call><name>PyString_FromString</name><argument_list>(<argument><expr>"rw"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <break>break;</break>
+            </case><case>case <expr><name>O_WRONLY</name></expr>:
+                <expr_stmt><expr><name>rval</name> = <call><name>PyString_FromString</name><argument_list>(<argument><expr>"w"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <break>break;</break>
+        </case>}</block></switch>
+    }</block></then>
+    <else>else <block>{
+        <expr_stmt><expr><name>rval</name> = <call><name>Py_FindMethod</name><argument_list>(<argument><expr><name>oss_methods</name></expr></argument>, <argument><expr>(<name>PyObject</name> *)<name>self</name></expr></argument>, <argument><expr><name>name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if></else></if></else></if>
+    <return>return <expr><name>rval</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>oss_mixer_getattr</name><parameter_list>(<param><decl><type><name>oss_mixer_t</name> *</type><name>self</name></decl></param>, <param><decl><type><name>char</name> *</type><name>name</name></decl></param>)</parameter_list>
+<block>{
+    <return>return <expr><call><name>Py_FindMethod</name><argument_list>(<argument><expr><name>oss_mixer_methods</name></expr></argument>, <argument><expr>(<name>PyObject</name> *)<name>self</name></expr></argument>, <argument><expr><name>name</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyTypeObject</name></type> <name>OSSAudioType</name> <init>= <expr><block>{
+    <expr><call><name>PyVarObject_HEAD_INIT</name><argument_list>(<argument><expr>&amp;<name>PyType_Type</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call>
+    "ossaudiodev.oss_audio_device"</expr>, <comment type="block">/*tp_name*/</comment>
+    <expr><sizeof>sizeof<argument_list>(<argument><expr><name>oss_audio_t</name></expr></argument>)</argument_list></sizeof></expr>,        <comment type="block">/*tp_size*/</comment>
+    <expr>0</expr>,                          <comment type="block">/*tp_itemsize*/</comment>
+    <comment type="block">/* methods */</comment>
+    <expr>(<name>destructor</name>)<name>oss_dealloc</name></expr>,    <comment type="block">/*tp_dealloc*/</comment>
+    <expr>0</expr>,                          <comment type="block">/*tp_print*/</comment>
+    <expr>(<name>getattrfunc</name>)<name>oss_getattr</name></expr>,   <comment type="block">/*tp_getattr*/</comment>
+    <expr>0</expr>,                          <comment type="block">/*tp_setattr*/</comment>
+    <expr>0</expr>,                          <comment type="block">/*tp_compare*/</comment>
+    <expr>0</expr>,                          <comment type="block">/*tp_repr*/</comment>
+}</block></expr></init></decl>;</decl_stmt>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyTypeObject</name></type> <name>OSSMixerType</name> <init>= <expr><block>{
+    <expr><call><name>PyVarObject_HEAD_INIT</name><argument_list>(<argument><expr>&amp;<name>PyType_Type</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call>
+    "ossaudiodev.oss_mixer_device"</expr>, <comment type="block">/*tp_name*/</comment>
+    <expr><sizeof>sizeof<argument_list>(<argument><expr><name>oss_mixer_t</name></expr></argument>)</argument_list></sizeof></expr>,            <comment type="block">/*tp_size*/</comment>
+    <expr>0</expr>,                              <comment type="block">/*tp_itemsize*/</comment>
+    <comment type="block">/* methods */</comment>
+    <expr>(<name>destructor</name>)<name>oss_mixer_dealloc</name></expr>,  <comment type="block">/*tp_dealloc*/</comment>
+    <expr>0</expr>,                              <comment type="block">/*tp_print*/</comment>
+    <expr>(<name>getattrfunc</name>)<name>oss_mixer_getattr</name></expr>, <comment type="block">/*tp_getattr*/</comment>
+    <expr>0</expr>,                              <comment type="block">/*tp_setattr*/</comment>
+    <expr>0</expr>,                              <comment type="block">/*tp_compare*/</comment>
+    <expr>0</expr>,                              <comment type="block">/*tp_repr*/</comment>
+}</block></expr></init></decl>;</decl_stmt>
+
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>ossopen</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+    <return>return <expr>(<name>PyObject</name> *)<call><name>newossobject</name><argument_list>(<argument><expr><name>args</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>ossopenmixer</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+    <return>return <expr>(<name>PyObject</name> *)<call><name>newossmixerobject</name><argument_list>(<argument><expr><name>args</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyMethodDef</name></type> <name><name>ossaudiodev_methods</name><index>[]</index></name> <init>= <expr><block>{
+    <expr><block>{ <expr>"open"</expr>, <expr><name>ossopen</name></expr>, <expr><name>METH_VARARGS</name></expr> }</block></expr>,
+    <expr><block>{ <expr>"openmixer"</expr>, <expr><name>ossopenmixer</name></expr>, <expr><name>METH_VARARGS</name></expr> }</block></expr>,
+    <expr><block>{ <expr>0</expr>, <expr>0</expr> }</block></expr>,
+}</block></expr></init></decl>;</decl_stmt>
+
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>_EXPORT_INT</name><parameter_list>(<param><type><name>mod</name></type></param>, <param><type><name>name</name></type></param>)</parameter_list></cpp:macro> \
+  <cpp:value>if (PyModule_AddIntConstant(mod, #name, (long) (name)) == -1) return;</cpp:value></cpp:define>
+
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>char</name> *</type><name><name>control_labels</name><index>[]</index></name> <init>= <expr><name>SOUND_DEVICE_LABELS</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>char</name> *</type><name><name>control_names</name><index>[]</index></name> <init>= <expr><name>SOUND_DEVICE_NAMES</name></expr></init></decl>;</decl_stmt>
+
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>build_namelists</name> <parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>module</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>PyObject</name> *</type><name>labels</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name> *</type><name>names</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name> *</type><name>s</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>num_controls</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>num_controls</name> = <sizeof>sizeof<argument_list>(<argument><expr><name>control_labels</name></expr></argument>)</argument_list></sizeof> / <sizeof>sizeof<argument_list>(<argument><expr><name><name>control_labels</name><index>[<expr>0</expr>]</index></name></expr></argument>)</argument_list></sizeof></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>num_controls</name> == <sizeof>sizeof<argument_list>(<argument><expr><name>control_names</name></expr></argument>)</argument_list></sizeof> / <sizeof>sizeof<argument_list>(<argument><expr><name><name>control_names</name><index>[<expr>0</expr>]</index></name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>labels</name> = <call><name>PyList_New</name><argument_list>(<argument><expr><name>num_controls</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name>names</name> = <call><name>PyList_New</name><argument_list>(<argument><expr><name>num_controls</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>labels</name> == <name>NULL</name> || <name>names</name> == <name>NULL</name></expr>)</condition><then>
+        <goto>goto <name>error2</name>;</goto></then></if>
+    <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name>num_controls</name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>) <block>{
+        <expr_stmt><expr><name>s</name> = <call><name>PyString_FromString</name><argument_list>(<argument><expr><name><name>control_labels</name><index>[<expr><name>i</name></expr>]</index></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>s</name> == <name>NULL</name></expr>)</condition><then>
+            <goto>goto <name>error2</name>;</goto></then></if>
+        <expr_stmt><expr><call><name>PyList_SET_ITEM</name><argument_list>(<argument><expr><name>labels</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr><name>s</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <expr_stmt><expr><name>s</name> = <call><name>PyString_FromString</name><argument_list>(<argument><expr><name><name>control_names</name><index>[<expr><name>i</name></expr>]</index></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>s</name> == <name>NULL</name></expr>)</condition><then>
+            <goto>goto <name>error2</name>;</goto></then></if>
+        <expr_stmt><expr><call><name>PyList_SET_ITEM</name><argument_list>(<argument><expr><name>names</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr><name>s</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></for>
+
+    <if>if <condition>(<expr><call><name>PyModule_AddObject</name><argument_list>(<argument><expr><name>module</name></expr></argument>, <argument><expr>"control_labels"</expr></argument>, <argument><expr><name>labels</name></expr></argument>)</argument_list></call> == -1</expr>)</condition><then>
+        <goto>goto <name>error2</name>;</goto></then></if>
+    <if>if <condition>(<expr><call><name>PyModule_AddObject</name><argument_list>(<argument><expr><name>module</name></expr></argument>, <argument><expr>"control_names"</expr></argument>, <argument><expr><name>names</name></expr></argument>)</argument_list></call> == -1</expr>)</condition><then>
+        <goto>goto <name>error1</name>;</goto></then></if>
+
+    <return>return <expr>0</expr>;</return>
+
+<label><name>error2</name>:</label>
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>labels</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<label><name>error1</name>:</label>
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>names</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr>-1</expr>;</return>
+}</block></function>
+
+
+<function><type><name>void</name></type>
+<name>initossaudiodev</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>PyObject</name> *</type><name>m</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>m</name> = <call><name>Py_InitModule</name><argument_list>(<argument><expr>"ossaudiodev"</expr></argument>, <argument><expr><name>ossaudiodev_methods</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>m</name> == <name>NULL</name></expr>)</condition><then>
+	<return>return;</return></then></if>
+
+    <expr_stmt><expr><name>OSSAudioError</name> = <call><name>PyErr_NewException</name><argument_list>(<argument><expr>"ossaudiodev.OSSAudioError"</expr></argument>,
+				       <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>OSSAudioError</name></expr>)</condition><then> <block>{
+        <comment type="block">/* Each call to PyModule_AddObject decrefs it; compensate: */</comment>
+        <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>OSSAudioError</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>OSSAudioError</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>PyModule_AddObject</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"error"</expr></argument>, <argument><expr><name>OSSAudioError</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>PyModule_AddObject</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"OSSAudioError"</expr></argument>, <argument><expr><name>OSSAudioError</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <comment type="block">/* Build 'control_labels' and 'control_names' lists and add them
+       to the module. */</comment>
+    <if>if <condition>(<expr><call><name>build_namelists</name><argument_list>(<argument><expr><name>m</name></expr></argument>)</argument_list></call> == -1</expr>)</condition><then>       <comment type="block">/* XXX what to do here? */</comment>
+        <return>return;</return></then></if>
+
+    <comment type="block">/* Expose the audio format numbers -- essential! */</comment>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>AFMT_QUERY</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>AFMT_MU_LAW</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>AFMT_A_LAW</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>AFMT_IMA_ADPCM</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>AFMT_U8</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>AFMT_S16_LE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>AFMT_S16_BE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>AFMT_S8</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>AFMT_U16_LE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>AFMT_U16_BE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>AFMT_MPEG</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>AFMT_AC3</name></cpp:ifdef>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>AFMT_AC3</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>AFMT_S16_NE</name></cpp:ifdef>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>AFMT_S16_NE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>AFMT_U16_NE</name></cpp:ifdef>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>AFMT_U16_NE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>AFMT_S32_LE</name></cpp:ifdef>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>AFMT_S32_LE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>AFMT_S32_BE</name></cpp:ifdef>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>AFMT_S32_BE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>AFMT_MPEG</name></cpp:ifdef>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>AFMT_MPEG</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+    <comment type="block">/* Expose the sound mixer device numbers. */</comment>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SOUND_MIXER_NRDEVICES</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SOUND_MIXER_VOLUME</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SOUND_MIXER_BASS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SOUND_MIXER_TREBLE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SOUND_MIXER_SYNTH</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SOUND_MIXER_PCM</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SOUND_MIXER_SPEAKER</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SOUND_MIXER_LINE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SOUND_MIXER_MIC</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SOUND_MIXER_CD</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SOUND_MIXER_IMIX</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SOUND_MIXER_ALTPCM</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SOUND_MIXER_RECLEV</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SOUND_MIXER_IGAIN</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SOUND_MIXER_OGAIN</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SOUND_MIXER_LINE1</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SOUND_MIXER_LINE2</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SOUND_MIXER_LINE3</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>SOUND_MIXER_DIGITAL1</name></cpp:ifdef>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SOUND_MIXER_DIGITAL1</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>SOUND_MIXER_DIGITAL2</name></cpp:ifdef>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SOUND_MIXER_DIGITAL2</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>SOUND_MIXER_DIGITAL3</name></cpp:ifdef>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SOUND_MIXER_DIGITAL3</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>SOUND_MIXER_PHONEIN</name></cpp:ifdef>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SOUND_MIXER_PHONEIN</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>SOUND_MIXER_PHONEOUT</name></cpp:ifdef>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SOUND_MIXER_PHONEOUT</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>SOUND_MIXER_VIDEO</name></cpp:ifdef>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SOUND_MIXER_VIDEO</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>SOUND_MIXER_RADIO</name></cpp:ifdef>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SOUND_MIXER_RADIO</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>SOUND_MIXER_MONITOR</name></cpp:ifdef>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SOUND_MIXER_MONITOR</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+    <comment type="block">/* Expose all the ioctl numbers for masochists who like to do this
+       stuff directly. */</comment>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_COPR_HALT</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_COPR_LOAD</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_COPR_RCODE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_COPR_RCVMSG</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_COPR_RDATA</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_COPR_RESET</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_COPR_RUN</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_COPR_SENDMSG</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_COPR_WCODE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_COPR_WDATA</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>SNDCTL_DSP_BIND_CHANNEL</name></cpp:ifdef>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_DSP_BIND_CHANNEL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_DSP_CHANNELS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_DSP_GETBLKSIZE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_DSP_GETCAPS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>SNDCTL_DSP_GETCHANNELMASK</name></cpp:ifdef>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_DSP_GETCHANNELMASK</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_DSP_GETFMTS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_DSP_GETIPTR</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_DSP_GETISPACE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>SNDCTL_DSP_GETODELAY</name></cpp:ifdef>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_DSP_GETODELAY</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_DSP_GETOPTR</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_DSP_GETOSPACE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>SNDCTL_DSP_GETSPDIF</name></cpp:ifdef>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_DSP_GETSPDIF</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_DSP_GETTRIGGER</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_DSP_MAPINBUF</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_DSP_MAPOUTBUF</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_DSP_NONBLOCK</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_DSP_POST</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>SNDCTL_DSP_PROFILE</name></cpp:ifdef>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_DSP_PROFILE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_DSP_RESET</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_DSP_SAMPLESIZE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_DSP_SETDUPLEX</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_DSP_SETFMT</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_DSP_SETFRAGMENT</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>SNDCTL_DSP_SETSPDIF</name></cpp:ifdef>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_DSP_SETSPDIF</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_DSP_SETSYNCRO</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_DSP_SETTRIGGER</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_DSP_SPEED</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_DSP_STEREO</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_DSP_SUBDIVIDE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_DSP_SYNC</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_FM_4OP_ENABLE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_FM_LOAD_INSTR</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_MIDI_INFO</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_MIDI_MPUCMD</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_MIDI_MPUMODE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_MIDI_PRETIME</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_SEQ_CTRLRATE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_SEQ_GETINCOUNT</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_SEQ_GETOUTCOUNT</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>SNDCTL_SEQ_GETTIME</name></cpp:ifdef>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_SEQ_GETTIME</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_SEQ_NRMIDIS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_SEQ_NRSYNTHS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_SEQ_OUTOFBAND</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_SEQ_PANIC</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_SEQ_PERCMODE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_SEQ_RESET</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_SEQ_RESETSAMPLES</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_SEQ_SYNC</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_SEQ_TESTMIDI</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_SEQ_THRESHOLD</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>SNDCTL_SYNTH_CONTROL</name></cpp:ifdef>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_SYNTH_CONTROL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>SNDCTL_SYNTH_ID</name></cpp:ifdef>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_SYNTH_ID</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_SYNTH_INFO</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_SYNTH_MEMAVL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>SNDCTL_SYNTH_REMOVESAMPLE</name></cpp:ifdef>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_SYNTH_REMOVESAMPLE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_TMR_CONTINUE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_TMR_METRONOME</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_TMR_SELECT</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_TMR_SOURCE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_TMR_START</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_TMR_STOP</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_TMR_TEMPO</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>_EXPORT_INT</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr><name>SNDCTL_TMR_TIMEBASE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+</unit>

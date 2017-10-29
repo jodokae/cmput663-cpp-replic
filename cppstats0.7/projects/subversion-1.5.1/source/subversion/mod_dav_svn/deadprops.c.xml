@@ -1,0 +1,640 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/subversion-1.5.1/source/subversion/mod_dav_svn/deadprops.c"><comment type="block">/*
+ * deadprops.c: mod_dav_svn dead property provider functions for Subversion
+ *
+ * ====================================================================
+ * Copyright (c) 2000-2004 CollabNet.  All rights reserved.
+ *
+ * This software is licensed as described in the file COPYING, which
+ * you should have received as part of this distribution.  The terms
+ * are also available at http://subversion.tigris.org/license-1.html.
+ * If newer versions of this license are posted there, you may use a
+ * newer version instead, at your option.
+ *
+ * This software consists of voluntary contributions made by many
+ * individuals.  For exact contribution history, see the revision
+ * history and logs, available at http://subversion.tigris.org/.
+ * ====================================================================
+ */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_hash.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;httpd.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;mod_dav.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_xml.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_pools.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_dav.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_base64.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_props.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"dav_svn.h"</cpp:file></cpp:include>
+
+
+<struct>struct <name>dav_db</name> <block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>dav_resource</name> *</type><name>resource</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl>;</decl_stmt>
+
+  <comment type="block">/* the resource's properties that we are sequencing over */</comment>
+  <decl_stmt><decl><type><name>apr_hash_t</name> *</type><name>props</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_hash_index_t</name> *</type><name>hi</name></decl>;</decl_stmt>
+
+  <comment type="block">/* used for constructing repos-local names for properties */</comment>
+  <decl_stmt><decl><type><name>svn_stringbuf_t</name> *</type><name>work</name></decl>;</decl_stmt>
+
+  <comment type="block">/* passed to svn_repos_ funcs that fetch revprops. */</comment>
+  <decl_stmt><decl><type><name>svn_repos_authz_func_t</name></type> <name>authz_read_func</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>void</name> *</type><name>authz_read_baton</name></decl>;</decl_stmt>
+}</block>;</struct>
+
+
+<struct>struct <name>dav_deadprop_rollback</name> <block>{
+  <decl_stmt><decl><type><name>dav_prop_name</name></type> <name>name</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_string_t</name></type> <name>value</name></decl>;</decl_stmt>
+}</block>;</struct>
+
+
+<comment type="block">/* retrieve the "right" string to use as a repos path */</comment>
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *</type>
+<name>get_repos_path</name><parameter_list>(<param><decl><type>struct <name>dav_resource_private</name> *</type><name>info</name></decl></param>)</parameter_list>
+<block>{
+  <return>return <expr><name><name>info</name>-&gt;<name>repos_path</name></name></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* construct the repos-local name for the given DAV property name */</comment>
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>get_repos_propname</name><parameter_list>(<param><decl><type><name>dav_db</name> *</type><name>db</name></decl></param>,
+                   <param><decl><type><specifier>const</specifier> <name>dav_prop_name</name> *</type><name>name</name></decl></param>,
+                   <param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>repos_propname</name></decl></param>)</parameter_list>
+<block>{
+  <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>-&gt;<name>ns</name></name></expr></argument>, <argument><expr><name>SVN_DAV_PROP_NS_SVN</name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+    <block>{
+      <comment type="block">/* recombine the namespace ("svn:") and the name. */</comment>
+      <expr_stmt><expr><call><name>svn_stringbuf_set</name><argument_list>(<argument><expr><name><name>db</name>-&gt;<name>work</name></name></expr></argument>, <argument><expr><name>SVN_PROP_PREFIX</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>svn_stringbuf_appendcstr</name><argument_list>(<argument><expr><name><name>db</name>-&gt;<name>work</name></name></expr></argument>, <argument><expr><name><name>name</name>-&gt;<name>name</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr>*<name>repos_propname</name> = <name><name>db</name>-&gt;<name>work</name>-&gt;<name>data</name></name></expr>;</expr_stmt>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>-&gt;<name>ns</name></name></expr></argument>, <argument><expr><name>SVN_DAV_PROP_NS_CUSTOM</name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+    <block>{
+      <comment type="block">/* the name of a custom prop is just the name -- no ns URI */</comment>
+      <expr_stmt><expr>*<name>repos_propname</name> = <name><name>name</name>-&gt;<name>name</name></name></expr>;</expr_stmt>
+    }</block></then>
+  <else>else
+    <block>{
+      <expr_stmt><expr>*<name>repos_propname</name> = <name>NULL</name></expr>;</expr_stmt>
+    }</block></else></if></else></if>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>dav_error</name> *</type>
+<name>get_value</name><parameter_list>(<param><decl><type><name>dav_db</name> *</type><name>db</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>dav_prop_name</name> *</type><name>name</name></decl></param>, <param><decl><type><name>svn_string_t</name> **</type><name>pvalue</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>propname</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>serr</name></decl>;</decl_stmt>
+
+  <comment type="block">/* get the repos-local name */</comment>
+  <expr_stmt><expr><call><name>get_repos_propname</name><argument_list>(<argument><expr><name>db</name></expr></argument>, <argument><expr><name>name</name></expr></argument>, <argument><expr>&amp;<name>propname</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name>propname</name> == <name>NULL</name></expr>)</condition><then>
+    <block>{
+      <comment type="block">/* we know these are not present. */</comment>
+      <expr_stmt><expr>*<name>pvalue</name> = <name>NULL</name></expr>;</expr_stmt>
+      <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+
+  <comment type="block">/* ### if db-&gt;props exists, then try in there first */</comment>
+
+  <comment type="block">/* Working Baseline, Baseline, or (Working) Version resource */</comment>
+  <if>if <condition>(<expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>baselined</name></name></expr>)</condition><then>
+    <if>if <condition>(<expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>type</name></name> == <name>DAV_RESOURCE_TYPE_WORKING</name></expr>)</condition><then>
+      <expr_stmt><expr><name>serr</name> = <call><name>svn_fs_txn_prop</name><argument_list>(<argument><expr><name>pvalue</name></expr></argument>, <argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name>-&gt;<name>root</name>.<name>txn</name></name></expr></argument>,
+                             <argument><expr><name>propname</name></expr></argument>, <argument><expr><name><name>db</name>-&gt;<name>p</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+    <else>else
+      <expr_stmt><expr><name>serr</name> = <call><name>svn_repos_fs_revision_prop</name><argument_list>(<argument><expr><name>pvalue</name></expr></argument>,
+                                        <argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name>-&gt; <name>repos</name>-&gt;<name>repos</name></name></expr></argument>,
+                                        <argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name>-&gt;<name>root</name>.<name>rev</name></name></expr></argument>, <argument><expr><name>propname</name></expr></argument>,
+                                        <argument><expr><name><name>db</name>-&gt;<name>authz_read_func</name></name></expr></argument>,
+                                        <argument><expr><name><name>db</name>-&gt;<name>authz_read_baton</name></name></expr></argument>, <argument><expr><name><name>db</name>-&gt;<name>p</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if></then>
+  <else>else
+    <expr_stmt><expr><name>serr</name> = <call><name>svn_fs_node_prop</name><argument_list>(<argument><expr><name>pvalue</name></expr></argument>, <argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name>-&gt;<name>root</name>.<name>root</name></name></expr></argument>,
+                            <argument><expr><call><name>get_repos_path</name><argument_list>(<argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name></name></expr></argument>)</argument_list></call></expr></argument>,
+                            <argument><expr><name>propname</name></expr></argument>, <argument><expr><name><name>db</name>-&gt;<name>p</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+  <if>if <condition>(<expr><name>serr</name> != <name>NULL</name></expr>)</condition><then>
+    <return>return <expr><call><name>dav_svn__convert_err</name><argument_list>(<argument><expr><name>serr</name></expr></argument>, <argument><expr><name>HTTP_INTERNAL_SERVER_ERROR</name></expr></argument>,
+                                <argument><expr>"could not fetch a property"</expr></argument>,
+                                <argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>dav_error</name> *</type>
+<name>save_value</name><parameter_list>(<param><decl><type><name>dav_db</name> *</type><name>db</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>dav_prop_name</name> *</type><name>name</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>svn_string_t</name> *</type><name>value</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>propname</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>serr</name></decl>;</decl_stmt>
+
+  <comment type="block">/* get the repos-local name */</comment>
+  <expr_stmt><expr><call><name>get_repos_propname</name><argument_list>(<argument><expr><name>db</name></expr></argument>, <argument><expr><name>name</name></expr></argument>, <argument><expr>&amp;<name>propname</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name>propname</name> == <name>NULL</name></expr>)</condition><then>
+    <block>{
+      <if>if <condition>(<expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name>-&gt;<name>repos</name>-&gt;<name>autoversioning</name></name></expr>)</condition><then>
+        <comment type="block">/* ignore the unknown namespace of the incoming prop. */</comment>
+        <expr_stmt><expr><name>propname</name> = <name><name>name</name>-&gt;<name>name</name></name></expr>;</expr_stmt></then>
+      <else>else
+        <return>return <expr><call><name>dav_new_error</name><argument_list>(<argument><expr><name><name>db</name>-&gt;<name>p</name></name></expr></argument>, <argument><expr><name>HTTP_CONFLICT</name></expr></argument>, <argument><expr>0</expr></argument>,
+                             <argument><expr>"Properties may only be defined in the "
+                             <name>SVN_DAV_PROP_NS_SVN</name> " and " <name>SVN_DAV_PROP_NS_CUSTOM</name>
+                             " namespaces."</expr></argument>)</argument_list></call></expr>;</return></else></if>
+    }</block></then></if>
+
+  <comment type="block">/* Working Baseline or Working (Version) Resource */</comment>
+  <if>if <condition>(<expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>baselined</name></name></expr>)</condition><then>
+    <if>if <condition>(<expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>working</name></name></expr>)</condition><then>
+      <expr_stmt><expr><name>serr</name> = <call><name>svn_repos_fs_change_txn_prop</name><argument_list>(<argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name>-&gt;<name>root</name>.<name>txn</name></name></expr></argument>,
+                                          <argument><expr><name>propname</name></expr></argument>, <argument><expr><name>value</name></expr></argument>, <argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+    <else>else
+      <block>{
+        <comment type="block">/* ### VIOLATING deltaV: you can't proppatch a baseline, it's
+           not a working resource!  But this is how we currently
+           (hackily) allow the svn client to change unversioned rev
+           props.  See issue #916. */</comment>
+        <expr_stmt><expr><name>serr</name> = <call><name>svn_repos_fs_change_rev_prop3</name>
+          <argument_list>(<argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name>-&gt;<name>repos</name>-&gt;<name>repos</name></name></expr></argument>,
+           <argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name>-&gt;<name>root</name>.<name>rev</name></name></expr></argument>,
+           <argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name>-&gt;<name>repos</name>-&gt;<name>username</name></name></expr></argument>,
+           <argument><expr><name>propname</name></expr></argument>, <argument><expr><name>value</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>,
+           <argument><expr><name><name>db</name>-&gt;<name>authz_read_func</name></name></expr></argument>,
+           <argument><expr><name><name>db</name>-&gt;<name>authz_read_baton</name></name></expr></argument>,
+           <argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <comment type="block">/* Tell the logging subsystem about the revprop change. */</comment>
+        <expr_stmt><expr><call><name>dav_svn__operational_log</name><argument_list>(<argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name></name></expr></argument>,
+                                 <argument><expr><call><name>apr_psprintf</name><argument_list>(<argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>pool</name></name></expr></argument>,
+                                   <argument><expr>"change-rev-prop r%ld %s"</expr></argument>,
+                                   <argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name>-&gt;<name>root</name>.<name>rev</name></name></expr></argument>,
+                                   <argument><expr><call><name>svn_path_uri_encode</name><argument_list>(<argument><expr><name>propname</name></expr></argument>,
+                                                       <argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      }</block></else></if></then>
+  <else>else
+    <expr_stmt><expr><name>serr</name> = <call><name>svn_repos_fs_change_node_prop</name><argument_list>(<argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name>-&gt;<name>root</name>.<name>root</name></name></expr></argument>,
+                                         <argument><expr><call><name>get_repos_path</name><argument_list>(<argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name></name></expr></argument>)</argument_list></call></expr></argument>,
+                                         <argument><expr><name>propname</name></expr></argument>, <argument><expr><name>value</name></expr></argument>, <argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+  <if>if <condition>(<expr><name>serr</name> != <name>NULL</name></expr>)</condition><then>
+    <return>return <expr><call><name>dav_svn__convert_err</name><argument_list>(<argument><expr><name>serr</name></expr></argument>, <argument><expr><name>HTTP_INTERNAL_SERVER_ERROR</name></expr></argument>,
+                                <argument><expr><name>NULL</name></expr></argument>,
+                                <argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <comment type="block">/* a change to the props was made; make sure our cached copy is gone */</comment>
+  <expr_stmt><expr><name><name>db</name>-&gt;<name>props</name></name> = <name>NULL</name></expr>;</expr_stmt>
+
+  <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>dav_error</name> *</type>
+<name>db_open</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>,
+        <param><decl><type><specifier>const</specifier> <name>dav_resource</name> *</type><name>resource</name></decl></param>,
+        <param><decl><type><name>int</name></type> <name>ro</name></decl></param>,
+        <param><decl><type><name>dav_db</name> **</type><name>pdb</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>dav_db</name> *</type><name>db</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>dav_svn__authz_read_baton</name> *</type><name>arb</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Some resource types do not have deadprop databases. Specifically:
+     REGULAR, VERSION, and WORKING resources have them. (SVN does not
+     have WORKSPACE resources, and isn't covered here) */</comment>
+  <if>if <condition>(<expr><name><name>resource</name>-&gt;<name>type</name></name> == <name>DAV_RESOURCE_TYPE_HISTORY</name>
+      || <name><name>resource</name>-&gt;<name>type</name></name> == <name>DAV_RESOURCE_TYPE_ACTIVITY</name>
+      || <name><name>resource</name>-&gt;<name>type</name></name> == <name>DAV_RESOURCE_TYPE_PRIVATE</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr>*<name>pdb</name> = <name>NULL</name></expr>;</expr_stmt>
+      <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+
+  <comment type="block">/* If the DB is being opened R/W, and this isn't a working resource, then
+     we have a problem! */</comment>
+  <if>if <condition>(<expr>!<name>ro</name> &amp;&amp; <name><name>resource</name>-&gt;<name>type</name></name> != <name>DAV_RESOURCE_TYPE_WORKING</name></expr>)</condition><then>
+    <block>{
+      <comment type="block">/* ### Exception: in violation of deltaV, we *are* allowing a
+         baseline resource to receive a proppatch, as a way of
+         changing unversioned rev props.  Remove this someday: see IZ #916. */</comment>
+      <if>if <condition>(<expr>! (<name><name>resource</name>-&gt;<name>baselined</name></name>
+             &amp;&amp; <name><name>resource</name>-&gt;<name>type</name></name> == <name>DAV_RESOURCE_TYPE_VERSION</name>)</expr>)</condition><then>
+        <return>return <expr><call><name>dav_new_error</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>HTTP_CONFLICT</name></expr></argument>, <argument><expr>0</expr></argument>,
+                             <argument><expr>"Properties may only be changed on working "
+                             "resources."</expr></argument>)</argument_list></call></expr>;</return></then></if>
+    }</block></then></if>
+
+  <expr_stmt><expr><name>db</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>db</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name><name>db</name>-&gt;<name>resource</name></name> = <name>resource</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>db</name>-&gt;<name>p</name></name> = <call><name>svn_pool_create</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* ### temp hack */</comment>
+  <expr_stmt><expr><name><name>db</name>-&gt;<name>work</name></name> = <call><name>svn_stringbuf_ncreate</name><argument_list>(<argument><expr>""</expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name><name>db</name>-&gt;<name>p</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* make our path-based authz callback available to svn_repos_* funcs. */</comment>
+  <expr_stmt><expr><name>arb</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>arb</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>arb</name>-&gt;<name>r</name></name> = <name><name>resource</name>-&gt;<name>info</name>-&gt;<name>r</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>arb</name>-&gt;<name>repos</name></name> = <name><name>resource</name>-&gt;<name>info</name>-&gt;<name>repos</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>db</name>-&gt;<name>authz_read_baton</name></name> = <name>arb</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>db</name>-&gt;<name>authz_read_func</name></name> = <call><name>dav_svn__authz_read_func</name><argument_list>(<argument><expr><name>arb</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* ### use RO and node's mutable status to look for an error? */</comment>
+
+  <expr_stmt><expr>*<name>pdb</name> = <name>db</name></expr>;</expr_stmt>
+
+  <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>db_close</name><parameter_list>(<param><decl><type><name>dav_db</name> *</type><name>db</name></decl></param>)</parameter_list>
+<block>{
+  <expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name><name>db</name>-&gt;<name>p</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>dav_error</name> *</type>
+<name>db_define_namespaces</name><parameter_list>(<param><decl><type><name>dav_db</name> *</type><name>db</name></decl></param>, <param><decl><type><name>dav_xmlns_info</name> *</type><name>xi</name></decl></param>)</parameter_list>
+<block>{
+  <expr_stmt><expr><call><name>dav_xmlns_add</name><argument_list>(<argument><expr><name>xi</name></expr></argument>, <argument><expr>"S"</expr></argument>, <argument><expr><name>SVN_DAV_PROP_NS_SVN</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>dav_xmlns_add</name><argument_list>(<argument><expr><name>xi</name></expr></argument>, <argument><expr>"C"</expr></argument>, <argument><expr><name>SVN_DAV_PROP_NS_CUSTOM</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>dav_xmlns_add</name><argument_list>(<argument><expr><name>xi</name></expr></argument>, <argument><expr>"V"</expr></argument>, <argument><expr><name>SVN_DAV_PROP_NS_DAV</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* ### we don't have any other possible namespaces right now. */</comment>
+
+  <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>dav_error</name> *</type>
+<name>db_output_value</name><parameter_list>(<param><decl><type><name>dav_db</name> *</type><name>db</name></decl></param>,
+                <param><decl><type><specifier>const</specifier> <name>dav_prop_name</name> *</type><name>name</name></decl></param>,
+                <param><decl><type><name>dav_xmlns_info</name> *</type><name>xi</name></decl></param>,
+                <param><decl><type><name>apr_text_header</name> *</type><name>phdr</name></decl></param>,
+                <param><decl><type><name>int</name> *</type><name>found</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>prefix</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>s</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_string_t</name> *</type><name>propval</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>dav_error</name> *</type><name>err</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name> <init>= <expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>pool</name></name></expr></init></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr>(<name>err</name> = <call><name>get_value</name><argument_list>(<argument><expr><name>db</name></expr></argument>, <argument><expr><name>name</name></expr></argument>, <argument><expr>&amp;<name>propval</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then>
+    <return>return <expr><name>err</name></expr>;</return></then></if>
+
+  <comment type="block">/* return whether the prop was found, then punt or handle it. */</comment>
+  <expr_stmt><expr>*<name>found</name> = (<name>propval</name> != <name>NULL</name>)</expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>propval</name> == <name>NULL</name></expr>)</condition><then>
+    <return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+  <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>-&gt;<name>ns</name></name></expr></argument>, <argument><expr><name>SVN_DAV_PROP_NS_CUSTOM</name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+    <expr_stmt><expr><name>prefix</name> = "C:"</expr>;</expr_stmt></then>
+  <else>else
+    <expr_stmt><expr><name>prefix</name> = "S:"</expr>;</expr_stmt></else></if>
+
+  <if>if <condition>(<expr><name><name>propval</name>-&gt;<name>len</name></name> == 0</expr>)</condition><then>
+    <block>{
+      <comment type="block">/* empty value. add an empty elem. */</comment>
+      <expr_stmt><expr><name>s</name> = <call><name>apr_psprintf</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>"&lt;%s%s/&gt;" <name>DEBUG_CR</name></expr></argument>, <argument><expr><name>prefix</name></expr></argument>, <argument><expr><name><name>name</name>-&gt;<name>name</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>apr_text_append</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>phdr</name></expr></argument>, <argument><expr><name>s</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else
+    <block>{
+      <comment type="block">/* add &lt;prefix:name [V:encoding="base64"]&gt;value&lt;/prefix:name&gt; */</comment>
+      <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>xml_safe</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>encoding</name> <init>= <expr>""</expr></init></decl>;</decl_stmt>
+
+      <comment type="block">/* Ensure XML-safety of our property values before sending them
+         across the wire. */</comment>
+      <if>if <condition>(<expr>! <call><name>svn_xml_is_xml_safe</name><argument_list>(<argument><expr><name><name>propval</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name><name>propval</name>-&gt;<name>len</name></name></expr></argument>)</argument_list></call></expr>)</condition><then>
+        <block>{
+          <decl_stmt><decl><type><specifier>const</specifier> <name>svn_string_t</name> *</type><name>enc_propval</name>
+            <init>= <expr><call><name>svn_base64_encode_string</name><argument_list>(<argument><expr><name>propval</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+          <expr_stmt><expr><name>xml_safe</name> = <name><name>enc_propval</name>-&gt;<name>data</name></name></expr>;</expr_stmt>
+          <expr_stmt><expr><name>encoding</name> = <call><name>apr_pstrcat</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>" V:encoding=\"base64\""</expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+      <else>else
+        <block>{
+          <decl_stmt><decl><type><name>svn_stringbuf_t</name> *</type><name>xmlval</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+          <expr_stmt><expr><call><name>svn_xml_escape_cdata_string</name><argument_list>(<argument><expr>&amp;<name>xmlval</name></expr></argument>, <argument><expr><name>propval</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><name>xml_safe</name> = <name><name>xmlval</name>-&gt;<name>data</name></name></expr>;</expr_stmt>
+        }</block></else></if>
+
+      <expr_stmt><expr><name>s</name> = <call><name>apr_psprintf</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>"&lt;%s%s%s&gt;"</expr></argument>, <argument><expr><name>prefix</name></expr></argument>, <argument><expr><name><name>name</name>-&gt;<name>name</name></name></expr></argument>, <argument><expr><name>encoding</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>apr_text_append</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>phdr</name></expr></argument>, <argument><expr><name>s</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <comment type="block">/* the value is in our pool which means it has the right lifetime. */</comment>
+      <comment type="block">/* ### at least, per the current mod_dav architecture/API */</comment>
+      <expr_stmt><expr><call><name>apr_text_append</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>phdr</name></expr></argument>, <argument><expr><name>xml_safe</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name>s</name> = <call><name>apr_psprintf</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>"&lt;/%s%s&gt;" <name>DEBUG_CR</name></expr></argument>, <argument><expr><name>prefix</name></expr></argument>, <argument><expr><name><name>name</name>-&gt;<name>name</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>apr_text_append</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>phdr</name></expr></argument>, <argument><expr><name>s</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if>
+
+  <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>dav_error</name> *</type>
+<name>db_map_namespaces</name><parameter_list>(<param><decl><type><name>dav_db</name> *</type><name>db</name></decl></param>,
+                  <param><decl><type><specifier>const</specifier> <name>apr_array_header_t</name> *</type><name>namespaces</name></decl></param>,
+                  <param><decl><type><name>dav_namespace_map</name> **</type><name>mapping</name></decl></param>)</parameter_list>
+<block>{
+  <comment type="block">/* we don't need a namespace mapping right now. nothing to do */</comment>
+  <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>dav_error</name> *</type>
+<name>db_store</name><parameter_list>(<param><decl><type><name>dav_db</name> *</type><name>db</name></decl></param>,
+         <param><decl><type><specifier>const</specifier> <name>dav_prop_name</name> *</type><name>name</name></decl></param>,
+         <param><decl><type><specifier>const</specifier> <name>apr_xml_elem</name> *</type><name>elem</name></decl></param>,
+         <param><decl><type><name>dav_namespace_map</name> *</type><name>mapping</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>svn_string_t</name> *</type><name>propval</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name> <init>= <expr><name><name>db</name>-&gt;<name>p</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_xml_attr</name> *</type><name>attr</name> <init>= <expr><name><name>elem</name>-&gt;<name>attr</name></name></expr></init></decl>;</decl_stmt>
+
+  <comment type="block">/* SVN sends property values as a big blob of bytes. Thus, there should be
+     no child elements of the property-name element. That also means that
+     the entire contents of the blob is located in elem-&gt;first_cdata. The
+     dav_xml_get_cdata() will figure it all out for us, but (normally) it
+     should be awfully fast and not need to copy any data. */</comment>
+
+  <expr_stmt><expr><name>propval</name> = <call><name>svn_string_create</name>
+    <argument_list>(<argument><expr><call><name>dav_xml_get_cdata</name><argument_list>(<argument><expr><name>elem</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>, <argument><expr>0</expr></argument> <comment type="block">/* strip_white */</comment>)</argument_list></call></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Check for special encodings of the property value. */</comment>
+  <while>while <condition>(<expr><name>attr</name></expr>)</condition>
+    <block>{
+      <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name><name>attr</name>-&gt;<name>name</name></name></expr></argument>, <argument><expr>"encoding"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then> <comment type="block">/* ### namespace check? */</comment>
+        <block>{
+          <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>enc_type</name> <init>= <expr><name><name>attr</name>-&gt;<name>value</name></name></expr></init></decl>;</decl_stmt>
+
+          <comment type="block">/* Handle known encodings here. */</comment>
+          <if>if <condition>(<expr><name>enc_type</name> &amp;&amp; (<call><name>strcmp</name><argument_list>(<argument><expr><name>enc_type</name></expr></argument>, <argument><expr>"base64"</expr></argument>)</argument_list></call> == 0)</expr>)</condition><then>
+            <expr_stmt><expr><name>propval</name> = <call><name>svn_base64_decode_string</name><argument_list>(<argument><expr><name>propval</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+          <else>else
+            <return>return <expr><call><name>dav_new_error</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>HTTP_INTERNAL_SERVER_ERROR</name></expr></argument>, <argument><expr>0</expr></argument>,
+                                 <argument><expr>"Unknown property encoding"</expr></argument>)</argument_list></call></expr>;</return></else></if>
+          <break>break;</break>
+        }</block></then></if>
+      <comment type="block">/* Next attribute, please. */</comment>
+      <expr_stmt><expr><name>attr</name> = <name><name>attr</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+    }</block></while>
+
+  <return>return <expr><call><name>save_value</name><argument_list>(<argument><expr><name>db</name></expr></argument>, <argument><expr><name>name</name></expr></argument>, <argument><expr><name>propval</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>dav_error</name> *</type>
+<name>db_remove</name><parameter_list>(<param><decl><type><name>dav_db</name> *</type><name>db</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>dav_prop_name</name> *</type><name>name</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>serr</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>propname</name></decl>;</decl_stmt>
+
+  <comment type="block">/* get the repos-local name */</comment>
+  <expr_stmt><expr><call><name>get_repos_propname</name><argument_list>(<argument><expr><name>db</name></expr></argument>, <argument><expr><name>name</name></expr></argument>, <argument><expr>&amp;<name>propname</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* ### non-svn props aren't in our repos, so punt for now */</comment>
+  <if>if <condition>(<expr><name>propname</name> == <name>NULL</name></expr>)</condition><then>
+    <return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+  <comment type="block">/* Working Baseline or Working (Version) Resource */</comment>
+  <if>if <condition>(<expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>baselined</name></name></expr>)</condition><then>
+    <if>if <condition>(<expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>working</name></name></expr>)</condition><then>
+      <expr_stmt><expr><name>serr</name> = <call><name>svn_repos_fs_change_txn_prop</name><argument_list>(<argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name>-&gt;<name>root</name>.<name>txn</name></name></expr></argument>,
+                                          <argument><expr><name>propname</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+    <else>else
+      <comment type="block">/* ### VIOLATING deltaV: you can't proppatch a baseline, it's
+         not a working resource!  But this is how we currently
+         (hackily) allow the svn client to change unversioned rev
+         props.  See issue #916. */</comment>
+      <expr_stmt><expr><name>serr</name> = <call><name>svn_repos_fs_change_rev_prop3</name><argument_list>(<argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name>-&gt;<name>repos</name>-&gt;<name>repos</name></name></expr></argument>,
+                                           <argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name>-&gt;<name>root</name>.<name>rev</name></name></expr></argument>,
+                                           <argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name>-&gt;<name>repos</name>-&gt;<name>username</name></name></expr></argument>,
+                                           <argument><expr><name>propname</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>,
+                                           <argument><expr><name><name>db</name>-&gt;<name>authz_read_func</name></name></expr></argument>,
+                                           <argument><expr><name><name>db</name>-&gt;<name>authz_read_baton</name></name></expr></argument>,
+                                           <argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if></then>
+  <else>else
+    <expr_stmt><expr><name>serr</name> = <call><name>svn_repos_fs_change_node_prop</name><argument_list>(<argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name>-&gt;<name>root</name>.<name>root</name></name></expr></argument>,
+                                         <argument><expr><call><name>get_repos_path</name><argument_list>(<argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name></name></expr></argument>)</argument_list></call></expr></argument>,
+                                         <argument><expr><name>propname</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+  <if>if <condition>(<expr><name>serr</name> != <name>NULL</name></expr>)</condition><then>
+    <return>return <expr><call><name>dav_svn__convert_err</name><argument_list>(<argument><expr><name>serr</name></expr></argument>, <argument><expr><name>HTTP_INTERNAL_SERVER_ERROR</name></expr></argument>,
+                                <argument><expr>"could not remove a property"</expr></argument>,
+                                <argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <comment type="block">/* a change to the props was made; make sure our cached copy is gone */</comment>
+  <expr_stmt><expr><name><name>db</name>-&gt;<name>props</name></name> = <name>NULL</name></expr>;</expr_stmt>
+
+  <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>db_exists</name><parameter_list>(<param><decl><type><name>dav_db</name> *</type><name>db</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>dav_prop_name</name> *</type><name>name</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>propname</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_string_t</name> *</type><name>propval</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>serr</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>retval</name></decl>;</decl_stmt>
+
+  <comment type="block">/* get the repos-local name */</comment>
+  <expr_stmt><expr><call><name>get_repos_propname</name><argument_list>(<argument><expr><name>db</name></expr></argument>, <argument><expr><name>name</name></expr></argument>, <argument><expr>&amp;<name>propname</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* ### non-svn props aren't in our repos */</comment>
+  <if>if <condition>(<expr><name>propname</name> == <name>NULL</name></expr>)</condition><then>
+    <return>return <expr>0</expr>;</return></then></if>
+
+  <comment type="block">/* Working Baseline, Baseline, or (Working) Version resource */</comment>
+  <if>if <condition>(<expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>baselined</name></name></expr>)</condition><then>
+    <if>if <condition>(<expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>type</name></name> == <name>DAV_RESOURCE_TYPE_WORKING</name></expr>)</condition><then>
+      <expr_stmt><expr><name>serr</name> = <call><name>svn_fs_txn_prop</name><argument_list>(<argument><expr>&amp;<name>propval</name></expr></argument>, <argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name>-&gt;<name>root</name>.<name>txn</name></name></expr></argument>,
+                             <argument><expr><name>propname</name></expr></argument>, <argument><expr><name><name>db</name>-&gt;<name>p</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+    <else>else
+      <expr_stmt><expr><name>serr</name> = <call><name>svn_repos_fs_revision_prop</name><argument_list>(<argument><expr>&amp;<name>propval</name></expr></argument>,
+                                        <argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name>-&gt;<name>repos</name>-&gt;<name>repos</name></name></expr></argument>,
+                                        <argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name>-&gt;<name>root</name>.<name>rev</name></name></expr></argument>,
+                                        <argument><expr><name>propname</name></expr></argument>,
+                                        <argument><expr><name><name>db</name>-&gt;<name>authz_read_func</name></name></expr></argument>,
+                                        <argument><expr><name><name>db</name>-&gt;<name>authz_read_baton</name></name></expr></argument>, <argument><expr><name><name>db</name>-&gt;<name>p</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if></then>
+  <else>else
+    <expr_stmt><expr><name>serr</name> = <call><name>svn_fs_node_prop</name><argument_list>(<argument><expr>&amp;<name>propval</name></expr></argument>, <argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name>-&gt;<name>root</name>.<name>root</name></name></expr></argument>,
+                            <argument><expr><call><name>get_repos_path</name><argument_list>(<argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name></name></expr></argument>)</argument_list></call></expr></argument>,
+                            <argument><expr><name>propname</name></expr></argument>, <argument><expr><name><name>db</name>-&gt;<name>p</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+
+  <comment type="block">/* ### try and dispose of the value? */</comment>
+
+  <expr_stmt><expr><name>retval</name> = (<name>serr</name> == <name>NULL</name> &amp;&amp; <name>propval</name> != <name>NULL</name>)</expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>serr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><name>retval</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>void</name></type> <name>get_name</name><parameter_list>(<param><decl><type><name>dav_db</name> *</type><name>db</name></decl></param>, <param><decl><type><name>dav_prop_name</name> *</type><name>pname</name></decl></param>)</parameter_list>
+<block>{
+  <if>if <condition>(<expr><name><name>db</name>-&gt;<name>hi</name></name> == <name>NULL</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><name><name>pname</name>-&gt;<name>ns</name></name> = <name><name>pname</name>-&gt;<name>name</name></name> = <name>NULL</name></expr>;</expr_stmt>
+    }</block></then>
+  <else>else
+    <block>{
+      <decl_stmt><decl><type><specifier>const</specifier> <name>void</name> *</type><name>name</name></decl>;</decl_stmt>
+
+      <expr_stmt><expr><call><name>apr_hash_this</name><argument_list>(<argument><expr><name><name>db</name>-&gt;<name>hi</name></name></expr></argument>, <argument><expr>&amp;<name>name</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PREFIX_LEN</name></cpp:macro> <cpp:value>(sizeof(SVN_PROP_PREFIX) - 1)</cpp:value></cpp:define>
+      <if>if <condition>(<expr><call><name>strncmp</name><argument_list>(<argument><expr><name>name</name></expr></argument>, <argument><expr><name>SVN_PROP_PREFIX</name></expr></argument>, <argument><expr><name>PREFIX_LEN</name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+<cpp:undef>#<cpp:directive>undef</cpp:directive> <name>PREFIX_LEN</name></cpp:undef>
+        <block>{
+          <expr_stmt><expr><name><name>pname</name>-&gt;<name>ns</name></name> = <name>SVN_DAV_PROP_NS_SVN</name></expr>;</expr_stmt>
+          <expr_stmt><expr><name><name>pname</name>-&gt;<name>name</name></name> = (const <name>char</name> *)<name>name</name> + 4</expr>;</expr_stmt>
+        }</block></then>
+      <else>else
+        <block>{
+          <expr_stmt><expr><name><name>pname</name>-&gt;<name>ns</name></name> = <name>SVN_DAV_PROP_NS_CUSTOM</name></expr>;</expr_stmt>
+          <expr_stmt><expr><name><name>pname</name>-&gt;<name>name</name></name> = <name>name</name></expr>;</expr_stmt>
+        }</block></else></if>
+    }</block></else></if>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>dav_error</name> *</type>
+<name>db_first_name</name><parameter_list>(<param><decl><type><name>dav_db</name> *</type><name>db</name></decl></param>, <param><decl><type><name>dav_prop_name</name> *</type><name>pname</name></decl></param>)</parameter_list>
+<block>{
+  <comment type="block">/* for operational logging */</comment>
+  <decl_stmt><decl><type><name>char</name> *</type><name>action</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+
+  <comment type="block">/* if we don't have a copy of the properties, then get one */</comment>
+  <if>if <condition>(<expr><name><name>db</name>-&gt;<name>props</name></name> == <name>NULL</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>serr</name></decl>;</decl_stmt>
+
+      <comment type="block">/* Working Baseline, Baseline, or (Working) Version resource */</comment>
+      <if>if <condition>(<expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>baselined</name></name></expr>)</condition><then>
+        <block>{
+          <if>if <condition>(<expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>type</name></name> == <name>DAV_RESOURCE_TYPE_WORKING</name></expr>)</condition><then>
+            <expr_stmt><expr><name>serr</name> = <call><name>svn_fs_txn_proplist</name><argument_list>(<argument><expr>&amp;<name><name>db</name>-&gt;<name>props</name></name></expr></argument>,
+                                       <argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name>-&gt;<name>root</name>.<name>txn</name></name></expr></argument>,
+                                       <argument><expr><name><name>db</name>-&gt;<name>p</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+          <else>else
+            <block>{
+              <expr_stmt><expr><name>action</name> = <call><name>apr_psprintf</name><argument_list>(<argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>"rev-proplist r%ld"</expr></argument>,
+                                    <argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name>-&gt;<name>root</name>.<name>rev</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+              <expr_stmt><expr><name>serr</name> = <call><name>svn_repos_fs_revision_proplist</name>
+                <argument_list>(<argument><expr>&amp;<name><name>db</name>-&gt;<name>props</name></name></expr></argument>,
+                 <argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name>-&gt;<name>repos</name>-&gt;<name>repos</name></name></expr></argument>,
+                 <argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name>-&gt;<name>root</name>.<name>rev</name></name></expr></argument>,
+                 <argument><expr><name><name>db</name>-&gt;<name>authz_read_func</name></name></expr></argument>,
+                 <argument><expr><name><name>db</name>-&gt;<name>authz_read_baton</name></name></expr></argument>,
+                 <argument><expr><name><name>db</name>-&gt;<name>p</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></else></if>
+        }</block></then>
+      <else>else
+        <block>{
+          <decl_stmt><decl><type><name>svn_node_kind_t</name></type> <name>kind</name></decl>;</decl_stmt>
+          <expr_stmt><expr><name>serr</name> = <call><name>svn_fs_node_proplist</name><argument_list>(<argument><expr>&amp;<name><name>db</name>-&gt;<name>props</name></name></expr></argument>,
+                                      <argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name>-&gt;<name>root</name>.<name>root</name></name></expr></argument>,
+                                      <argument><expr><call><name>get_repos_path</name><argument_list>(<argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name></name></expr></argument>)</argument_list></call></expr></argument>,
+                                      <argument><expr><name><name>db</name>-&gt;<name>p</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <if>if <condition>(<expr>! <name>serr</name></expr>)</condition><then>
+            <expr_stmt><expr><name>serr</name> = <call><name>svn_fs_check_path</name><argument_list>(<argument><expr>&amp;<name>kind</name></expr></argument>, <argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name>-&gt;<name>root</name>.<name>root</name></name></expr></argument>,
+                                     <argument><expr><call><name>get_repos_path</name><argument_list>(<argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name></name></expr></argument>)</argument_list></call></expr></argument>,
+                                     <argument><expr><name><name>db</name>-&gt;<name>p</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+          <if>if <condition>(<expr>! <name>serr</name></expr>)</condition><then>
+            <expr_stmt><expr><name>action</name> = <call><name>apr_psprintf</name><argument_list>(<argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>"get-%s %s r%ld props"</expr></argument>,
+                                  <argument><expr>(<name>kind</name> == <name>svn_node_dir</name> ? "dir" : "file")</expr></argument>,
+                                  <argument><expr><call><name>svn_path_uri_encode</name><argument_list>(<argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name>-&gt;<name>repos_path</name></name></expr></argument>,
+                                                      <argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr></argument>,
+                                  <argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name>-&gt;<name>root</name>.<name>rev</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+        }</block></else></if>
+      <if>if <condition>(<expr><name>serr</name> != <name>NULL</name></expr>)</condition><then>
+        <return>return <expr><call><name>dav_svn__convert_err</name><argument_list>(<argument><expr><name>serr</name></expr></argument>, <argument><expr><name>HTTP_INTERNAL_SERVER_ERROR</name></expr></argument>,
+                                    <argument><expr>"could not begin sequencing through "
+                                    "properties"</expr></argument>,
+                                    <argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+    }</block></then></if>
+
+  <comment type="block">/* begin the iteration over the hash */</comment>
+  <expr_stmt><expr><name><name>db</name>-&gt;<name>hi</name></name> = <call><name>apr_hash_first</name><argument_list>(<argument><expr><name><name>db</name>-&gt;<name>p</name></name></expr></argument>, <argument><expr><name><name>db</name>-&gt;<name>props</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* fetch the first key */</comment>
+  <expr_stmt><expr><call><name>get_name</name><argument_list>(<argument><expr><name>db</name></expr></argument>, <argument><expr><name>pname</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* If we have a high-level action to log, do so. */</comment>
+  <if>if <condition>(<expr><name>action</name> != <name>NULL</name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>dav_svn__operational_log</name><argument_list>(<argument><expr><name><name>db</name>-&gt;<name>resource</name>-&gt;<name>info</name></name></expr></argument>, <argument><expr><name>action</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>dav_error</name> *</type>
+<name>db_next_name</name><parameter_list>(<param><decl><type><name>dav_db</name> *</type><name>db</name></decl></param>, <param><decl><type><name>dav_prop_name</name> *</type><name>pname</name></decl></param>)</parameter_list>
+<block>{
+  <comment type="block">/* skip to the next hash entry */</comment>
+  <if>if <condition>(<expr><name><name>db</name>-&gt;<name>hi</name></name> != <name>NULL</name></expr>)</condition><then>
+    <expr_stmt><expr><name><name>db</name>-&gt;<name>hi</name></name> = <call><name>apr_hash_next</name><argument_list>(<argument><expr><name><name>db</name>-&gt;<name>hi</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <comment type="block">/* fetch the key */</comment>
+  <expr_stmt><expr><call><name>get_name</name><argument_list>(<argument><expr><name>db</name></expr></argument>, <argument><expr><name>pname</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>dav_error</name> *</type>
+<name>db_get_rollback</name><parameter_list>(<param><decl><type><name>dav_db</name> *</type><name>db</name></decl></param>,
+                <param><decl><type><specifier>const</specifier> <name>dav_prop_name</name> *</type><name>name</name></decl></param>,
+                <param><decl><type><name>dav_deadprop_rollback</name> **</type><name>prollback</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>dav_error</name> *</type><name>err</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>dav_deadprop_rollback</name> *</type><name>ddp</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_string_t</name> *</type><name>propval</name></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr>(<name>err</name> = <call><name>get_value</name><argument_list>(<argument><expr><name>db</name></expr></argument>, <argument><expr><name>name</name></expr></argument>, <argument><expr>&amp;<name>propval</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then>
+    <return>return <expr><name>err</name></expr>;</return></then></if>
+
+  <expr_stmt><expr><name>ddp</name> = <call><name>apr_palloc</name><argument_list>(<argument><expr><name><name>db</name>-&gt;<name>p</name></name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>ddp</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>ddp</name>-&gt;<name>name</name></name> = *<name>name</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>ddp</name>-&gt;<name>value</name>.<name>data</name></name> = <name>propval</name> ? <name><name>propval</name>-&gt;<name>data</name></name> : <name>NULL</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>ddp</name>-&gt;<name>value</name>.<name>len</name></name> = <name>propval</name> ? <name><name>propval</name>-&gt;<name>len</name></name> : 0</expr>;</expr_stmt>
+
+  <expr_stmt><expr>*<name>prollback</name> = <name>ddp</name></expr>;</expr_stmt>
+  <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>dav_error</name> *</type>
+<name>db_apply_rollback</name><parameter_list>(<param><decl><type><name>dav_db</name> *</type><name>db</name></decl></param>, <param><decl><type><name>dav_deadprop_rollback</name> *</type><name>rollback</name></decl></param>)</parameter_list>
+<block>{
+  <if>if <condition>(<expr><name><name>rollback</name>-&gt;<name>value</name>.<name>data</name></name> == <name>NULL</name></expr>)</condition><then>
+    <block>{
+      <return>return <expr><call><name>db_remove</name><argument_list>(<argument><expr><name>db</name></expr></argument>, <argument><expr>&amp;<name><name>rollback</name>-&gt;<name>name</name></name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+
+  <return>return <expr><call><name>save_value</name><argument_list>(<argument><expr><name>db</name></expr></argument>, <argument><expr>&amp;<name><name>rollback</name>-&gt;<name>name</name></name></expr></argument>, <argument><expr>&amp;<name><name>rollback</name>-&gt;<name>value</name></name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+<decl_stmt><decl><type><specifier>const</specifier> <name>dav_hooks_propdb</name></type> <name>dav_svn__hooks_propdb</name> <init>= <expr><block>{
+  <expr><name>db_open</name></expr>,
+  <expr><name>db_close</name></expr>,
+  <expr><name>db_define_namespaces</name></expr>,
+  <expr><name>db_output_value</name></expr>,
+  <expr><name>db_map_namespaces</name></expr>,
+  <expr><name>db_store</name></expr>,
+  <expr><name>db_remove</name></expr>,
+  <expr><name>db_exists</name></expr>,
+  <expr><name>db_first_name</name></expr>,
+  <expr><name>db_next_name</name></expr>,
+  <expr><name>db_get_rollback</name></expr>,
+  <expr><name>db_apply_rollback</name></expr>,
+}</block></expr></init></decl>;</decl_stmt>
+</unit>

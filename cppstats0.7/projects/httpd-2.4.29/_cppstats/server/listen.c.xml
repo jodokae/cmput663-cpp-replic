@@ -1,0 +1,644 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="server/listen.c"><cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_network_io.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_strings.h"</cpp:file></cpp:include>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>APR_WANT_STRFUNC</name></cpp:macro></cpp:define>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_want.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"ap_config.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"httpd.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_main.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_config.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_core.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"ap_listen.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_log.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"mpm_common.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;stdlib.h&gt;</cpp:file></cpp:include>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_HAVE_UNISTD_H</name></expr></cpp:if>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;unistd.h&gt;</cpp:file></cpp:include>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:undef>#<cpp:directive>undef</cpp:directive> <name>APLOG_MODULE_INDEX</name></cpp:undef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>APLOG_MODULE_INDEX</name></cpp:macro> <cpp:value>AP_CORE_MODULE_INDEX</cpp:value></cpp:define>
+<decl_stmt><decl><type><name>AP_DECLARE_DATA</name> <name>ap_listen_rec</name> *</type><name>ap_listeners</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>AP_DECLARE_DATA</name> <name>int</name></type> <name>ap_num_listen_buckets</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>ap_listen_rec</name> **</type><name>ap_listen_buckets</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>AP_DECLARE_DATA</name> <name>int</name></type> <name>ap_have_so_reuseport</name> <init>= <expr>-1</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>ap_listen_rec</name> *</type><name>old_listeners</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name></type> <name>ap_listenbacklog</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name></type> <name>ap_listencbratio</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name></type> <name>send_buffer_size</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name></type> <name>receive_buffer_size</name></decl>;</decl_stmt>
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>make_sock</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>, <param><decl><type><name>ap_listen_rec</name> *</type><name>server</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>apr_socket_t</name> *</type><name>s</name> <init>= <expr><name><name>server</name>-&gt;<name>sd</name></name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>one</name> <init>= <expr>1</expr></init></decl>;</decl_stmt>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_HAVE_IPV6</name></expr></cpp:if>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>AP_ENABLE_V4_MAPPED</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<decl_stmt><decl><type><name>int</name></type> <name>v6only_setting</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+<decl_stmt><decl><type><name>int</name></type> <name>v6only_setting</name> <init>= <expr>1</expr></init></decl>;</decl_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<decl_stmt><decl><type><name>apr_status_t</name></type> <name>stat</name></decl>;</decl_stmt>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr>!<call><name>defined</name><argument_list>(<argument><expr><name>WIN32</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<expr_stmt><expr><name>stat</name> = <call><name>apr_socket_opt_set</name><argument_list>(<argument><expr><name>s</name></expr></argument>, <argument><expr><name>APR_SO_REUSEADDR</name></expr></argument>, <argument><expr><name>one</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>stat</name> != <name>APR_SUCCESS</name> &amp;&amp; <name>stat</name> != <name>APR_ENOTIMPL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_CRIT</name></expr></argument>, <argument><expr><name>stat</name></expr></argument>, <argument><expr><name>p</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00067</expr></argument>)</argument_list></call>
+"make_sock: for address %pI, apr_socket_opt_set: (SO_REUSEADDR)"</expr></argument>,
+<argument><expr><name><name>server</name>-&gt;<name>bind_addr</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>apr_socket_close</name><argument_list>(<argument><expr><name>s</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>stat</name></expr>;</return>
+}</block></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<expr_stmt><expr><name>stat</name> = <call><name>apr_socket_opt_set</name><argument_list>(<argument><expr><name>s</name></expr></argument>, <argument><expr><name>APR_SO_KEEPALIVE</name></expr></argument>, <argument><expr><name>one</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>stat</name> != <name>APR_SUCCESS</name> &amp;&amp; <name>stat</name> != <name>APR_ENOTIMPL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_CRIT</name></expr></argument>, <argument><expr><name>stat</name></expr></argument>, <argument><expr><name>p</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00068</expr></argument>)</argument_list></call>
+"make_sock: for address %pI, apr_socket_opt_set: (SO_KEEPALIVE)"</expr></argument>,
+<argument><expr><name><name>server</name>-&gt;<name>bind_addr</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>apr_socket_close</name><argument_list>(<argument><expr><name>s</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>stat</name></expr>;</return>
+}</block></then></if>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_HAVE_IPV6</name></expr></cpp:if>
+<if>if <condition>(<expr><name><name>server</name>-&gt;<name>bind_addr</name>-&gt;<name>family</name></name> == <name>APR_INET6</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>stat</name> = <call><name>apr_socket_opt_set</name><argument_list>(<argument><expr><name>s</name></expr></argument>, <argument><expr><name>APR_IPV6_V6ONLY</name></expr></argument>, <argument><expr><name>v6only_setting</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>stat</name> != <name>APR_SUCCESS</name> &amp;&amp; <name>stat</name> != <name>APR_ENOTIMPL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_CRIT</name></expr></argument>, <argument><expr><name>stat</name></expr></argument>, <argument><expr><name>p</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00069</expr></argument>)</argument_list></call>
+"make_sock: for address %pI, apr_socket_opt_set: "
+"(IPV6_V6ONLY)"</expr></argument>,
+<argument><expr><name><name>server</name>-&gt;<name>bind_addr</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>apr_socket_close</name><argument_list>(<argument><expr><name>s</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>stat</name></expr>;</return>
+}</block></then></if>
+}</block></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<if>if <condition>(<expr><name>send_buffer_size</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>stat</name> = <call><name>apr_socket_opt_set</name><argument_list>(<argument><expr><name>s</name></expr></argument>, <argument><expr><name>APR_SO_SNDBUF</name></expr></argument>, <argument><expr><name>send_buffer_size</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>stat</name> != <name>APR_SUCCESS</name> &amp;&amp; <name>stat</name> != <name>APR_ENOTIMPL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_WARNING</name></expr></argument>, <argument><expr><name>stat</name></expr></argument>, <argument><expr><name>p</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00070</expr></argument>)</argument_list></call>
+"make_sock: failed to set SendBufferSize for "
+"address %pI, using default"</expr></argument>,
+<argument><expr><name><name>server</name>-&gt;<name>bind_addr</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+}</block></then></if>
+<if>if <condition>(<expr><name>receive_buffer_size</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>stat</name> = <call><name>apr_socket_opt_set</name><argument_list>(<argument><expr><name>s</name></expr></argument>, <argument><expr><name>APR_SO_RCVBUF</name></expr></argument>, <argument><expr><name>receive_buffer_size</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>stat</name> != <name>APR_SUCCESS</name> &amp;&amp; <name>stat</name> != <name>APR_ENOTIMPL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_WARNING</name></expr></argument>, <argument><expr><name>stat</name></expr></argument>, <argument><expr><name>p</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00071</expr></argument>)</argument_list></call>
+"make_sock: failed to set ReceiveBufferSize for "
+"address %pI, using default"</expr></argument>,
+<argument><expr><name><name>server</name>-&gt;<name>bind_addr</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+}</block></then></if>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_TCP_NODELAY_INHERITED</name></expr></cpp:if>
+<expr_stmt><expr><call><name>ap_sock_disable_nagle</name><argument_list>(<argument><expr><name>s</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>SO_REUSEPORT</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<if>if <condition>(<expr><name>ap_have_so_reuseport</name> &amp;&amp; <name>ap_listencbratio</name> &gt; 0</expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>thesock</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>apr_os_sock_get</name><argument_list>(<argument><expr>&amp;<name>thesock</name></expr></argument>, <argument><expr><name>s</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><call><name>setsockopt</name><argument_list>(<argument><expr><name>thesock</name></expr></argument>, <argument><expr><name>SOL_SOCKET</name></expr></argument>, <argument><expr><name>SO_REUSEPORT</name></expr></argument>,
+<argument><expr>(<name>void</name> *)&amp;<name>one</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>int</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then> <block>{
+<expr_stmt><expr><name>stat</name> = <call><name>apr_get_netos_error</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_CRIT</name></expr></argument>, <argument><expr><name>stat</name></expr></argument>, <argument><expr><name>p</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>02638</expr></argument>)</argument_list></call>
+"make_sock: for address %pI, apr_socket_opt_set: "
+"(SO_REUSEPORT)"</expr></argument>,
+<argument><expr><name><name>server</name>-&gt;<name>bind_addr</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>apr_socket_close</name><argument_list>(<argument><expr><name>s</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>stat</name></expr>;</return>
+}</block></then></if>
+}</block></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<if>if <condition>(<expr>(<name>stat</name> = <call><name>apr_socket_bind</name><argument_list>(<argument><expr><name>s</name></expr></argument>, <argument><expr><name><name>server</name>-&gt;<name>bind_addr</name></name></expr></argument>)</argument_list></call>) != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_STARTUP</name>|<name>APLOG_CRIT</name></expr></argument>, <argument><expr><name>stat</name></expr></argument>, <argument><expr><name>p</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00072</expr></argument>)</argument_list></call>
+"make_sock: could not bind to address %pI"</expr></argument>,
+<argument><expr><name><name>server</name>-&gt;<name>bind_addr</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>apr_socket_close</name><argument_list>(<argument><expr><name>s</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>stat</name></expr>;</return>
+}</block></then></if>
+<if>if <condition>(<expr>(<name>stat</name> = <call><name>apr_socket_listen</name><argument_list>(<argument><expr><name>s</name></expr></argument>, <argument><expr><name>ap_listenbacklog</name></expr></argument>)</argument_list></call>) != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_STARTUP</name>|<name>APLOG_ERR</name></expr></argument>, <argument><expr><name>stat</name></expr></argument>, <argument><expr><name>p</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00073</expr></argument>)</argument_list></call>
+"make_sock: unable to listen for connections "
+"on address %pI"</expr></argument>,
+<argument><expr><name><name>server</name>-&gt;<name>bind_addr</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>apr_socket_close</name><argument_list>(<argument><expr><name>s</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>stat</name></expr>;</return>
+}</block></then></if>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>WIN32</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<expr_stmt><expr><name>stat</name> = <call><name>apr_socket_opt_set</name><argument_list>(<argument><expr><name>s</name></expr></argument>, <argument><expr><name>APR_SO_REUSEADDR</name></expr></argument>, <argument><expr><name>one</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>stat</name> != <name>APR_SUCCESS</name> &amp;&amp; <name>stat</name> != <name>APR_ENOTIMPL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_CRIT</name></expr></argument>, <argument><expr><name>stat</name></expr></argument>, <argument><expr><name>p</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00074</expr></argument>)</argument_list></call>
+"make_sock: for address %pI, apr_socket_opt_set: (SO_REUSEADDR)"</expr></argument>,
+<argument><expr><name><name>server</name>-&gt;<name>bind_addr</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>apr_socket_close</name><argument_list>(<argument><expr><name>s</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>stat</name></expr>;</return>
+}</block></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<expr_stmt><expr><name><name>server</name>-&gt;<name>sd</name></name> = <name>s</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>server</name>-&gt;<name>active</name></name> = 1</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>server</name>-&gt;<name>accept_func</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name>*</type> <name>find_accf_name</name><parameter_list>(<param><decl><type><name>server_rec</name> *</type><name>s</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>proto</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name>*</type> <name>accf</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>core_server_config</name> *</type><name>conf</name> <init>= <expr><call><name>ap_get_core_module_config</name><argument_list>(<argument><expr><name><name>s</name>-&gt;<name>module_config</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr>!<name>proto</name></expr>)</condition><then> <block>{
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>accf</name> = <call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>conf</name>-&gt;<name>accf_map</name></name></expr></argument>, <argument><expr><name>proto</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>accf</name> &amp;&amp; !<call><name>strcmp</name><argument_list>(<argument><expr>"none"</expr></argument>, <argument><expr><name>accf</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></then></if>
+<return>return <expr><name>accf</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>void</name></type> <name>ap_apply_accept_filter</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>, <param><decl><type><name>ap_listen_rec</name> *</type><name>lis</name></decl></param>,
+<param><decl><type><name>server_rec</name> *</type><name>server</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>apr_socket_t</name> *</type><name>s</name> <init>= <expr><name><name>lis</name>-&gt;<name>sd</name></name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>accf</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>proto</name></decl>;</decl_stmt>
+<expr_stmt><expr><name>proto</name> = <name><name>lis</name>-&gt;<name>protocol</name></name></expr>;</expr_stmt>
+<if>if <condition>(<expr>!<name>proto</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>proto</name> = <call><name>ap_get_server_protocol</name><argument_list>(<argument><expr><name>server</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+<expr_stmt><expr><name>accf</name> = <call><name>find_accf_name</name><argument_list>(<argument><expr><name>server</name></expr></argument>, <argument><expr><name>proto</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>accf</name></expr>)</condition><then> <block>{
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_HAS_SO_ACCEPTFILTER</name></expr></cpp:if>
+<expr_stmt><expr><name>rv</name> = <call><name>apr_socket_accept_filter</name><argument_list>(<argument><expr><name>s</name></expr></argument>, <argument><expr><call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>accf</name></expr></argument>)</argument_list></call></expr></argument>,
+<argument><expr><call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name> &amp;&amp; !<call><name>APR_STATUS_IS_ENOTIMPL</name><argument_list>(<argument><expr><name>rv</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_WARNING</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name>p</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00075</expr></argument>)</argument_list></call>
+"Failed to enable the '%s' Accept Filter"</expr></argument>,
+<argument><expr><name>accf</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+<expr_stmt><expr><name>rv</name> = <call><name>apr_socket_opt_set</name><argument_list>(<argument><expr><name>s</name></expr></argument>, <argument><expr><name>APR_TCP_DEFER_ACCEPT</name></expr></argument>, <argument><expr>30</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name> &amp;&amp; !<call><name>APR_STATUS_IS_ENOTIMPL</name><argument_list>(<argument><expr><name>rv</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_WARNING</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name>p</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00076</expr></argument>)</argument_list></call>
+"Failed to enable APR_TCP_DEFER_ACCEPT"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+}</block></then></if>
+}</block></function>
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>close_listeners_on_exec</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>v</name></decl></param>)</parameter_list> <block>{
+<expr_stmt><expr><call><name>ap_close_listeners</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>int</name></type> <name>find_listeners</name><parameter_list>(<param><decl><type><name>ap_listen_rec</name> **</type><name>from</name></decl></param>, <param><decl><type><name>ap_listen_rec</name> **</type><name>to</name></decl></param>,
+<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>addr</name></decl></param>, <param><decl><type><name>apr_port_t</name></type> <name>port</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>found</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<while>while <condition>(<expr>*<name>from</name></expr>)</condition> <block>{
+<decl_stmt><decl><type><name>apr_sockaddr_t</name> *</type><name>sa</name> <init>= <expr><name>(*<name>from</name>)-&gt;<name>bind_addr</name></name></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>sa</name></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>ap_listen_rec</name> *</type><name>new</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_port_t</name></type> <name>oldport</name></decl>;</decl_stmt>
+<expr_stmt><expr><name>oldport</name> = <name><name>sa</name>-&gt;<name>port</name></name></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>port</name> == <name>oldport</name> &amp;&amp;
+((!<name>addr</name> &amp;&amp; !<name><name>sa</name>-&gt;<name>hostname</name></name>) ||
+((<name>addr</name> &amp;&amp; <name><name>sa</name>-&gt;<name>hostname</name></name>) &amp;&amp; !<call><name>strcmp</name><argument_list>(<argument><expr><name><name>sa</name>-&gt;<name>hostname</name></name></expr></argument>, <argument><expr><name>addr</name></expr></argument>)</argument_list></call>))</expr>)</condition><then> <block>{
+<expr_stmt><expr><name>found</name> = 1</expr>;</expr_stmt>
+<if>if <condition>(<expr>!<name>to</name></expr>)</condition><then> <block>{
+<break>break;</break>
+}</block></then></if>
+<expr_stmt><expr><name>new</name> = *<name>from</name></expr>;</expr_stmt>
+<expr_stmt><expr>*<name>from</name> = <name><name>new</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>new</name>-&gt;<name>next</name></name> = *<name>to</name></expr>;</expr_stmt>
+<expr_stmt><expr>*<name>to</name> = <name>new</name></expr>;</expr_stmt>
+<continue>continue;</continue>
+}</block></then></if>
+}</block></then></if>
+<expr_stmt><expr><name>from</name> = &amp;<name>(*<name>from</name>)-&gt;<name>next</name></name></expr>;</expr_stmt>
+}</block></while>
+<return>return <expr><name>found</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *</type><name>alloc_listener</name><parameter_list>(<param><decl><type><name>process_rec</name> *</type><name>process</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>addr</name></decl></param>,
+<param><decl><type><name>apr_port_t</name></type> <name>port</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name>*</type> <name>proto</name></decl></param>,
+<param><decl><type><name>void</name> *</type><name>slave</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>ap_listen_rec</name> *</type><name>last</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_status_t</name></type> <name>status</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_sockaddr_t</name> *</type><name>sa</name></decl>;</decl_stmt>
+<if>if <condition>(<expr><call><name>find_listeners</name><argument_list>(<argument><expr>&amp;<name>ap_listeners</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>addr</name></expr></argument>, <argument><expr><name>port</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<return>return <expr>"Cannot define multiple Listeners on the same IP:port"</expr>;</return>
+}</block></then></if>
+<if>if <condition>(<expr><call><name>find_listeners</name><argument_list>(<argument><expr>&amp;<name>old_listeners</name></expr></argument>, <argument><expr>&amp;<name>ap_listeners</name></expr></argument>, <argument><expr><name>addr</name></expr></argument>, <argument><expr><name>port</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<if>if <condition>(<expr><name><name>ap_listeners</name>-&gt;<name>slave</name></name> != <name>slave</name></expr>)</condition><then> <block>{
+<return>return <expr>"Cannot define a slave on the same IP:port as a Listener"</expr>;</return>
+}</block></then></if>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></then></if>
+<if>if <condition>(<expr>(<name>status</name> = <call><name>apr_sockaddr_info_get</name><argument_list>(<argument><expr>&amp;<name>sa</name></expr></argument>, <argument><expr><name>addr</name></expr></argument>, <argument><expr><name>APR_UNSPEC</name></expr></argument>, <argument><expr><name>port</name></expr></argument>, <argument><expr>0</expr></argument>,
+<argument><expr><name><name>process</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call>)
+!= <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_CRIT</name></expr></argument>, <argument><expr><name>status</name></expr></argument>, <argument><expr><name><name>process</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00077</expr></argument>)</argument_list></call>
+"alloc_listener: failed to set up sockaddr for %s"</expr></argument>,
+<argument><expr><name>addr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr>"Listen setup failed"</expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>last</name> = <name>ap_listeners</name></expr>;</expr_stmt>
+<while>while <condition>(<expr><name>last</name> &amp;&amp; <name><name>last</name>-&gt;<name>next</name></name></expr>)</condition> <block>{
+<expr_stmt><expr><name>last</name> = <name><name>last</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+}</block></while>
+<while>while <condition>(<expr><name>sa</name></expr>)</condition> <block>{
+<decl_stmt><decl><type><name>ap_listen_rec</name> *</type><name>new</name></decl>;</decl_stmt>
+<expr_stmt><expr><name>new</name> = <call><name>apr_palloc</name><argument_list>(<argument><expr><name><name>process</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>ap_listen_rec</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>new</name>-&gt;<name>active</name></name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>new</name>-&gt;<name>next</name></name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>new</name>-&gt;<name>bind_addr</name></name> = <name>sa</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>new</name>-&gt;<name>protocol</name></name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name><name>process</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>proto</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>sa</name> = <name><name>sa</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name>status</name> = <call><name>apr_socket_create</name><argument_list>(<argument><expr>&amp;<name><name>new</name>-&gt;<name>sd</name></name></expr></argument>, <argument><expr><name><name>new</name>-&gt;<name>bind_addr</name>-&gt;<name>family</name></name></expr></argument>,
+<argument><expr><name>SOCK_STREAM</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name><name>process</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_HAVE_IPV6</name></expr></cpp:if>
+<if>if <condition>(<expr><name>status</name> != <name>APR_SUCCESS</name> &amp;&amp; !<name>addr</name> &amp;&amp;
+<name><name>new</name>-&gt;<name>bind_addr</name>-&gt;<name>family</name></name> == <name>APR_INET6</name></expr>)</condition><then> <block>{
+<continue>continue;</continue>
+}</block></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<if>if <condition>(<expr><name>status</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_CRIT</name></expr></argument>, <argument><expr><name>status</name></expr></argument>, <argument><expr><name><name>process</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00078</expr></argument>)</argument_list></call>
+"alloc_listener: failed to get a socket for %s"</expr></argument>,
+<argument><expr><name>addr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr>"Listen setup failed"</expr>;</return>
+}</block></then></if>
+<if>if <condition>(<expr><name>last</name> == <name>NULL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>ap_listeners</name> = <name>last</name> = <name>new</name></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name><name>last</name>-&gt;<name>next</name></name> = <name>new</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>last</name> = <name>new</name></expr>;</expr_stmt>
+}</block></else></if>
+<expr_stmt><expr><name><name>new</name>-&gt;<name>slave</name></name> = <name>slave</name></expr>;</expr_stmt>
+}</block></while>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>IS_INADDR_ANY</name><parameter_list>(<param><type><name>addr</name></type></param>)</parameter_list></cpp:macro> <cpp:value>((addr)-&gt;family == APR_INET &amp;&amp; (addr)-&gt;sa.sin.sin_addr.s_addr == INADDR_ANY)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>IS_IN6ADDR_ANY</name><parameter_list>(<param><type><name>addr</name></type></param>)</parameter_list></cpp:macro> <cpp:value>((addr)-&gt;family == APR_INET6 &amp;&amp; IN6_IS_ADDR_UNSPECIFIED(&amp;(addr)-&gt;sa.sin6.sin6_addr))</cpp:value></cpp:define>
+<function><type><specifier>static</specifier> <name>int</name></type> <name>open_listeners</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>ap_listen_rec</name> *</type><name>lr</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>ap_listen_rec</name> *</type><name>next</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>ap_listen_rec</name> *</type><name>previous</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>num_open</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>userdata_key</name> <init>= <expr>"ap_open_listeners"</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>void</name> *</type><name>data</name></decl>;</decl_stmt>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>AP_NONBLOCK_WHEN_MULTI_LISTEN</name></expr></cpp:if>
+<decl_stmt><decl><type><name>int</name></type> <name>use_nonblock</name></decl>;</decl_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<expr_stmt><expr><name>num_open</name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><name>previous</name> = <name>NULL</name></expr>;</expr_stmt>
+<for>for (<init><expr><name>lr</name> = <name>ap_listeners</name></expr>;</init> <condition><expr><name>lr</name></expr>;</condition> <incr><expr><name>previous</name> = <name>lr</name></expr>, <expr><name>lr</name> = <name><name>lr</name>-&gt;<name>next</name></name></expr></incr>) <block>{
+<if>if <condition>(<expr><name><name>lr</name>-&gt;<name>active</name></name></expr>)</condition><then> <block>{
+<expr_stmt><expr>++<name>num_open</name></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_HAVE_IPV6</name></expr></cpp:if>
+<decl_stmt><decl><type><name>ap_listen_rec</name> *</type><name>cur</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>v6only_setting</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>skip</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name><name>lr</name>-&gt;<name>next</name></name> != <name>NULL</name>
+&amp;&amp; <call><name>IS_INADDR_ANY</name><argument_list>(<argument><expr><name><name>lr</name>-&gt;<name>bind_addr</name></name></expr></argument>)</argument_list></call>
+&amp;&amp; <name><name>lr</name>-&gt;<name>bind_addr</name>-&gt;<name>port</name></name> == <name><name>lr</name>-&gt;<name>next</name>-&gt;<name>bind_addr</name>-&gt;<name>port</name></name>
+&amp;&amp; <call><name>IS_IN6ADDR_ANY</name><argument_list>(<argument><expr><name><name>lr</name>-&gt;<name>next</name>-&gt;<name>bind_addr</name></name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>next</name> = <name><name>lr</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>lr</name>-&gt;<name>next</name></name> = <name><name>next</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>next</name>-&gt;<name>next</name></name> = <name>lr</name></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>previous</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>previous</name>-&gt;<name>next</name></name> = <name>next</name></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name>ap_listeners</name> = <name>next</name></expr>;</expr_stmt>
+}</block></else></if>
+<expr_stmt><expr><name>lr</name> = <name>next</name></expr>;</expr_stmt>
+}</block></then></if>
+<if>if <condition>(<expr><call><name>IS_INADDR_ANY</name><argument_list>(<argument><expr><name><name>lr</name>-&gt;<name>bind_addr</name></name></expr></argument>)</argument_list></call> &amp;&amp; <name>previous</name></expr>)</condition><then> <block>{
+<for>for (<init><expr><name>cur</name> = <name>ap_listeners</name></expr>;</init> <condition><expr><name>cur</name> != <name>lr</name></expr>;</condition> <incr><expr><name>cur</name> = <name><name>cur</name>-&gt;<name>next</name></name></expr></incr>) <block>{
+<if>if <condition>(<expr><name><name>lr</name>-&gt;<name>bind_addr</name>-&gt;<name>port</name></name> == <name><name>cur</name>-&gt;<name>bind_addr</name>-&gt;<name>port</name></name>
+&amp;&amp; <call><name>IS_IN6ADDR_ANY</name><argument_list>(<argument><expr><name><name>cur</name>-&gt;<name>bind_addr</name></name></expr></argument>)</argument_list></call>
+&amp;&amp; <call><name>apr_socket_opt_get</name><argument_list>(<argument><expr><name><name>cur</name>-&gt;<name>sd</name></name></expr></argument>, <argument><expr><name>APR_IPV6_V6ONLY</name></expr></argument>,
+<argument><expr>&amp;<name>v6only_setting</name></expr></argument>)</argument_list></call> == <name>APR_SUCCESS</name>
+&amp;&amp; <name>v6only_setting</name> == 0</expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>previous</name>-&gt;<name>next</name></name> = <name><name>lr</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name>lr</name> = <name>previous</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>skip</name> = 1</expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+}</block></for>
+<if>if <condition>(<expr><name>skip</name></expr>)</condition><then> <block>{
+<continue>continue;</continue>
+}</block></then></if>
+}</block></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<if>if <condition>(<expr><call><name>make_sock</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>lr</name></expr></argument>)</argument_list></call> == <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<expr_stmt><expr>++<name>num_open</name></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_HAVE_IPV6</name></expr></cpp:if>
+<if>if <condition>(<expr><name><name>lr</name>-&gt;<name>next</name></name> != <name>NULL</name>
+&amp;&amp; <call><name>IS_IN6ADDR_ANY</name><argument_list>(<argument><expr><name><name>lr</name>-&gt;<name>bind_addr</name></name></expr></argument>)</argument_list></call>
+&amp;&amp; <name><name>lr</name>-&gt;<name>bind_addr</name>-&gt;<name>port</name></name> == <name><name>lr</name>-&gt;<name>next</name>-&gt;<name>bind_addr</name>-&gt;<name>port</name></name>
+&amp;&amp; <call><name>IS_INADDR_ANY</name><argument_list>(<argument><expr><name><name>lr</name>-&gt;<name>next</name>-&gt;<name>bind_addr</name></name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<if>if <condition>(<expr><name>previous</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>previous</name>-&gt;<name>next</name></name> = <name><name>lr</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name>ap_listeners</name> = <name><name>lr</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+}</block></else></if>
+<expr_stmt><expr><name><name>lr</name>-&gt;<name>bind_addr</name>-&gt;<name>family</name></name> = <name>AF_INET</name></expr>;</expr_stmt>
+<continue>continue;</continue>
+}</block></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<return>return <expr>-1</expr>;</return>
+}</block></else></if>
+}</block></else></if>
+}</block></for>
+<expr_stmt><expr><call><name>ap_close_listeners_ex</name><argument_list>(<argument><expr><name>old_listeners</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>old_listeners</name> = <name>NULL</name></expr>;</expr_stmt>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>AP_NONBLOCK_WHEN_MULTI_LISTEN</name></expr></cpp:if>
+<expr_stmt><expr><name>use_nonblock</name> = (<name>ap_listeners</name> &amp;&amp; <name><name>ap_listeners</name>-&gt;<name>next</name></name>)</expr>;</expr_stmt>
+<for>for (<init><expr><name>lr</name> = <name>ap_listeners</name></expr>;</init> <condition><expr><name>lr</name></expr>;</condition> <incr><expr><name>lr</name> = <name><name>lr</name>-&gt;<name>next</name></name></expr></incr>) <block>{
+<decl_stmt><decl><type><name>apr_status_t</name></type> <name>status</name></decl>;</decl_stmt>
+<expr_stmt><expr><name>status</name> = <call><name>apr_socket_opt_set</name><argument_list>(<argument><expr><name><name>lr</name>-&gt;<name>sd</name></name></expr></argument>, <argument><expr><name>APR_SO_NONBLOCK</name></expr></argument>, <argument><expr><name>use_nonblock</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>status</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_STARTUP</name>|<name>APLOG_ERR</name></expr></argument>, <argument><expr><name>status</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00079</expr></argument>)</argument_list></call>
+"unable to control socket non-blocking status"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr>-1</expr>;</return>
+}</block></then></if>
+}</block></for>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<expr_stmt><expr><call><name>apr_pool_userdata_get</name><argument_list>(<argument><expr>&amp;<name>data</name></expr></argument>, <argument><expr><name>userdata_key</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr>!<name>data</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>apr_pool_userdata_set</name><argument_list>(<argument><expr>(const <name>void</name> *)1</expr></argument>, <argument><expr><name>userdata_key</name></expr></argument>,
+<argument><expr><name>apr_pool_cleanup_null</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>apr_pool_cleanup_register</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>apr_pool_cleanup_null</name></expr></argument>,
+<argument><expr><name>close_listeners_on_exec</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+<return>return <expr><name>num_open</name> ? 0 : -1</expr>;</return>
+}</block></function>
+<macro><name>AP_DECLARE</name><argument_list>(<argument>int</argument>)</argument_list></macro> <macro><name>ap_setup_listeners</name><argument_list>(<argument>server_rec *s</argument>)</argument_list></macro> <block>{
+<decl_stmt><decl><type><name>server_rec</name> *</type><name>ls</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>server_addr_rec</name> *</type><name>addr</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>ap_listen_rec</name> *</type><name>lr</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>num_listeners</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name>*</type> <name>proto</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>found</name></decl>;</decl_stmt>
+<for>for (<init><expr><name>ls</name> = <name>s</name></expr>;</init> <condition><expr><name>ls</name></expr>;</condition> <incr><expr><name>ls</name> = <name><name>ls</name>-&gt;<name>next</name></name></expr></incr>) <block>{
+<expr_stmt><expr><name>proto</name> = <call><name>ap_get_server_protocol</name><argument_list>(<argument><expr><name>ls</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr>!<name>proto</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>found</name> = 0</expr>;</expr_stmt>
+<for>for (<init><expr><name>addr</name> = <name><name>ls</name>-&gt;<name>addrs</name></name></expr>;</init> <condition><expr><name>addr</name> &amp;&amp; !<name>found</name></expr>;</condition> <incr><expr><name>addr</name> = <name><name>addr</name>-&gt;<name>next</name></name></expr></incr>) <block>{
+<for>for (<init><expr><name>lr</name> = <name>ap_listeners</name></expr>;</init> <condition><expr><name>lr</name></expr>;</condition> <incr><expr><name>lr</name> = <name><name>lr</name>-&gt;<name>next</name></name></expr></incr>) <block>{
+<if>if <condition>(<expr><call><name>apr_sockaddr_equal</name><argument_list>(<argument><expr><name><name>lr</name>-&gt;<name>bind_addr</name></name></expr></argument>, <argument><expr><name><name>addr</name>-&gt;<name>host_addr</name></name></expr></argument>)</argument_list></call> &amp;&amp;
+<name><name>lr</name>-&gt;<name>bind_addr</name>-&gt;<name>port</name></name> == <name><name>addr</name>-&gt;<name>host_port</name></name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>ap_set_server_protocol</name><argument_list>(<argument><expr><name>ls</name></expr></argument>, <argument><expr><name><name>lr</name>-&gt;<name>protocol</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>found</name> = 1</expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+}</block></for>
+}</block></for>
+<if>if <condition>(<expr>!<name>found</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>ap_set_server_protocol</name><argument_list>(<argument><expr><name>ls</name></expr></argument>, <argument><expr>"http"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+}</block></then></if>
+}</block></for>
+<if>if <condition>(<expr><call><name>open_listeners</name><argument_list>(<argument><expr><name><name>s</name>-&gt;<name>process</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<return>return <expr>0</expr>;</return>
+}</block></then></if>
+<for>for (<init><expr><name>lr</name> = <name>ap_listeners</name></expr>;</init> <condition><expr><name>lr</name></expr>;</condition> <incr><expr><name>lr</name> = <name><name>lr</name>-&gt;<name>next</name></name></expr></incr>) <block>{
+<expr_stmt><expr><name>num_listeners</name>++</expr>;</expr_stmt>
+<expr_stmt><expr><name>found</name> = 0</expr>;</expr_stmt>
+<for>for (<init><expr><name>ls</name> = <name>s</name></expr>;</init> <condition><expr><name>ls</name> &amp;&amp; !<name>found</name></expr>;</condition> <incr><expr><name>ls</name> = <name><name>ls</name>-&gt;<name>next</name></name></expr></incr>) <block>{
+<for>for (<init><expr><name>addr</name> = <name><name>ls</name>-&gt;<name>addrs</name></name></expr>;</init> <condition><expr><name>addr</name> &amp;&amp; !<name>found</name></expr>;</condition> <incr><expr><name>addr</name> = <name><name>addr</name>-&gt;<name>next</name></name></expr></incr>) <block>{
+<if>if <condition>(<expr><call><name>apr_sockaddr_equal</name><argument_list>(<argument><expr><name><name>lr</name>-&gt;<name>bind_addr</name></name></expr></argument>, <argument><expr><name><name>addr</name>-&gt;<name>host_addr</name></name></expr></argument>)</argument_list></call> &amp;&amp;
+<name><name>lr</name>-&gt;<name>bind_addr</name>-&gt;<name>port</name></name> == <name><name>addr</name>-&gt;<name>host_port</name></name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>found</name> = 1</expr>;</expr_stmt>
+<expr_stmt><expr><call><name>ap_apply_accept_filter</name><argument_list>(<argument><expr><name><name>s</name>-&gt;<name>process</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>lr</name></expr></argument>, <argument><expr><name>ls</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+}</block></for>
+}</block></for>
+<if>if <condition>(<expr>!<name>found</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>ap_apply_accept_filter</name><argument_list>(<argument><expr><name><name>s</name>-&gt;<name>process</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>lr</name></expr></argument>, <argument><expr><name>s</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+}</block></for>
+<return>return <expr><name>num_listeners</name></expr>;</return>
+}</block>
+<macro><name>AP_DECLARE</name><argument_list>(<argument>apr_status_t</argument>)</argument_list></macro> <macro><name>ap_duplicate_listeners</name><argument_list>(<argument>apr_pool_t *p</argument>, <argument>server_rec *s</argument>,
+<argument>ap_listen_rec ***buckets</argument>,
+<argument>int *num_buckets</argument>)</argument_list></macro> <block>{
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name></type> <name>warn_once</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_status_t</name></type> <name>stat</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>use_nonblock</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>ap_listen_rec</name> *</type><name>lr</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>*<name>num_buckets</name> &lt; 1</expr>)</condition><then> <block>{
+<expr_stmt><expr>*<name>num_buckets</name> = 1</expr>;</expr_stmt>
+<if>if <condition>(<expr><name>ap_listencbratio</name> &gt; 0</expr>)</condition><then> <block>{
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>_SC_NPROCESSORS_ONLN</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<if>if <condition>(<expr><name>ap_have_so_reuseport</name></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>num_online_cores</name> <init>= <expr><call><name>sysconf</name><argument_list>(<argument><expr><name>_SC_NPROCESSORS_ONLN</name></expr></argument>)</argument_list></call></expr></init>,
+<name>val</name> <init>= <expr><name>num_online_cores</name> / <name>ap_listencbratio</name></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>val</name> &gt; 1</expr>)</condition><then> <block>{
+<expr_stmt><expr>*<name>num_buckets</name> = <name>val</name></expr>;</expr_stmt>
+}</block></then></if>
+<expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_INFO</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>p</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>02819</expr></argument>)</argument_list></call>
+"Using %i listeners bucket(s) based on %i "
+"online CPU cores and a ratio of %i"</expr></argument>,
+<argument><expr>*<name>num_buckets</name></expr></argument>, <argument><expr><name>num_online_cores</name></expr></argument>,
+<argument><expr><name>ap_listencbratio</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<if>if <condition>(<expr>!<name>warn_once</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_WARNING</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>p</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>02820</expr></argument>)</argument_list></call>
+"ListenCoresBucketsRatio ignored without "
+"SO_REUSEPORT and _SC_NPROCESSORS_ONLN "
+"support: using a single listeners bucket"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>warn_once</name> = 1</expr>;</expr_stmt>
+}</block></then></if></else></if>
+}</block></then></if>
+}</block></then></if>
+<expr_stmt><expr>*<name>buckets</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>*<name>num_buckets</name> * <sizeof>sizeof<argument_list>(<argument><expr><name>ap_listen_rec</name> *</expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr>(*<name>buckets</name>)<index>[<expr>0</expr>]</index> = <name>ap_listeners</name></expr>;</expr_stmt>
+<for>for (<init><expr><name>i</name> = 1</expr>;</init> <condition><expr><name>i</name> &lt; *<name>num_buckets</name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>) <block>{
+<decl_stmt><decl><type><name>ap_listen_rec</name> *</type><name>last</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><name>lr</name> = <name>ap_listeners</name></expr>;</expr_stmt>
+<while>while <condition>(<expr><name>lr</name></expr>)</condition> <block>{
+<decl_stmt><decl><type><name>ap_listen_rec</name> *</type><name>duplr</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>char</name> *</type><name>hostname</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_port_t</name></type> <name>port</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_sockaddr_t</name> *</type><name>sa</name></decl>;</decl_stmt>
+<expr_stmt><expr><name>duplr</name> = <call><name>apr_palloc</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>ap_listen_rec</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>duplr</name>-&gt;<name>slave</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>duplr</name>-&gt;<name>protocol</name></name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name><name>lr</name>-&gt;<name>protocol</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>hostname</name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name><name>lr</name>-&gt;<name>bind_addr</name>-&gt;<name>hostname</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>port</name> = <name><name>lr</name>-&gt;<name>bind_addr</name>-&gt;<name>port</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>apr_sockaddr_info_get</name><argument_list>(<argument><expr>&amp;<name>sa</name></expr></argument>, <argument><expr><name>hostname</name></expr></argument>, <argument><expr><name>APR_UNSPEC</name></expr></argument>, <argument><expr><name>port</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>duplr</name>-&gt;<name>bind_addr</name></name> = <name>sa</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>duplr</name>-&gt;<name>next</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>stat</name> = <call><name>apr_socket_create</name><argument_list>(<argument><expr>&amp;<name><name>duplr</name>-&gt;<name>sd</name></name></expr></argument>, <argument><expr><name><name>duplr</name>-&gt;<name>bind_addr</name>-&gt;<name>family</name></name></expr></argument>,
+<argument><expr><name>SOCK_STREAM</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>stat</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_CRIT</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>p</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>02640</expr></argument>)</argument_list></call>
+"ap_duplicate_listeners: for address %pI, "
+"cannot duplicate a new socket!"</expr></argument>,
+<argument><expr><name><name>duplr</name>-&gt;<name>bind_addr</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>stat</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><call><name>make_sock</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>duplr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>AP_NONBLOCK_WHEN_MULTI_LISTEN</name></expr></cpp:if>
+<expr_stmt><expr><name>use_nonblock</name> = (<name>ap_listeners</name> &amp;&amp; <name><name>ap_listeners</name>-&gt;<name>next</name></name>)</expr>;</expr_stmt>
+<expr_stmt><expr><name>stat</name> = <call><name>apr_socket_opt_set</name><argument_list>(<argument><expr><name><name>duplr</name>-&gt;<name>sd</name></name></expr></argument>, <argument><expr><name>APR_SO_NONBLOCK</name></expr></argument>, <argument><expr><name>use_nonblock</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>stat</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_CRIT</name></expr></argument>, <argument><expr><name>stat</name></expr></argument>, <argument><expr><name>p</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>02641</expr></argument>)</argument_list></call>
+"unable to control socket non-blocking status"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>stat</name></expr>;</return>
+}</block></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<expr_stmt><expr><call><name>ap_apply_accept_filter</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>duplr</name></expr></argument>, <argument><expr><name>s</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>last</name> == <name>NULL</name></expr>)</condition><then> <block>{
+<expr_stmt><expr>(*<name>buckets</name>)<index>[<expr><name>i</name></expr>]</index> = <name>last</name> = <name>duplr</name></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name><name>last</name>-&gt;<name>next</name></name> = <name>duplr</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>last</name> = <name>duplr</name></expr>;</expr_stmt>
+}</block></else></if>
+<expr_stmt><expr><name>lr</name> = <name><name>lr</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+}</block></while>
+}</block></for>
+<expr_stmt><expr><name>ap_listen_buckets</name> = *<name>buckets</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>ap_num_listen_buckets</name> = *<name>num_buckets</name></expr>;</expr_stmt>
+<return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block>
+<macro><name>AP_DECLARE_NONSTD</name><argument_list>(<argument>void</argument>)</argument_list></macro> <macro><name>ap_close_listeners</name><argument_list>(<argument>void</argument>)</argument_list></macro> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>ap_close_listeners_ex</name><argument_list>(<argument><expr><name>ap_listeners</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<for>for (<init><expr><name>i</name> = 1</expr>;</init> <condition><expr><name>i</name> &lt; <name>ap_num_listen_buckets</name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>) <block>{
+<expr_stmt><expr><call><name>ap_close_listeners_ex</name><argument_list>(<argument><expr><name><name>ap_listen_buckets</name><index>[<expr><name>i</name></expr>]</index></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></for>
+}</block>
+<macro><name>AP_DECLARE_NONSTD</name><argument_list>(<argument>void</argument>)</argument_list></macro> <macro><name>ap_close_listeners_ex</name><argument_list>(<argument>ap_listen_rec *listeners</argument>)</argument_list></macro> <block>{
+<decl_stmt><decl><type><name>ap_listen_rec</name> *</type><name>lr</name></decl>;</decl_stmt>
+<for>for (<init><expr><name>lr</name> = <name>listeners</name></expr>;</init> <condition><expr><name>lr</name></expr>;</condition> <incr><expr><name>lr</name> = <name><name>lr</name>-&gt;<name>next</name></name></expr></incr>) <block>{
+<expr_stmt><expr><call><name>apr_socket_close</name><argument_list>(<argument><expr><name><name>lr</name>-&gt;<name>sd</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>lr</name>-&gt;<name>active</name></name> = 0</expr>;</expr_stmt>
+}</block></for>
+}</block>
+<macro><name>AP_DECLARE_NONSTD</name><argument_list>(<argument>int</argument>)</argument_list></macro> <macro><name>ap_close_selected_listeners</name><argument_list>(<argument>ap_slave_t *slave</argument>)</argument_list></macro> <block>{
+<decl_stmt><decl><type><name>ap_listen_rec</name> *</type><name>lr</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>n</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<for>for (<init><expr><name>lr</name> = <name>ap_listeners</name></expr>;</init> <condition><expr><name>lr</name></expr>;</condition> <incr><expr><name>lr</name> = <name><name>lr</name>-&gt;<name>next</name></name></expr></incr>) <block>{
+<if>if <condition>(<expr><name><name>lr</name>-&gt;<name>slave</name></name> != <name>slave</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>apr_socket_close</name><argument_list>(<argument><expr><name><name>lr</name>-&gt;<name>sd</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>lr</name>-&gt;<name>active</name></name> = 0</expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr>++<name>n</name></expr>;</expr_stmt>
+}</block></else></if>
+}</block></for>
+<return>return <expr><name>n</name></expr>;</return>
+}</block>
+<macro><name>AP_DECLARE</name><argument_list>(<argument>void</argument>)</argument_list></macro> <macro><name>ap_listen_pre_config</name><argument_list>(<argument>void</argument>)</argument_list></macro> <block>{
+<expr_stmt><expr><name>old_listeners</name> = <name>ap_listeners</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>ap_listeners</name> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>ap_listen_buckets</name> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>ap_num_listen_buckets</name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><name>ap_listenbacklog</name> = <name>DEFAULT_LISTENBACKLOG</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>ap_listencbratio</name> = 0</expr>;</expr_stmt>
+<if>if <condition>(<expr><name>ap_have_so_reuseport</name> &lt; 0</expr>)</condition><then> <block>{
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>SO_REUSEPORT</name></expr></argument>)</argument_list></call> &amp;&amp; <call><name>defined</name><argument_list>(<argument><expr><name>__linux__</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<decl_stmt><decl><type><name>apr_socket_t</name> *</type><name>sock</name></decl>;</decl_stmt>
+<if>if <condition>(<expr><call><name>apr_socket_create</name><argument_list>(<argument><expr>&amp;<name>sock</name></expr></argument>, <argument><expr><name>APR_UNSPEC</name></expr></argument>, <argument><expr><name>SOCK_STREAM</name></expr></argument>, <argument><expr>0</expr></argument>,
+<argument><expr><name>ap_pglobal</name></expr></argument>)</argument_list></call> == <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>thesock</name></decl>, <decl><type ref="prev"/><name>on</name> <init>= <expr>1</expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>apr_os_sock_get</name><argument_list>(<argument><expr>&amp;<name>thesock</name></expr></argument>, <argument><expr><name>sock</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>ap_have_so_reuseport</name> = (<call><name>setsockopt</name><argument_list>(<argument><expr><name>thesock</name></expr></argument>, <argument><expr><name>SOL_SOCKET</name></expr></argument>,
+<argument><expr><name>SO_REUSEPORT</name></expr></argument>, <argument><expr>(<name>void</name> *)&amp;<name>on</name></expr></argument>,
+<argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>int</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call> == 0)</expr>;</expr_stmt>
+<expr_stmt><expr><call><name>apr_socket_close</name><argument_list>(<argument><expr><name>sock</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<expr_stmt><expr><name>ap_have_so_reuseport</name> = 0</expr>;</expr_stmt></else></if>
+}</block></then></if>
+}</block>
+<macro><name>AP_DECLARE_NONSTD</name><argument_list>(<argument>const char *</argument>)</argument_list></macro> <macro><name>ap_set_listener</name><argument_list>(<argument>cmd_parms *cmd</argument>, <argument>void *dummy</argument>,
+<argument>int argc</argument>, <argument>char *const argv[]</argument>)</argument_list></macro> <block>{
+<decl_stmt><decl><type><name>char</name> *</type><name>host</name></decl>, *<decl><type ref="prev"/><name>scope_id</name></decl>, *<decl><type ref="prev"/><name>proto</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_port_t</name></type> <name>port</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>err</name> <init>= <expr><call><name>ap_check_cmd_context</name><argument_list>(<argument><expr><name>cmd</name></expr></argument>, <argument><expr><name>GLOBAL_ONLY</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>err</name> != <name>NULL</name></expr>)</condition><then> <block>{
+<return>return <expr><name>err</name></expr>;</return>
+}</block></then></if>
+<if>if <condition>(<expr><name>argc</name> &lt; 1 || <name>argc</name> &gt; 2</expr>)</condition><then> <block>{
+<return>return <expr>"Listen requires 1 or 2 arguments."</expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>rv</name> = <call><name>apr_parse_addr_port</name><argument_list>(<argument><expr>&amp;<name>host</name></expr></argument>, <argument><expr>&amp;<name>scope_id</name></expr></argument>, <argument><expr>&amp;<name>port</name></expr></argument>, <argument><expr><name><name>argv</name><index>[<expr>0</expr>]</index></name></expr></argument>, <argument><expr><name><name>cmd</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<return>return <expr>"Invalid address or port"</expr>;</return>
+}</block></then></if>
+<if>if <condition>(<expr><name>host</name> &amp;&amp; !<call><name>strcmp</name><argument_list>(<argument><expr><name>host</name></expr></argument>, <argument><expr>"*"</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>host</name> = <name>NULL</name></expr>;</expr_stmt>
+}</block></then></if>
+<if>if <condition>(<expr><name>scope_id</name></expr>)</condition><then> <block>{
+<return>return <expr>"Scope id is not supported"</expr>;</return>
+}</block></then></if>
+<if>if <condition>(<expr>!<name>port</name></expr>)</condition><then> <block>{
+<return>return <expr>"Port must be specified"</expr>;</return>
+}</block></then></if>
+<if>if <condition>(<expr><name>argc</name> != 2</expr>)</condition><then> <block>{
+<if>if <condition>(<expr><name>port</name> == 443</expr>)</condition><then> <block>{
+<expr_stmt><expr><name>proto</name> = "https"</expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name>proto</name> = "http"</expr>;</expr_stmt>
+}</block></else></if>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name>proto</name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name><name>cmd</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>argv</name><index>[<expr>1</expr>]</index></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>ap_str_tolower</name><argument_list>(<argument><expr><name>proto</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+<return>return <expr><call><name>alloc_listener</name><argument_list>(<argument><expr><name><name>cmd</name>-&gt;<name>server</name>-&gt;<name>process</name></name></expr></argument>, <argument><expr><name>host</name></expr></argument>, <argument><expr><name>port</name></expr></argument>, <argument><expr><name>proto</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block>
+<macro><name>AP_DECLARE_NONSTD</name><argument_list>(<argument>const char *</argument>)</argument_list></macro> <macro><name>ap_set_listenbacklog</name><argument_list>(<argument>cmd_parms *cmd</argument>,
+<argument>void *dummy</argument>,
+<argument>const char *arg</argument>)</argument_list></macro> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>b</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>err</name> <init>= <expr><call><name>ap_check_cmd_context</name><argument_list>(<argument><expr><name>cmd</name></expr></argument>, <argument><expr><name>GLOBAL_ONLY</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>err</name> != <name>NULL</name></expr>)</condition><then> <block>{
+<return>return <expr><name>err</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>b</name> = <call><name>atoi</name><argument_list>(<argument><expr><name>arg</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>b</name> &lt; 1</expr>)</condition><then> <block>{
+<return>return <expr>"ListenBacklog must be &gt; 0"</expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>ap_listenbacklog</name> = <name>b</name></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block>
+<macro><name>AP_DECLARE_NONSTD</name><argument_list>(<argument>const char *</argument>)</argument_list></macro> <macro><name>ap_set_listencbratio</name><argument_list>(<argument>cmd_parms *cmd</argument>,
+<argument>void *dummy</argument>,
+<argument>const char *arg</argument>)</argument_list></macro> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>b</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>err</name> <init>= <expr><call><name>ap_check_cmd_context</name><argument_list>(<argument><expr><name>cmd</name></expr></argument>, <argument><expr><name>GLOBAL_ONLY</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>err</name> != <name>NULL</name></expr>)</condition><then> <block>{
+<return>return <expr><name>err</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>b</name> = <call><name>atoi</name><argument_list>(<argument><expr><name>arg</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>b</name> &lt; 1</expr>)</condition><then> <block>{
+<return>return <expr>"ListenCoresBucketsRatio must be &gt; 0"</expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>ap_listencbratio</name> = <name>b</name></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block>
+<macro><name>AP_DECLARE_NONSTD</name><argument_list>(<argument>const char *</argument>)</argument_list></macro> <macro><name>ap_set_send_buffer_size</name><argument_list>(<argument>cmd_parms *cmd</argument>,
+<argument>void *dummy</argument>,
+<argument>const char *arg</argument>)</argument_list></macro> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>s</name> <init>= <expr><call><name>atoi</name><argument_list>(<argument><expr><name>arg</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>err</name> <init>= <expr><call><name>ap_check_cmd_context</name><argument_list>(<argument><expr><name>cmd</name></expr></argument>, <argument><expr><name>GLOBAL_ONLY</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>err</name> != <name>NULL</name></expr>)</condition><then> <block>{
+<return>return <expr><name>err</name></expr>;</return>
+}</block></then></if>
+<if>if <condition>(<expr><name>s</name> &lt; 512 &amp;&amp; <name>s</name> != 0</expr>)</condition><then> <block>{
+<return>return <expr>"SendBufferSize must be &gt;= 512 bytes, or 0 for system default."</expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>send_buffer_size</name> = <name>s</name></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block>
+<macro><name>AP_DECLARE_NONSTD</name><argument_list>(<argument>const char *</argument>)</argument_list></macro> <macro><name>ap_set_receive_buffer_size</name><argument_list>(<argument>cmd_parms *cmd</argument>,
+<argument>void *dummy</argument>,
+<argument>const char *arg</argument>)</argument_list></macro> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>s</name> <init>= <expr><call><name>atoi</name><argument_list>(<argument><expr><name>arg</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>err</name> <init>= <expr><call><name>ap_check_cmd_context</name><argument_list>(<argument><expr><name>cmd</name></expr></argument>, <argument><expr><name>GLOBAL_ONLY</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>err</name> != <name>NULL</name></expr>)</condition><then> <block>{
+<return>return <expr><name>err</name></expr>;</return>
+}</block></then></if>
+<if>if <condition>(<expr><name>s</name> &lt; 512 &amp;&amp; <name>s</name> != 0</expr>)</condition><then> <block>{
+<return>return <expr>"ReceiveBufferSize must be &gt;= 512 bytes, or 0 for system default."</expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>receive_buffer_size</name> = <name>s</name></expr>;</expr_stmt>
+<return>return <expr><name>NULL</name></expr>;</return>
+}</block>
+</unit>

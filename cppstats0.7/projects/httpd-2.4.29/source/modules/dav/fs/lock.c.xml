@@ -1,0 +1,1447 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/httpd-2.4.29/modules/dav/fs/lock.c"><comment type="block">/* Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */</comment>
+
+<comment type="block">/*
+** DAV filesystem lock implementation
+*/</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_strings.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_file_io.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_uuid.h"</cpp:file></cpp:include>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>APR_WANT_MEMFUNC</name></cpp:macro></cpp:define>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_want.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"httpd.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_log.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"mod_dav.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"repos.h"</cpp:file></cpp:include>
+
+
+<comment type="block">/* ---------------------------------------------------------------
+**
+** Lock database primitives
+**
+*/</comment>
+
+<comment type="block">/*
+** LOCK DATABASES
+**
+** Lockdiscovery information is stored in the single lock database specified
+** by the DAVLockDB directive.  Information about this db is stored in the
+** global server configuration.
+**
+** KEY
+**
+** The database is keyed by a key_type unsigned char (DAV_TYPE_FNAME)
+** followed by the full path. The key_type DAV_TYPE_INODE is not used anymore.
+**
+** VALUE
+**
+** The value consists of a list of elements.
+**    DIRECT LOCK:     [char      (DAV_LOCK_DIRECT),
+**                      char      (dav_lock_scope),
+**                      char      (dav_lock_type),
+**                      int        depth,
+**                      time_t     expires,
+**                      apr_uuid_t locktoken,
+**                      char[]     owner,
+**                      char[]     auth_user]
+**
+**    INDIRECT LOCK:   [char      (DAV_LOCK_INDIRECT),
+**                      apr_uuid_t locktoken,
+**                      time_t     expires,
+**                      apr_size_t key_size,
+**                      char[]     key]
+**       The key is to the collection lock that resulted in this indirect lock
+*/</comment>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>DAV_TRUE</name></cpp:macro>                <cpp:value>1</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>DAV_FALSE</name></cpp:macro>               <cpp:value>0</cpp:value></cpp:define>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>DAV_CREATE_LIST</name></cpp:macro>         <cpp:value>23</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>DAV_APPEND_LIST</name></cpp:macro>         <cpp:value>24</cpp:value></cpp:define>
+
+<comment type="block">/* Stored lock_discovery prefix */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>DAV_LOCK_DIRECT</name></cpp:macro>         <cpp:value>1</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>DAV_LOCK_INDIRECT</name></cpp:macro>       <cpp:value>2</cpp:value></cpp:define>
+
+<comment type="block">/*
+ * not used anymore
+ * #define DAV_TYPE_INODE          10
+ */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>DAV_TYPE_FNAME</name></cpp:macro>          <cpp:value>11</cpp:value></cpp:define>
+
+
+<comment type="block">/* ack. forward declare. */</comment>
+<function_decl><type><specifier>static</specifier> <name>dav_error</name> *</type> <name>dav_fs_remove_locknull_member</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>,
+                                                 <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>filename</name></decl></param>,
+                                                 <param><decl><type><name>dav_buffer</name> *</type><name>pbuf</name></decl></param>)</parameter_list>;</function_decl>
+
+<comment type="block">/*
+** Use the opaquelock scheme for locktokens
+*/</comment>
+<struct>struct <name>dav_locktoken</name> <block>{
+    <decl_stmt><decl><type><name>apr_uuid_t</name></type> <name>uuid</name></decl>;</decl_stmt>
+}</block>;</struct>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>dav_compare_locktoken</name><parameter_list>(<param><type><name>plt1</name></type></param>, <param><type><name>plt2</name></type></param>)</parameter_list></cpp:macro> \
+                <cpp:value>memcmp(&amp;(plt1)-&gt;uuid, &amp;(plt2)-&gt;uuid, sizeof((plt1)-&gt;uuid))</cpp:value></cpp:define>
+
+
+<comment type="block">/* #################################################################
+** ### keep these structures (internal) or move fully to dav_lock?
+*/</comment>
+
+<comment type="block">/*
+** We need to reliably size the fixed-length portion of
+** dav_lock_discovery; best to separate it into another
+** struct for a convenient sizeof, unless we pack lock_discovery.
+*/</comment>
+<typedef>typedef <type><struct>struct <name>dav_lock_discovery_fixed</name>
+<block>{
+    <decl_stmt><decl><type><name>char</name></type> <name>scope</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name></type> <name>type</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>depth</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>time_t</name></type> <name>timeout</name></decl>;</decl_stmt>
+}</block></struct></type> <name>dav_lock_discovery_fixed</name>;</typedef>
+
+<typedef>typedef <type><struct>struct <name>dav_lock_discovery</name>
+<block>{
+    <decl_stmt><decl><type>struct <name>dav_lock_discovery_fixed</name></type> <name>f</name></decl>;</decl_stmt>
+
+    <decl_stmt><decl><type><name>dav_locktoken</name> *</type><name>locktoken</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>owner</name></decl>;</decl_stmt>         <comment type="block">/* owner field from activelock */</comment>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>auth_user</name></decl>;</decl_stmt>     <comment type="block">/* authenticated user who created the lock */</comment>
+    <decl_stmt><decl><type>struct <name>dav_lock_discovery</name> *</type><name>next</name></decl>;</decl_stmt>
+}</block></struct></type> <name>dav_lock_discovery</name>;</typedef>
+
+<comment type="block">/* Indirect locks represent locks inherited from containing collections.
+ * They reference the lock token for the collection the lock is
+ * inherited from. A lock provider may also define a key to the
+ * inherited lock, for fast datbase lookup. The key is opaque outside
+ * the lock provider.
+ */</comment>
+<typedef>typedef <type><struct>struct <name>dav_lock_indirect</name>
+<block>{
+    <decl_stmt><decl><type><name>dav_locktoken</name> *</type><name>locktoken</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_datum_t</name></type> <name>key</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type>struct <name>dav_lock_indirect</name> *</type><name>next</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>time_t</name></type> <name>timeout</name></decl>;</decl_stmt>
+}</block></struct></type> <name>dav_lock_indirect</name>;</typedef>
+
+<comment type="block">/* ################################################################# */</comment>
+
+
+<comment type="block">/*
+** Stored direct lock info - full lock_discovery length:
+** prefix + Fixed length + lock token + 2 strings + 2 nulls (one for each string)
+*/</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>dav_size_direct</name><parameter_list>(<param><type><name>a</name></type></param>)</parameter_list></cpp:macro>   <cpp:value>( 1 + sizeof(dav_lock_discovery_fixed) \
+                                 + sizeof(apr_uuid_t) \
+                                 + ((a)-&gt;owner ? strlen((a)-&gt;owner) : 0) \
+                                 + ((a)-&gt;auth_user ? strlen((a)-&gt;auth_user) : 0) \
+                                 + 2)</cpp:value></cpp:define>
+
+<comment type="block">/* Stored indirect lock info - lock token and apr_datum_t */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>dav_size_indirect</name><parameter_list>(<param><type><name>a</name></type></param>)</parameter_list></cpp:macro>  <cpp:value>(1 + sizeof(apr_uuid_t) \
+                                 + sizeof(time_t) \
+                                 + sizeof((a)-&gt;key.dsize) + (a)-&gt;key.dsize)</cpp:value></cpp:define>
+
+<comment type="block">/*
+** The lockdb structure.
+**
+** The &lt;db&gt; field may be NULL, meaning one of two things:
+** 1) That we have not actually opened the underlying database (yet). The
+**    &lt;opened&gt; field should be false.
+** 2) We opened it readonly and it wasn't present.
+**
+** The delayed opening (determined by &lt;opened&gt;) makes creating a lockdb
+** quick, while deferring the underlying I/O until it is actually required.
+**
+** We export the notion of a lockdb, but hide the details of it. Most
+** implementations will use a database of some kind, but it is certainly
+** possible that alternatives could be used.
+*/</comment>
+<struct>struct <name>dav_lockdb_private</name>
+<block>{
+    <decl_stmt><decl><type><name>request_rec</name> *</type><name>r</name></decl>;</decl_stmt>                  <comment type="block">/* for accessing the uuid state */</comment>
+    <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl>;</decl_stmt>                <comment type="block">/* a pool to use */</comment>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>lockdb_path</name></decl>;</decl_stmt>         <comment type="block">/* where is the lock database? */</comment>
+
+    <decl_stmt><decl><type><name>int</name></type> <name>opened</name></decl>;</decl_stmt>                      <comment type="block">/* we opened the database */</comment>
+    <decl_stmt><decl><type><name>dav_db</name> *</type><name>db</name></decl>;</decl_stmt>                      <comment type="block">/* if non-NULL, the lock database */</comment>
+}</block>;</struct>
+<typedef>typedef <type><struct>struct
+<block>{
+    <decl_stmt><decl><type><name>dav_lockdb</name></type> <name>pub</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_lockdb_private</name></type> <name>priv</name></decl>;</decl_stmt>
+}</block></struct></type> <name>dav_lockdb_combined</name>;</typedef>
+
+<comment type="block">/*
+** The private part of the lock structure.
+*/</comment>
+<struct>struct <name>dav_lock_private</name>
+<block>{
+    <decl_stmt><decl><type><name>apr_datum_t</name></type> <name>key</name></decl>;</decl_stmt>   <comment type="block">/* key into the lock database */</comment>
+}</block>;</struct>
+<typedef>typedef <type><struct>struct
+<block>{
+    <decl_stmt><decl><type><name>dav_lock</name></type> <name>pub</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_lock_private</name></type> <name>priv</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_locktoken</name></type> <name>token</name></decl>;</decl_stmt>
+}</block></struct></type> <name>dav_lock_combined</name>;</typedef>
+
+<comment type="block">/*
+** This must be forward-declared so the open_lockdb function can use it.
+*/</comment>
+<decl_stmt><decl><type><specifier>extern</specifier> <specifier>const</specifier> <name>dav_hooks_locks</name></type> <name>dav_hooks_locks_fs</name></decl>;</decl_stmt>
+
+
+<comment type="block">/* internal function for creating locks */</comment>
+<function><type><specifier>static</specifier> <name>dav_lock</name> *</type><name>dav_fs_alloc_lock</name><parameter_list>(<param><decl><type><name>dav_lockdb</name> *</type><name>lockdb</name></decl></param>, <param><decl><type><name>apr_datum_t</name></type> <name>key</name></decl></param>,
+                                   <param><decl><type><specifier>const</specifier> <name>dav_locktoken</name> *</type><name>locktoken</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>dav_lock_combined</name> *</type><name>comb</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>comb</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>comb</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>comb</name>-&gt;<name>pub</name>.<name>rectype</name></name> = <name>DAV_LOCKREC_DIRECT</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>comb</name>-&gt;<name>pub</name>.<name>info</name></name> = &amp;<name><name>comb</name>-&gt;<name>priv</name></name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>comb</name>-&gt;<name>priv</name>.<name>key</name></name> = <name>key</name></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr><name>locktoken</name> == <name>NULL</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name><name>comb</name>-&gt;<name>pub</name>.<name>locktoken</name></name> = &amp;<name><name>comb</name>-&gt;<name>token</name></name></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>apr_uuid_get</name><argument_list>(<argument><expr>&amp;<name><name>comb</name>-&gt;<name>token</name>.<name>uuid</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+    <else>else <block>{
+        <expr_stmt><expr><name><name>comb</name>-&gt;<name>pub</name>.<name>locktoken</name></name> = <name>locktoken</name></expr>;</expr_stmt>
+    }</block></else></if>
+
+    <return>return <expr>&amp;<name><name>comb</name>-&gt;<name>pub</name></name></expr>;</return>
+}</block></function>
+
+<comment type="block">/*
+** dav_fs_parse_locktoken
+**
+** Parse an opaquelocktoken URI into a locktoken.
+*/</comment>
+<function><type><specifier>static</specifier> <name>dav_error</name> *</type> <name>dav_fs_parse_locktoken</name><parameter_list>(
+    <param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>,
+    <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>char_token</name></decl></param>,
+    <param><decl><type><name>dav_locktoken</name> **</type><name>locktoken_p</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>dav_locktoken</name> *</type><name>locktoken</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr><call><name>ap_strstr_c</name><argument_list>(<argument><expr><name>char_token</name></expr></argument>, <argument><expr>"opaquelocktoken:"</expr></argument>)</argument_list></call> != <name>char_token</name></expr>)</condition><then> <block>{
+        <return>return <expr><call><name>dav_new_error</name><argument_list>(<argument><expr><name>p</name></expr></argument>,
+                             <argument><expr><name>HTTP_BAD_REQUEST</name></expr></argument>, <argument><expr><name>DAV_ERR_LOCK_UNK_STATE_TOKEN</name></expr></argument>, <argument><expr>0</expr></argument>,
+                             <argument><expr>"The lock token uses an unknown State-token "
+                             "format and could not be parsed."</expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+    <expr_stmt><expr><name>char_token</name> += 16</expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>locktoken</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>locktoken</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><call><name>apr_uuid_parse</name><argument_list>(<argument><expr>&amp;<name><name>locktoken</name>-&gt;<name>uuid</name></name></expr></argument>, <argument><expr><name>char_token</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <return>return <expr><call><name>dav_new_error</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>HTTP_BAD_REQUEST</name></expr></argument>, <argument><expr><name>DAV_ERR_LOCK_PARSE_TOKEN</name></expr></argument>, <argument><expr>0</expr></argument>,
+                             <argument><expr>"The opaquelocktoken has an incorrect format "
+                             "and could not be parsed."</expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr>*<name>locktoken_p</name> = <name>locktoken</name></expr>;</expr_stmt>
+    <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/*
+** dav_fs_format_locktoken
+**
+** Generate the URI for a locktoken
+*/</comment>
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *</type><name>dav_fs_format_locktoken</name><parameter_list>(
+    <param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>,
+    <param><decl><type><specifier>const</specifier> <name>dav_locktoken</name> *</type><name>locktoken</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>char</name></type> <name><name>buf</name><index>[<expr><name>APR_UUID_FORMATTED_LENGTH</name> + 1</expr>]</index></name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><call><name>apr_uuid_format</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr>&amp;<name><name>locktoken</name>-&gt;<name>uuid</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><call><name>apr_pstrcat</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>"opaquelocktoken:"</expr></argument>, <argument><expr><name>buf</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<comment type="block">/*
+** dav_fs_compare_locktoken
+**
+** Determine whether two locktokens are the same
+*/</comment>
+<function><type><specifier>static</specifier> <name>int</name></type> <name>dav_fs_compare_locktoken</name><parameter_list>(
+    <param><decl><type><specifier>const</specifier> <name>dav_locktoken</name> *</type><name>lt1</name></decl></param>,
+    <param><decl><type><specifier>const</specifier> <name>dav_locktoken</name> *</type><name>lt2</name></decl></param>)</parameter_list>
+<block>{
+    <return>return <expr><call><name>dav_compare_locktoken</name><argument_list>(<argument><expr><name>lt1</name></expr></argument>, <argument><expr><name>lt2</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<comment type="block">/*
+** dav_fs_really_open_lockdb:
+**
+** If the database hasn't been opened yet, then open the thing.
+*/</comment>
+<function><type><specifier>static</specifier> <name>dav_error</name> *</type> <name>dav_fs_really_open_lockdb</name><parameter_list>(<param><decl><type><name>dav_lockdb</name> *</type><name>lockdb</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>dav_error</name> *</type><name>err</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr><name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>opened</name></name></expr>)</condition><then>
+        <return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+    <expr_stmt><expr><name>err</name> = <call><name>dav_dbm_open_direct</name><argument_list>(<argument><expr><name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>pool</name></name></expr></argument>,
+                              <argument><expr><name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>lockdb_path</name></name></expr></argument>,
+                              <argument><expr><name><name>lockdb</name>-&gt;<name>ro</name></name></expr></argument>,
+                              <argument><expr>&amp;<name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>db</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>err</name> != <name>NULL</name></expr>)</condition><then> <block>{
+        <return>return <expr><call><name>dav_push_error</name><argument_list>(<argument><expr><name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>pool</name></name></expr></argument>,
+                              <argument><expr><name>HTTP_INTERNAL_SERVER_ERROR</name></expr></argument>,
+                              <argument><expr><name>DAV_ERR_LOCK_OPENDB</name></expr></argument>,
+                              <argument><expr>"Could not open the lock database."</expr></argument>,
+                              <argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/* all right. it is opened now. */</comment>
+    <expr_stmt><expr><name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>opened</name></name> = 1</expr>;</expr_stmt>
+
+    <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/*
+** dav_fs_open_lockdb:
+**
+** "open" the lock database, as specified in the global server configuration.
+** If force is TRUE, then the database is opened now, rather than lazily.
+**
+** Note that only one can be open read/write.
+*/</comment>
+<function><type><specifier>static</specifier> <name>dav_error</name> *</type> <name>dav_fs_open_lockdb</name><parameter_list>(<param><decl><type><name>request_rec</name> *</type><name>r</name></decl></param>, <param><decl><type><name>int</name></type> <name>ro</name></decl></param>, <param><decl><type><name>int</name></type> <name>force</name></decl></param>,
+                                      <param><decl><type><name>dav_lockdb</name> **</type><name>lockdb</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>dav_lockdb_combined</name> *</type><name>comb</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>comb</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>comb</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>comb</name>-&gt;<name>pub</name>.<name>hooks</name></name> = &amp;<name>dav_hooks_locks_fs</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>comb</name>-&gt;<name>pub</name>.<name>ro</name></name> = <name>ro</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>comb</name>-&gt;<name>pub</name>.<name>info</name></name> = &amp;<name><name>comb</name>-&gt;<name>priv</name></name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>comb</name>-&gt;<name>priv</name>.<name>r</name></name> = <name>r</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>comb</name>-&gt;<name>priv</name>.<name>pool</name></name> = <name><name>r</name>-&gt;<name>pool</name></name></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name><name>comb</name>-&gt;<name>priv</name>.<name>lockdb_path</name></name> = <call><name>dav_get_lockdb_path</name><argument_list>(<argument><expr><name>r</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name><name>comb</name>-&gt;<name>priv</name>.<name>lockdb_path</name></name> == <name>NULL</name></expr>)</condition><then> <block>{
+        <return>return <expr><call><name>dav_new_error</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>HTTP_INTERNAL_SERVER_ERROR</name></expr></argument>,
+                             <argument><expr><name>DAV_ERR_LOCK_NO_DB</name></expr></argument>, <argument><expr>0</expr></argument>,
+                             <argument><expr>"A lock database was not specified with the "
+                             "DAVLockDB directive. One must be specified "
+                             "to use the locking functionality."</expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/* done initializing. return it. */</comment>
+    <expr_stmt><expr>*<name>lockdb</name> = &amp;<name><name>comb</name>-&gt;<name>pub</name></name></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr><name>force</name></expr>)</condition><then> <block>{
+        <comment type="block">/* ### add a higher-level comment? */</comment>
+        <return>return <expr><call><name>dav_fs_really_open_lockdb</name><argument_list>(<argument><expr>*<name>lockdb</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+
+    <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/*
+** dav_fs_close_lockdb:
+**
+** Close it. Duh.
+*/</comment>
+<function><type><specifier>static</specifier> <name>void</name></type> <name>dav_fs_close_lockdb</name><parameter_list>(<param><decl><type><name>dav_lockdb</name> *</type><name>lockdb</name></decl></param>)</parameter_list>
+<block>{
+    <if>if <condition>(<expr><name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>db</name></name> != <name>NULL</name></expr>)</condition><then>
+        <expr_stmt><expr><call><name>dav_dbm_close</name><argument_list>(<argument><expr><name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>db</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+}</block></function>
+
+<comment type="block">/*
+** dav_fs_build_key:  Given a resource, return a apr_datum_t key
+**    to look up lock information for this file.
+*/</comment>
+<function><type><specifier>static</specifier> <name>apr_datum_t</name></type> <name>dav_fs_build_key</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>,
+                                    <param><decl><type><specifier>const</specifier> <name>dav_resource</name> *</type><name>resource</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>pathname</name> <init>= <expr><call><name>dav_fs_pathname</name><argument_list>(<argument><expr><name>resource</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_datum_t</name></type> <name>key</name></decl>;</decl_stmt>
+
+    <comment type="block">/* ### does this allocation have a proper lifetime? need to check */</comment>
+    <comment type="block">/* ### can we use a buffer for this? */</comment>
+
+    <comment type="block">/* size is TYPE + pathname + null */</comment>
+    <expr_stmt><expr><name><name>key</name>.<name>dsize</name></name> = <call><name>strlen</name><argument_list>(<argument><expr><name>pathname</name></expr></argument>)</argument_list></call> + 2</expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>key</name>.<name>dptr</name></name> = <call><name>apr_palloc</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name><name>key</name>.<name>dsize</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr>*<name><name>key</name>.<name>dptr</name></name> = <name>DAV_TYPE_FNAME</name></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name><name>key</name>.<name>dptr</name></name> + 1</expr></argument>, <argument><expr><name>pathname</name></expr></argument>, <argument><expr><name><name>key</name>.<name>dsize</name></name> - 1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name><name>key</name>.<name>dptr</name><index>[<expr><name><name>key</name>.<name>dsize</name></name> - 2</expr>]</index></name> == '/'</expr>)</condition><then>
+        <expr_stmt><expr><name><name>key</name>.<name>dptr</name><index>[<expr>--<name><name>key</name>.<name>dsize</name></name> - 1</expr>]</index></name> = '\0'</expr>;</expr_stmt></then></if>
+    <return>return <expr><name>key</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/*
+** dav_fs_lock_expired:  return 1 (true) if the given timeout is in the past
+**    or present (the lock has expired), or 0 (false) if in the future
+**    (the lock has not yet expired).
+*/</comment>
+<function><type><specifier>static</specifier> <name>int</name></type> <name>dav_fs_lock_expired</name><parameter_list>(<param><decl><type><name>time_t</name></type> <name>expires</name></decl></param>)</parameter_list>
+<block>{
+    <return>return <expr><name>expires</name> != <name>DAV_TIMEOUT_INFINITE</name> &amp;&amp; <call><name>time</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>)</argument_list></call> &gt;= <name>expires</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/*
+** dav_fs_save_lock_record:  Saves the lock information specified in the
+**    direct and indirect lock lists about path into the lock database.
+**    If direct and indirect == NULL, the key is removed.
+*/</comment>
+<function><type><specifier>static</specifier> <name>dav_error</name> *</type> <name>dav_fs_save_lock_record</name><parameter_list>(<param><decl><type><name>dav_lockdb</name> *</type><name>lockdb</name></decl></param>, <param><decl><type><name>apr_datum_t</name></type> <name>key</name></decl></param>,
+                                           <param><decl><type><name>dav_lock_discovery</name> *</type><name>direct</name></decl></param>,
+                                           <param><decl><type><name>dav_lock_indirect</name> *</type><name>indirect</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>dav_error</name> *</type><name>err</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_datum_t</name></type> <name>val</name> <init>= <expr><block>{ <expr>0</expr> }</block></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name> *</type><name>ptr</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_lock_discovery</name> *</type><name>dp</name> <init>= <expr><name>direct</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_lock_indirect</name> *</type><name>ip</name> <init>= <expr><name>indirect</name></expr></init></decl>;</decl_stmt>
+
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>DAV_DEBUG</name></expr></cpp:if>
+    <if>if <condition>(<expr><name><name>lockdb</name>-&gt;<name>ro</name></name></expr>)</condition><then> <block>{
+        <return>return <expr><call><name>dav_new_error</name><argument_list>(<argument><expr><name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>pool</name></name></expr></argument>,
+                             <argument><expr><name>HTTP_INTERNAL_SERVER_ERROR</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr>0</expr></argument>,
+                             <argument><expr>"INTERNAL DESIGN ERROR: the lockdb was opened "
+                             "readonly, but an attempt to save locks was "
+                             "performed."</expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+    <if>if <condition>(<expr>(<name>err</name> = <call><name>dav_fs_really_open_lockdb</name><argument_list>(<argument><expr><name>lockdb</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then> <block>{
+        <comment type="block">/* ### add a higher-level error? */</comment>
+        <return>return <expr><name>err</name></expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/* If nothing to save, delete key */</comment>
+    <if>if <condition>(<expr><name>dp</name> == <name>NULL</name> &amp;&amp; <name>ip</name> == <name>NULL</name></expr>)</condition><then> <block>{
+        <comment type="block">/* don't fail if the key is not present */</comment>
+        <comment type="block">/* ### but what about other errors? */</comment>
+        <expr_stmt><expr>(<name>void</name>) <call><name>dav_dbm_delete</name><argument_list>(<argument><expr><name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>db</name></name></expr></argument>, <argument><expr><name>key</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+
+    <while>while<condition>(<expr><name>dp</name></expr>)</condition> <block>{
+        <expr_stmt><expr><name><name>val</name>.<name>dsize</name></name> += <call><name>dav_size_direct</name><argument_list>(<argument><expr><name>dp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><name>dp</name> = <name><name>dp</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+    }</block></while>
+    <while>while<condition>(<expr><name>ip</name></expr>)</condition> <block>{
+        <expr_stmt><expr><name><name>val</name>.<name>dsize</name></name> += <call><name>dav_size_indirect</name><argument_list>(<argument><expr><name>ip</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><name>ip</name> = <name><name>ip</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+    }</block></while>
+
+    <comment type="block">/* ### can this be apr_palloc() ? */</comment>
+    <comment type="block">/* ### hmmm.... investigate the use of a buffer here */</comment>
+    <expr_stmt><expr><name>ptr</name> = <name><name>val</name>.<name>dptr</name></name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>val</name>.<name>dsize</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name>dp</name>  = <name>direct</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name>ip</name>  = <name>indirect</name></expr>;</expr_stmt>
+
+    <while>while<condition>(<expr><name>dp</name></expr>)</condition> <block>{
+        <expr_stmt><expr>*<name>ptr</name>++ = <name>DAV_LOCK_DIRECT</name></expr>;</expr_stmt>   <comment type="block">/* Direct lock - lock_discovery struct follows */</comment>
+        <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>ptr</name></expr></argument>, <argument><expr><name>dp</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name><name>dp</name>-&gt;<name>f</name></name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>   <comment type="block">/* Fixed portion of struct */</comment>
+        <expr_stmt><expr><name>ptr</name> += <sizeof>sizeof<argument_list>(<argument><expr><name><name>dp</name>-&gt;<name>f</name></name></expr></argument>)</argument_list></sizeof></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>ptr</name></expr></argument>, <argument><expr><name><name>dp</name>-&gt;<name>locktoken</name></name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name><name>dp</name>-&gt;<name>locktoken</name></name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><name>ptr</name> += <sizeof>sizeof<argument_list>(<argument><expr>*<name><name>dp</name>-&gt;<name>locktoken</name></name></expr></argument>)</argument_list></sizeof></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name><name>dp</name>-&gt;<name>owner</name></name> == <name>NULL</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr>*<name>ptr</name>++ = '\0'</expr>;</expr_stmt>
+        }</block></then>
+        <else>else <block>{
+            <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>ptr</name></expr></argument>, <argument><expr><name><name>dp</name>-&gt;<name>owner</name></name></expr></argument>, <argument><expr><call><name>strlen</name><argument_list>(<argument><expr><name><name>dp</name>-&gt;<name>owner</name></name></expr></argument>)</argument_list></call> + 1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name>ptr</name> += <call><name>strlen</name><argument_list>(<argument><expr><name><name>dp</name>-&gt;<name>owner</name></name></expr></argument>)</argument_list></call> + 1</expr>;</expr_stmt>
+        }</block></else></if>
+        <if>if <condition>(<expr><name><name>dp</name>-&gt;<name>auth_user</name></name> == <name>NULL</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr>*<name>ptr</name>++ = '\0'</expr>;</expr_stmt>
+        }</block></then>
+        <else>else <block>{
+            <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>ptr</name></expr></argument>, <argument><expr><name><name>dp</name>-&gt;<name>auth_user</name></name></expr></argument>, <argument><expr><call><name>strlen</name><argument_list>(<argument><expr><name><name>dp</name>-&gt;<name>auth_user</name></name></expr></argument>)</argument_list></call> + 1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name>ptr</name> += <call><name>strlen</name><argument_list>(<argument><expr><name><name>dp</name>-&gt;<name>auth_user</name></name></expr></argument>)</argument_list></call> + 1</expr>;</expr_stmt>
+        }</block></else></if>
+
+        <expr_stmt><expr><name>dp</name> = <name><name>dp</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+    }</block></while>
+
+    <while>while<condition>(<expr><name>ip</name></expr>)</condition> <block>{
+        <expr_stmt><expr>*<name>ptr</name>++ = <name>DAV_LOCK_INDIRECT</name></expr>;</expr_stmt>   <comment type="block">/* Indirect lock prefix */</comment>
+        <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>ptr</name></expr></argument>, <argument><expr><name><name>ip</name>-&gt;<name>locktoken</name></name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name><name>ip</name>-&gt;<name>locktoken</name></name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>   <comment type="block">/* Locktoken */</comment>
+        <expr_stmt><expr><name>ptr</name> += <sizeof>sizeof<argument_list>(<argument><expr>*<name><name>ip</name>-&gt;<name>locktoken</name></name></expr></argument>)</argument_list></sizeof></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>ptr</name></expr></argument>, <argument><expr>&amp;<name><name>ip</name>-&gt;<name>timeout</name></name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name><name>ip</name>-&gt;<name>timeout</name></name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>   <comment type="block">/* Expire time */</comment>
+        <expr_stmt><expr><name>ptr</name> += <sizeof>sizeof<argument_list>(<argument><expr><name><name>ip</name>-&gt;<name>timeout</name></name></expr></argument>)</argument_list></sizeof></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>ptr</name></expr></argument>, <argument><expr>&amp;<name><name>ip</name>-&gt;<name>key</name>.<name>dsize</name></name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name><name>ip</name>-&gt;<name>key</name>.<name>dsize</name></name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>   <comment type="block">/* Size of key */</comment>
+        <expr_stmt><expr><name>ptr</name> += <sizeof>sizeof<argument_list>(<argument><expr><name><name>ip</name>-&gt;<name>key</name>.<name>dsize</name></name></expr></argument>)</argument_list></sizeof></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>ptr</name></expr></argument>, <argument><expr><name><name>ip</name>-&gt;<name>key</name>.<name>dptr</name></name></expr></argument>, <argument><expr><name><name>ip</name>-&gt;<name>key</name>.<name>dsize</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>   <comment type="block">/* Key data */</comment>
+        <expr_stmt><expr><name>ptr</name> += <name><name>ip</name>-&gt;<name>key</name>.<name>dsize</name></name></expr>;</expr_stmt>
+        <expr_stmt><expr><name>ip</name> = <name><name>ip</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+    }</block></while>
+
+    <if>if <condition>(<expr>(<name>err</name> = <call><name>dav_dbm_store</name><argument_list>(<argument><expr><name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>db</name></name></expr></argument>, <argument><expr><name>key</name></expr></argument>, <argument><expr><name>val</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then> <block>{
+        <comment type="block">/* ### more details? add an error_id? */</comment>
+        <return>return <expr><call><name>dav_push_error</name><argument_list>(<argument><expr><name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>pool</name></name></expr></argument>,
+                              <argument><expr><name>HTTP_INTERNAL_SERVER_ERROR</name></expr></argument>,
+                              <argument><expr><name>DAV_ERR_LOCK_SAVE_LOCK</name></expr></argument>,
+                              <argument><expr>"Could not save lock information."</expr></argument>,
+                              <argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+
+    <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/*
+** dav_load_lock_record:  Reads lock information about key from lock db;
+**    creates linked lists of the direct and indirect locks.
+**
+**    If add_method = DAV_APPEND_LIST, the result will be appended to the
+**    head of the direct and indirect lists supplied.
+**
+**    Passive lock removal:  If lock has timed out, it will not be returned.
+**    ### How much "logging" does RFC 2518 require?
+*/</comment>
+<function><type><specifier>static</specifier> <name>dav_error</name> *</type> <name>dav_fs_load_lock_record</name><parameter_list>(<param><decl><type><name>dav_lockdb</name> *</type><name>lockdb</name></decl></param>, <param><decl><type><name>apr_datum_t</name></type> <name>key</name></decl></param>,
+                                           <param><decl><type><name>int</name></type> <name>add_method</name></decl></param>,
+                                           <param><decl><type><name>dav_lock_discovery</name> **</type><name>direct</name></decl></param>,
+                                           <param><decl><type><name>dav_lock_indirect</name> **</type><name>indirect</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>p</name> <init>= <expr><name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>pool</name></name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_error</name> *</type><name>err</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_size_t</name></type> <name>offset</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>need_save</name> <init>= <expr><name>DAV_FALSE</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_datum_t</name></type> <name>val</name> <init>= <expr><block>{ <expr>0</expr> }</block></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_lock_discovery</name> *</type><name>dp</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_lock_indirect</name> *</type><name>ip</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_buffer</name></type> <name>buf</name> <init>= <expr><block>{ <expr>0</expr> }</block></expr></init></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr><name>add_method</name> != <name>DAV_APPEND_LIST</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr>*<name>direct</name> = <name>NULL</name></expr>;</expr_stmt>
+        <expr_stmt><expr>*<name>indirect</name> = <name>NULL</name></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <if>if <condition>(<expr>(<name>err</name> = <call><name>dav_fs_really_open_lockdb</name><argument_list>(<argument><expr><name>lockdb</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then> <block>{
+        <comment type="block">/* ### add a higher-level error? */</comment>
+        <return>return <expr><name>err</name></expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/*
+    ** If we opened readonly and the db wasn't there, then there are no
+    ** locks for this resource. Just exit.
+    */</comment>
+    <if>if <condition>(<expr><name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>db</name></name> == <name>NULL</name></expr>)</condition><then>
+        <return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+    <if>if <condition>(<expr>(<name>err</name> = <call><name>dav_dbm_fetch</name><argument_list>(<argument><expr><name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>db</name></name></expr></argument>, <argument><expr><name>key</name></expr></argument>, <argument><expr>&amp;<name>val</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then>
+        <return>return <expr><name>err</name></expr>;</return></then></if>
+
+    <if>if <condition>(<expr>!<name><name>val</name>.<name>dsize</name></name></expr>)</condition><then>
+        <return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+    <while>while <condition>(<expr><name>offset</name> &lt; <name><name>val</name>.<name>dsize</name></name></expr>)</condition> <block>{
+        <switch>switch <condition>(<expr>*(<name><name>val</name>.<name>dptr</name></name> + <name>offset</name>++)</expr>)</condition> <block>{
+        <case>case <expr><name>DAV_LOCK_DIRECT</name></expr>:
+            <comment type="block">/* Create and fill a dav_lock_discovery structure */</comment>
+
+            <expr_stmt><expr><name>dp</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>dp</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>dp</name></expr></argument>, <argument><expr><name><name>val</name>.<name>dptr</name></name> + <name>offset</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name><name>dp</name>-&gt;<name>f</name></name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name>offset</name> += <sizeof>sizeof<argument_list>(<argument><expr><name><name>dp</name>-&gt;<name>f</name></name></expr></argument>)</argument_list></sizeof></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>dp</name>-&gt;<name>locktoken</name></name> = <call><name>apr_pmemdup</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name><name>val</name>.<name>dptr</name></name> + <name>offset</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name><name>dp</name>-&gt;<name>locktoken</name></name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name>offset</name> += <sizeof>sizeof<argument_list>(<argument><expr>*<name><name>dp</name>-&gt;<name>locktoken</name></name></expr></argument>)</argument_list></sizeof></expr>;</expr_stmt>
+            <if>if <condition>(<expr>*(<name><name>val</name>.<name>dptr</name></name> + <name>offset</name>) == '\0'</expr>)</condition><then> <block>{
+                <expr_stmt><expr>++<name>offset</name></expr>;</expr_stmt>
+            }</block></then>
+            <else>else <block>{
+                <expr_stmt><expr><name><name>dp</name>-&gt;<name>owner</name></name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name><name>val</name>.<name>dptr</name></name> + <name>offset</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><name>offset</name> += <call><name>strlen</name><argument_list>(<argument><expr><name><name>dp</name>-&gt;<name>owner</name></name></expr></argument>)</argument_list></call> + 1</expr>;</expr_stmt>
+            }</block></else></if>
+
+            <if>if <condition>(<expr>*(<name><name>val</name>.<name>dptr</name></name> + <name>offset</name>) == '\0'</expr>)</condition><then> <block>{
+                <expr_stmt><expr>++<name>offset</name></expr>;</expr_stmt>
+            }</block></then>
+            <else>else <block>{
+                <expr_stmt><expr><name><name>dp</name>-&gt;<name>auth_user</name></name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name><name>val</name>.<name>dptr</name></name> + <name>offset</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><name>offset</name> += <call><name>strlen</name><argument_list>(<argument><expr><name><name>dp</name>-&gt;<name>auth_user</name></name></expr></argument>)</argument_list></call> + 1</expr>;</expr_stmt>
+            }</block></else></if>
+
+            <if>if <condition>(<expr>!<call><name>dav_fs_lock_expired</name><argument_list>(<argument><expr><name><name>dp</name>-&gt;<name>f</name>.<name>timeout</name></name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+                <expr_stmt><expr><name><name>dp</name>-&gt;<name>next</name></name> = *<name>direct</name></expr>;</expr_stmt>
+                <expr_stmt><expr>*<name>direct</name> = <name>dp</name></expr>;</expr_stmt>
+            }</block></then>
+            <else>else <block>{
+                <expr_stmt><expr><name>need_save</name> = <name>DAV_TRUE</name></expr>;</expr_stmt>
+
+                <comment type="block">/* Remove timed-out locknull fm .locknull list */</comment>
+                <if>if <condition>(<expr>*<name><name>key</name>.<name>dptr</name></name> == <name>DAV_TYPE_FNAME</name></expr>)</condition><then> <block>{
+                    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>fname</name> <init>= <expr><name><name>key</name>.<name>dptr</name></name> + 1</expr></init></decl>;</decl_stmt>
+                    <decl_stmt><decl><type><name>apr_finfo_t</name></type> <name>finfo</name></decl>;</decl_stmt>
+                    <decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+
+                    <comment type="block">/* if we don't see the file, then it's a locknull */</comment>
+                    <expr_stmt><expr><name>rv</name> = <call><name>apr_stat</name><argument_list>(<argument><expr>&amp;<name>finfo</name></expr></argument>, <argument><expr><name>fname</name></expr></argument>, <argument><expr><name>APR_FINFO_MIN</name> | <name>APR_FINFO_LINK</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                    <if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name> &amp;&amp; <name>rv</name> != <name>APR_INCOMPLETE</name></expr>)</condition><then> <block>{
+                        <if>if <condition>(<expr>(<name>err</name> = <call><name>dav_fs_remove_locknull_member</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>fname</name></expr></argument>, <argument><expr>&amp;<name>buf</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then> <block>{
+                            <comment type="block">/* ### push a higher-level description? */</comment>
+                            <return>return <expr><name>err</name></expr>;</return>
+                        }</block></then></if>
+                    }</block></then></if>
+                }</block></then></if>
+            }</block></else></if>
+            <break>break;</break>
+
+        </case><case>case <expr><name>DAV_LOCK_INDIRECT</name></expr>:
+            <comment type="block">/* Create and fill a dav_lock_indirect structure */</comment>
+
+            <expr_stmt><expr><name>ip</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>ip</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>ip</name>-&gt;<name>locktoken</name></name> = <call><name>apr_pmemdup</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name><name>val</name>.<name>dptr</name></name> + <name>offset</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name><name>ip</name>-&gt;<name>locktoken</name></name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name>offset</name> += <sizeof>sizeof<argument_list>(<argument><expr>*<name><name>ip</name>-&gt;<name>locktoken</name></name></expr></argument>)</argument_list></sizeof></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr>&amp;<name><name>ip</name>-&gt;<name>timeout</name></name></expr></argument>, <argument><expr><name><name>val</name>.<name>dptr</name></name> + <name>offset</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name><name>ip</name>-&gt;<name>timeout</name></name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name>offset</name> += <sizeof>sizeof<argument_list>(<argument><expr><name><name>ip</name>-&gt;<name>timeout</name></name></expr></argument>)</argument_list></sizeof></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr>&amp;<name><name>ip</name>-&gt;<name>key</name>.<name>dsize</name></name></expr></argument>, <argument><expr><name><name>val</name>.<name>dptr</name></name> + <name>offset</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name><name>ip</name>-&gt;<name>key</name>.<name>dsize</name></name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt> <comment type="block">/* length of datum */</comment>
+            <expr_stmt><expr><name>offset</name> += <sizeof>sizeof<argument_list>(<argument><expr><name><name>ip</name>-&gt;<name>key</name>.<name>dsize</name></name></expr></argument>)</argument_list></sizeof></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>ip</name>-&gt;<name>key</name>.<name>dptr</name></name> = <call><name>apr_pmemdup</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name><name>val</name>.<name>dptr</name></name> + <name>offset</name></expr></argument>, <argument><expr><name><name>ip</name>-&gt;<name>key</name>.<name>dsize</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name>offset</name> += <name><name>ip</name>-&gt;<name>key</name>.<name>dsize</name></name></expr>;</expr_stmt>
+
+            <if>if <condition>(<expr>!<call><name>dav_fs_lock_expired</name><argument_list>(<argument><expr><name><name>ip</name>-&gt;<name>timeout</name></name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+                <expr_stmt><expr><name><name>ip</name>-&gt;<name>next</name></name> = *<name>indirect</name></expr>;</expr_stmt>
+                <expr_stmt><expr>*<name>indirect</name> = <name>ip</name></expr>;</expr_stmt>
+            }</block></then>
+            <else>else <block>{
+                <expr_stmt><expr><name>need_save</name> = <name>DAV_TRUE</name></expr>;</expr_stmt>
+                <comment type="block">/* A locknull resource will never be locked indirectly */</comment>
+            }</block></else></if>
+
+            <break>break;</break>
+
+        </case><default>default:
+            <expr_stmt><expr><call><name>dav_dbm_freedatum</name><argument_list>(<argument><expr><name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>db</name></name></expr></argument>, <argument><expr><name>val</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+            <comment type="block">/* ### should use a computed_desc and insert corrupt token data */</comment>
+            <expr_stmt><expr>--<name>offset</name></expr>;</expr_stmt>
+            <return>return <expr><call><name>dav_new_error</name><argument_list>(<argument><expr><name>p</name></expr></argument>,
+                                 <argument><expr><name>HTTP_INTERNAL_SERVER_ERROR</name></expr></argument>,
+                                 <argument><expr><name>DAV_ERR_LOCK_CORRUPT_DB</name></expr></argument>, <argument><expr>0</expr></argument>,
+                                 <argument><expr><call><name>apr_psprintf</name><argument_list>(<argument><expr><name>p</name></expr></argument>,
+                                             <argument><expr>"The lock database was found to "
+                                             "be corrupt. offset %"
+                                             <name>APR_SIZE_T_FMT</name> ", c=%02x"</expr></argument>,
+                                             <argument><expr><name>offset</name></expr></argument>, <argument><expr><name><name>val</name>.<name>dptr</name><index>[<expr><name>offset</name></expr>]</index></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+        </default>}</block></switch>
+    }</block></while>
+
+    <expr_stmt><expr><call><name>dav_dbm_freedatum</name><argument_list>(<argument><expr><name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>db</name></name></expr></argument>, <argument><expr><name>val</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* Clean up this record if we found expired locks */</comment>
+    <comment type="block">/*
+    ** ### shouldn't do this if we've been opened READONLY. elide the
+    ** ### timed-out locks from the response, but don't save that info back
+    */</comment>
+    <if>if <condition>(<expr><name>need_save</name> == <name>DAV_TRUE</name></expr>)</condition><then> <block>{
+        <return>return <expr><call><name>dav_fs_save_lock_record</name><argument_list>(<argument><expr><name>lockdb</name></expr></argument>, <argument><expr><name>key</name></expr></argument>, <argument><expr>*<name>direct</name></expr></argument>, <argument><expr>*<name>indirect</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+
+    <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* resolve &lt;indirect&gt;, returning &lt;*direct&gt; */</comment>
+<function><type><specifier>static</specifier> <name>dav_error</name> *</type> <name>dav_fs_resolve</name><parameter_list>(<param><decl><type><name>dav_lockdb</name> *</type><name>lockdb</name></decl></param>,
+                                  <param><decl><type><name>dav_lock_indirect</name> *</type><name>indirect</name></decl></param>,
+                                  <param><decl><type><name>dav_lock_discovery</name> **</type><name>direct</name></decl></param>,
+                                  <param><decl><type><name>dav_lock_discovery</name> **</type><name>ref_dp</name></decl></param>,
+                                  <param><decl><type><name>dav_lock_indirect</name> **</type><name>ref_ip</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>dav_error</name> *</type><name>err</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_lock_discovery</name> *</type><name>dir</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_lock_indirect</name> *</type><name>ind</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>(<name>err</name> = <call><name>dav_fs_load_lock_record</name><argument_list>(<argument><expr><name>lockdb</name></expr></argument>, <argument><expr><name><name>indirect</name>-&gt;<name>key</name></name></expr></argument>,
+                                       <argument><expr><name>DAV_CREATE_LIST</name></expr></argument>,
+                                       <argument><expr>&amp;<name>dir</name></expr></argument>, <argument><expr>&amp;<name>ind</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then> <block>{
+        <comment type="block">/* ### insert a higher-level description? */</comment>
+        <return>return <expr><name>err</name></expr>;</return>
+    }</block></then></if>
+    <if>if <condition>(<expr><name>ref_dp</name> != <name>NULL</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr>*<name>ref_dp</name> = <name>dir</name></expr>;</expr_stmt>
+        <expr_stmt><expr>*<name>ref_ip</name> = <name>ind</name></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <for>for (<init>;</init> <condition><expr><name>dir</name> != <name>NULL</name></expr>;</condition> <incr><expr><name>dir</name> = <name><name>dir</name>-&gt;<name>next</name></name></expr></incr>) <block>{
+        <if>if <condition>(<expr>!<call><name>dav_compare_locktoken</name><argument_list>(<argument><expr><name><name>indirect</name>-&gt;<name>locktoken</name></name></expr></argument>, <argument><expr><name><name>dir</name>-&gt;<name>locktoken</name></name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <expr_stmt><expr>*<name>direct</name> = <name>dir</name></expr>;</expr_stmt>
+            <return>return <expr><name>NULL</name></expr>;</return>
+        }</block></then></if>
+    }</block></for>
+
+    <comment type="block">/* No match found (but we should have found one!) */</comment>
+
+    <comment type="block">/* ### use a different description and/or error ID? */</comment>
+    <return>return <expr><call><name>dav_new_error</name><argument_list>(<argument><expr><name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>pool</name></name></expr></argument>,
+                         <argument><expr><name>HTTP_INTERNAL_SERVER_ERROR</name></expr></argument>,
+                         <argument><expr><name>DAV_ERR_LOCK_CORRUPT_DB</name></expr></argument>, <argument><expr>0</expr></argument>,
+                         <argument><expr>"The lock database was found to be corrupt. "
+                         "An indirect lock's direct lock could not "
+                         "be found."</expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<comment type="block">/* ---------------------------------------------------------------
+**
+** Property-related lock functions
+**
+*/</comment>
+
+<comment type="block">/*
+** dav_fs_get_supportedlock:  Returns a static string for all supportedlock
+**    properties. I think we save more returning a static string than
+**    constructing it every time, though it might look cleaner.
+*/</comment>
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *</type><name>dav_fs_get_supportedlock</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>dav_resource</name> *</type><name>resource</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name></type> <name><name>supported</name><index>[]</index></name> <init>= <expr><name>DEBUG_CR</name>
+        "&lt;D:lockentry&gt;" <name>DEBUG_CR</name>
+        "&lt;D:lockscope&gt;&lt;D:exclusive/&gt;&lt;/D:lockscope&gt;" <name>DEBUG_CR</name>
+        "&lt;D:locktype&gt;&lt;D:write/&gt;&lt;/D:locktype&gt;" <name>DEBUG_CR</name>
+        "&lt;/D:lockentry&gt;" <name>DEBUG_CR</name>
+        "&lt;D:lockentry&gt;" <name>DEBUG_CR</name>
+        "&lt;D:lockscope&gt;&lt;D:shared/&gt;&lt;/D:lockscope&gt;" <name>DEBUG_CR</name>
+        "&lt;D:locktype&gt;&lt;D:write/&gt;&lt;/D:locktype&gt;" <name>DEBUG_CR</name>
+        "&lt;/D:lockentry&gt;" <name>DEBUG_CR</name></expr></init></decl>;</decl_stmt>
+
+    <return>return <expr><name>supported</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* ---------------------------------------------------------------
+**
+** General lock functions
+**
+*/</comment>
+
+<comment type="block">/* ---------------------------------------------------------------
+**
+** Functions dealing with lock-null resources
+**
+*/</comment>
+
+<comment type="block">/*
+** dav_fs_load_locknull_list:  Returns a dav_buffer dump of the locknull file
+**    for the given directory.
+*/</comment>
+<function><type><specifier>static</specifier> <name>dav_error</name> *</type> <name>dav_fs_load_locknull_list</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>dirpath</name></decl></param>,
+                                             <param><decl><type><name>dav_buffer</name> *</type><name>pbuf</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>apr_finfo_t</name></type> <name>finfo</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_file_t</name> *</type><name>file</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_error</name> *</type><name>err</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_size_t</name></type> <name>amt</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><call><name>dav_buffer_init</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>pbuf</name></expr></argument>, <argument><expr><name>dirpath</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr><name><name>pbuf</name>-&gt;<name>buf</name><index>[<expr><name><name>pbuf</name>-&gt;<name>cur_len</name></name> - 1</expr>]</index></name> == '/'</expr>)</condition><then>
+        <expr_stmt><expr><name><name>pbuf</name>-&gt;<name>buf</name><index>[<expr>--<name><name>pbuf</name>-&gt;<name>cur_len</name></name></expr>]</index></name> = '\0'</expr>;</expr_stmt></then></if>
+
+    <expr_stmt><expr><call><name>dav_buffer_place</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>pbuf</name></expr></argument>, <argument><expr>"/" <name>DAV_FS_STATE_DIR</name> "/" <name>DAV_FS_LOCK_NULL_FILE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* reset this in case we leave w/o reading into the buffer */</comment>
+    <expr_stmt><expr><name><name>pbuf</name>-&gt;<name>cur_len</name></name> = 0</expr>;</expr_stmt>
+
+    <if>if <condition>(<expr><call><name>apr_file_open</name><argument_list>(<argument><expr>&amp;<name>file</name></expr></argument>, <argument><expr><name><name>pbuf</name>-&gt;<name>buf</name></name></expr></argument>, <argument><expr><name>APR_READ</name> | <name>APR_BINARY</name></expr></argument>, <argument><expr><name>APR_OS_DEFAULT</name></expr></argument>,
+                <argument><expr><name>p</name></expr></argument>)</argument_list></call> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><name>rv</name> = <call><name>apr_file_info_get</name><argument_list>(<argument><expr>&amp;<name>finfo</name></expr></argument>, <argument><expr><name>APR_FINFO_SIZE</name></expr></argument>, <argument><expr><name>file</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>err</name> = <call><name>dav_new_error</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>HTTP_INTERNAL_SERVER_ERROR</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>rv</name></expr></argument>,
+                            <argument><expr><call><name>apr_psprintf</name><argument_list>(<argument><expr><name>p</name></expr></argument>,
+                                        <argument><expr>"Opened but could not stat file %s"</expr></argument>,
+                                        <argument><expr><name><name>pbuf</name>-&gt;<name>buf</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <goto>goto <name>loaderror</name>;</goto>
+    }</block></then></if>
+
+    <if>if <condition>(<expr><name><name>finfo</name>.<name>size</name></name> != (<name>apr_size_t</name>)<name><name>finfo</name>.<name>size</name></name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>err</name> = <call><name>dav_new_error</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>HTTP_INTERNAL_SERVER_ERROR</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr>0</expr></argument>,
+                            <argument><expr><call><name>apr_psprintf</name><argument_list>(<argument><expr><name>p</name></expr></argument>,
+                                        <argument><expr>"Opened but rejected huge file %s"</expr></argument>,
+                                        <argument><expr><name><name>pbuf</name>-&gt;<name>buf</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <goto>goto <name>loaderror</name>;</goto>
+    }</block></then></if>
+
+    <expr_stmt><expr><name>amt</name> = (<name>apr_size_t</name>)<name><name>finfo</name>.<name>size</name></name></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>dav_set_bufsize</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>pbuf</name></expr></argument>, <argument><expr><name>amt</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr>(<name>rv</name> = <call><name>apr_file_read</name><argument_list>(<argument><expr><name>file</name></expr></argument>, <argument><expr><name><name>pbuf</name>-&gt;<name>buf</name></name></expr></argument>, <argument><expr>&amp;<name>amt</name></expr></argument>)</argument_list></call>) != <name>APR_SUCCESS</name>
+        || <name>amt</name> != <name><name>finfo</name>.<name>size</name></name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>err</name> = <call><name>dav_new_error</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>HTTP_INTERNAL_SERVER_ERROR</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>rv</name></expr></argument>,
+                            <argument><expr><call><name>apr_psprintf</name><argument_list>(<argument><expr><name>p</name></expr></argument>,
+                                        <argument><expr>"Failure reading locknull file "
+                                        "for %s"</expr></argument>, <argument><expr><name>dirpath</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <comment type="block">/* just in case the caller disregards the returned error */</comment>
+        <expr_stmt><expr><name><name>pbuf</name>-&gt;<name>cur_len</name></name> = 0</expr>;</expr_stmt>
+        <goto>goto <name>loaderror</name>;</goto>
+    }</block></then></if>
+
+  <label><name>loaderror</name>:</label>
+    <expr_stmt><expr><call><name>apr_file_close</name><argument_list>(<argument><expr><name>file</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>err</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/*
+** dav_fs_save_locknull_list:  Saves contents of pbuf into the
+**    locknull file for dirpath.
+*/</comment>
+<function><type><specifier>static</specifier> <name>dav_error</name> *</type> <name>dav_fs_save_locknull_list</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>dirpath</name></decl></param>,
+                                             <param><decl><type><name>dav_buffer</name> *</type><name>pbuf</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>pathname</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_file_t</name> *</type><name>file</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_error</name> *</type><name>err</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_size_t</name></type> <name>amt</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr><name><name>pbuf</name>-&gt;<name>buf</name></name> == <name>NULL</name></expr>)</condition><then>
+        <return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+    <expr_stmt><expr><call><name>dav_fs_ensure_state_dir</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>dirpath</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name>pathname</name> = <call><name>apr_pstrcat</name><argument_list>(<argument><expr><name>p</name></expr></argument>,
+                          <argument><expr><name>dirpath</name></expr></argument>,
+                          <argument><expr><name><name>dirpath</name><index>[<expr><call><name>strlen</name><argument_list>(<argument><expr><name>dirpath</name></expr></argument>)</argument_list></call> - 1</expr>]</index></name> == '/' ? "" : "/"</expr></argument>,
+                          <argument><expr><name>DAV_FS_STATE_DIR</name> "/" <name>DAV_FS_LOCK_NULL_FILE</name></expr></argument>,
+                          <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr><name><name>pbuf</name>-&gt;<name>cur_len</name></name> == 0</expr>)</condition><then> <block>{
+        <comment type="block">/* delete the file if cur_len == 0 */</comment>
+        <if>if <condition>(<expr>(<name>rv</name> = <call><name>apr_file_remove</name><argument_list>(<argument><expr><name>pathname</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call>) != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+            <return>return <expr><call><name>dav_new_error</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>HTTP_INTERNAL_SERVER_ERROR</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>rv</name></expr></argument>,
+                                 <argument><expr><call><name>apr_psprintf</name><argument_list>(<argument><expr><name>p</name></expr></argument>,
+                                             <argument><expr>"Error removing %s"</expr></argument>, <argument><expr><name>pathname</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+        }</block></then></if>
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+
+    <if>if <condition>(<expr>(<name>rv</name> = <call><name>apr_file_open</name><argument_list>(<argument><expr>&amp;<name>file</name></expr></argument>, <argument><expr><name>pathname</name></expr></argument>,
+                            <argument><expr><name>APR_WRITE</name> | <name>APR_CREATE</name> | <name>APR_TRUNCATE</name> | <name>APR_BINARY</name></expr></argument>,
+                            <argument><expr><name>APR_OS_DEFAULT</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call>) != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+        <return>return <expr><call><name>dav_new_error</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>HTTP_INTERNAL_SERVER_ERROR</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>rv</name></expr></argument>,
+                             <argument><expr><call><name>apr_psprintf</name><argument_list>(<argument><expr><name>p</name></expr></argument>,
+                                         <argument><expr>"Error opening %s for writing"</expr></argument>,
+                                         <argument><expr><name>pathname</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><name>amt</name> = <name><name>pbuf</name>-&gt;<name>cur_len</name></name></expr>;</expr_stmt>
+    <if>if <condition>(<expr>(<name>rv</name> = <call><name>apr_file_write_full</name><argument_list>(<argument><expr><name>file</name></expr></argument>, <argument><expr><name><name>pbuf</name>-&gt;<name>buf</name></name></expr></argument>, <argument><expr><name>amt</name></expr></argument>, <argument><expr>&amp;<name>amt</name></expr></argument>)</argument_list></call>) != <name>APR_SUCCESS</name>
+        || <name>amt</name> != <name><name>pbuf</name>-&gt;<name>cur_len</name></name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>err</name> = <call><name>dav_new_error</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>HTTP_INTERNAL_SERVER_ERROR</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>rv</name></expr></argument>,
+                            <argument><expr><call><name>apr_psprintf</name><argument_list>(<argument><expr><name>p</name></expr></argument>,
+                                        <argument><expr>"Error writing %" <name>APR_SIZE_T_FMT</name>
+                                        " bytes to %s"</expr></argument>,
+                                        <argument><expr><name><name>pbuf</name>-&gt;<name>cur_len</name></name></expr></argument>, <argument><expr><name>pathname</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <expr_stmt><expr><call><name>apr_file_close</name><argument_list>(<argument><expr><name>file</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>err</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/*
+** dav_fs_remove_locknull_member:  Removes filename from the locknull list
+**    for directory path.
+*/</comment>
+<function><type><specifier>static</specifier> <name>dav_error</name> *</type> <name>dav_fs_remove_locknull_member</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>,
+                                                 <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>filename</name></decl></param>,
+                                                 <param><decl><type><name>dav_buffer</name> *</type><name>pbuf</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>dav_error</name> *</type><name>err</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_size_t</name></type> <name>len</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_size_t</name></type> <name>scanlen</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name> *</type><name>scan</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>scanend</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name> *</type><name>dirpath</name> <init>= <expr><call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>filename</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name> *</type><name>fname</name> <init>= <expr><call><name>strrchr</name><argument_list>(<argument><expr><name>dirpath</name></expr></argument>, <argument><expr>'/'</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>dirty</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr><name>fname</name> != <name>NULL</name></expr>)</condition><then>
+        <expr_stmt><expr>*<name>fname</name>++ = '\0'</expr>;</expr_stmt></then>
+    <else>else
+        <expr_stmt><expr><name>fname</name> = <name>dirpath</name></expr>;</expr_stmt></else></if>
+    <expr_stmt><expr><name>len</name> = <call><name>strlen</name><argument_list>(<argument><expr><name>fname</name></expr></argument>)</argument_list></call> + 1</expr>;</expr_stmt>
+
+    <if>if <condition>(<expr>(<name>err</name> = <call><name>dav_fs_load_locknull_list</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>dirpath</name></expr></argument>, <argument><expr><name>pbuf</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then> <block>{
+        <comment type="block">/* ### add a higher level description? */</comment>
+        <return>return <expr><name>err</name></expr>;</return>
+    }</block></then></if>
+
+    <for>for (<init><expr><name>scan</name> = <name><name>pbuf</name>-&gt;<name>buf</name></name></expr>, <expr><name>scanend</name> = <name>scan</name> + <name><name>pbuf</name>-&gt;<name>cur_len</name></name></expr>;</init>
+         <condition><expr><name>scan</name> &lt; <name>scanend</name></expr>;</condition>
+         <incr><expr><name>scan</name> += <name>scanlen</name></expr></incr>) <block>{
+        <expr_stmt><expr><name>scanlen</name> = <call><name>strlen</name><argument_list>(<argument><expr><name>scan</name></expr></argument>)</argument_list></call> + 1</expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>len</name> == <name>scanlen</name> &amp;&amp; <call><name>memcmp</name><argument_list>(<argument><expr><name>fname</name></expr></argument>, <argument><expr><name>scan</name></expr></argument>, <argument><expr><name>scanlen</name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then> <block>{
+            <expr_stmt><expr><name><name>pbuf</name>-&gt;<name>cur_len</name></name> -= <name>scanlen</name></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>memmove</name><argument_list>(<argument><expr><name>scan</name></expr></argument>, <argument><expr><name>scan</name> + <name>scanlen</name></expr></argument>, <argument><expr><name>scanend</name> - (<name>scan</name> + <name>scanlen</name>)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name>dirty</name> = 1</expr>;</expr_stmt>
+            <break>break;</break>
+        }</block></then></if>
+    }</block></for>
+
+    <if>if <condition>(<expr><name>dirty</name></expr>)</condition><then> <block>{
+        <if>if <condition>(<expr>(<name>err</name> = <call><name>dav_fs_save_locknull_list</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>dirpath</name></expr></argument>, <argument><expr><name>pbuf</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then> <block>{
+            <comment type="block">/* ### add a higher level description? */</comment>
+            <return>return <expr><name>err</name></expr>;</return>
+        }</block></then></if>
+    }</block></then></if>
+
+    <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* Note: used by dav_fs_repos.c */</comment>
+<function><type><name>dav_error</name> *</type> <name>dav_fs_get_locknull_members</name><parameter_list>(
+    <param><decl><type><specifier>const</specifier> <name>dav_resource</name> *</type><name>resource</name></decl></param>,
+    <param><decl><type><name>dav_buffer</name> *</type><name>pbuf</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>dirpath</name></decl>;</decl_stmt>
+
+    <comment type="block">/* ### should test this result value... */</comment>
+    <expr_stmt><expr>(<name>void</name>) <call><name>dav_fs_dir_file_name</name><argument_list>(<argument><expr><name>resource</name></expr></argument>, <argument><expr>&amp;<name>dirpath</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><call><name>dav_fs_load_locknull_list</name><argument_list>(<argument><expr><call><name>dav_fs_pool</name><argument_list>(<argument><expr><name>resource</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>dirpath</name></expr></argument>, <argument><expr><name>pbuf</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<comment type="block">/* ### fold into append_lock? */</comment>
+<comment type="block">/* ### take an optional buf parameter? */</comment>
+<function><type><specifier>static</specifier> <name>dav_error</name> *</type> <name>dav_fs_add_locknull_state</name><parameter_list>(
+    <param><decl><type><name>dav_lockdb</name> *</type><name>lockdb</name></decl></param>,
+    <param><decl><type><specifier>const</specifier> <name>dav_resource</name> *</type><name>resource</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>dav_buffer</name></type> <name>buf</name> <init>= <expr><block>{ <expr>0</expr> }</block></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>p</name> <init>= <expr><name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>pool</name></name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>dirpath</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>fname</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_error</name> *</type><name>err</name></decl>;</decl_stmt>
+
+    <comment type="block">/* ### should test this result value... */</comment>
+    <expr_stmt><expr>(<name>void</name>) <call><name>dav_fs_dir_file_name</name><argument_list>(<argument><expr><name>resource</name></expr></argument>, <argument><expr>&amp;<name>dirpath</name></expr></argument>, <argument><expr>&amp;<name>fname</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr>(<name>err</name> = <call><name>dav_fs_load_locknull_list</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>dirpath</name></expr></argument>, <argument><expr>&amp;<name>buf</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then> <block>{
+        <return>return <expr><call><name>dav_push_error</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>HTTP_INTERNAL_SERVER_ERROR</name></expr></argument>, <argument><expr>0</expr></argument>,
+                              <argument><expr>"Could not load .locknull file."</expr></argument>, <argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><call><name>dav_buffer_append</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>&amp;<name>buf</name></expr></argument>, <argument><expr><name>fname</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>buf</name>.<name>cur_len</name></name>++</expr>;</expr_stmt>   <comment type="block">/* we want the null-term here */</comment>
+
+    <if>if <condition>(<expr>(<name>err</name> = <call><name>dav_fs_save_locknull_list</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>dirpath</name></expr></argument>, <argument><expr>&amp;<name>buf</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then> <block>{
+        <return>return <expr><call><name>dav_push_error</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>HTTP_INTERNAL_SERVER_ERROR</name></expr></argument>, <argument><expr>0</expr></argument>,
+                              <argument><expr>"Could not save .locknull file."</expr></argument>, <argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+
+    <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/*
+** dav_fs_remove_locknull_state:  Given a request, check to see if r-&gt;filename
+**    is/was a lock-null resource.  If so, return it to an existant state, i.e.
+**    remove it from the list in the appropriate .DAV/locknull file.
+*/</comment>
+<function><type><specifier>static</specifier> <name>dav_error</name> *</type> <name>dav_fs_remove_locknull_state</name><parameter_list>(
+    <param><decl><type><name>dav_lockdb</name> *</type><name>lockdb</name></decl></param>,
+    <param><decl><type><specifier>const</specifier> <name>dav_resource</name> *</type><name>resource</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>dav_buffer</name></type> <name>buf</name> <init>= <expr><block>{ <expr>0</expr> }</block></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_error</name> *</type><name>err</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>p</name> <init>= <expr><name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>pool</name></name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>pathname</name> <init>= <expr><call><name>dav_fs_pathname</name><argument_list>(<argument><expr><name>resource</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>(<name>err</name> = <call><name>dav_fs_remove_locknull_member</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>pathname</name></expr></argument>, <argument><expr>&amp;<name>buf</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then> <block>{
+        <comment type="block">/* ### add a higher-level description? */</comment>
+        <return>return <expr><name>err</name></expr>;</return>
+    }</block></then></if>
+
+    <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>dav_error</name> *</type> <name>dav_fs_create_lock</name><parameter_list>(<param><decl><type><name>dav_lockdb</name> *</type><name>lockdb</name></decl></param>,
+                                      <param><decl><type><specifier>const</specifier> <name>dav_resource</name> *</type><name>resource</name></decl></param>,
+                                      <param><decl><type><name>dav_lock</name> **</type><name>lock</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>apr_datum_t</name></type> <name>key</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>key</name> = <call><name>dav_fs_build_key</name><argument_list>(<argument><expr><name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>resource</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr>*<name>lock</name> = <call><name>dav_fs_alloc_lock</name><argument_list>(<argument><expr><name>lockdb</name></expr></argument>,
+                              <argument><expr><name>key</name></expr></argument>,
+                              <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>(*<name>lock</name>)-&gt;<name>is_locknull</name></name> = !<name><name>resource</name>-&gt;<name>exists</name></name></expr>;</expr_stmt>
+
+    <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>dav_error</name> *</type> <name>dav_fs_get_locks</name><parameter_list>(<param><decl><type><name>dav_lockdb</name> *</type><name>lockdb</name></decl></param>,
+                                    <param><decl><type><specifier>const</specifier> <name>dav_resource</name> *</type><name>resource</name></decl></param>,
+                                    <param><decl><type><name>int</name></type> <name>calltype</name></decl></param>,
+                                    <param><decl><type><name>dav_lock</name> **</type><name>locks</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>p</name> <init>= <expr><name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>pool</name></name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_datum_t</name></type> <name>key</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_error</name> *</type><name>err</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_lock</name> *</type><name>lock</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_lock</name> *</type><name>newlock</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_lock_discovery</name> *</type><name>dp</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_lock_indirect</name> *</type><name>ip</name></decl>;</decl_stmt>
+
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>DAV_DEBUG</name></expr></cpp:if>
+    <if>if <condition>(<expr><name>calltype</name> == <name>DAV_GETLOCKS_COMPLETE</name></expr>)</condition><then> <block>{
+        <return>return <expr><call><name>dav_new_error</name><argument_list>(<argument><expr><name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>pool</name></name></expr></argument>,
+                             <argument><expr><name>HTTP_INTERNAL_SERVER_ERROR</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr>0</expr></argument>,
+                             <argument><expr>"INTERNAL DESIGN ERROR: DAV_GETLOCKS_COMPLETE "
+                             "is not yet supported"</expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+    <expr_stmt><expr><name>key</name> = <call><name>dav_fs_build_key</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>resource</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr>(<name>err</name> = <call><name>dav_fs_load_lock_record</name><argument_list>(<argument><expr><name>lockdb</name></expr></argument>, <argument><expr><name>key</name></expr></argument>, <argument><expr><name>DAV_CREATE_LIST</name></expr></argument>,
+                                       <argument><expr>&amp;<name>dp</name></expr></argument>, <argument><expr>&amp;<name>ip</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then> <block>{
+        <comment type="block">/* ### push a higher-level desc? */</comment>
+        <return>return <expr><name>err</name></expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/* copy all direct locks to the result list */</comment>
+    <for>for (<init>;</init> <condition><expr><name>dp</name> != <name>NULL</name></expr>;</condition> <incr><expr><name>dp</name> = <name><name>dp</name>-&gt;<name>next</name></name></expr></incr>) <block>{
+        <expr_stmt><expr><name>newlock</name> = <call><name>dav_fs_alloc_lock</name><argument_list>(<argument><expr><name>lockdb</name></expr></argument>, <argument><expr><name>key</name></expr></argument>, <argument><expr><name><name>dp</name>-&gt;<name>locktoken</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>newlock</name>-&gt;<name>is_locknull</name></name> = !<name><name>resource</name>-&gt;<name>exists</name></name></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>newlock</name>-&gt;<name>scope</name></name> = <name><name>dp</name>-&gt;<name>f</name>.<name>scope</name></name></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>newlock</name>-&gt;<name>type</name></name> = <name><name>dp</name>-&gt;<name>f</name>.<name>type</name></name></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>newlock</name>-&gt;<name>depth</name></name> = <name><name>dp</name>-&gt;<name>f</name>.<name>depth</name></name></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>newlock</name>-&gt;<name>timeout</name></name> = <name><name>dp</name>-&gt;<name>f</name>.<name>timeout</name></name></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>newlock</name>-&gt;<name>owner</name></name> = <name><name>dp</name>-&gt;<name>owner</name></name></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>newlock</name>-&gt;<name>auth_user</name></name> = <name><name>dp</name>-&gt;<name>auth_user</name></name></expr>;</expr_stmt>
+
+        <comment type="block">/* hook into the result list */</comment>
+        <expr_stmt><expr><name><name>newlock</name>-&gt;<name>next</name></name> = <name>lock</name></expr>;</expr_stmt>
+        <expr_stmt><expr><name>lock</name> = <name>newlock</name></expr>;</expr_stmt>
+    }</block></for>
+
+    <comment type="block">/* copy all the indirect locks to the result list. resolve as needed. */</comment>
+    <for>for (<init>;</init> <condition><expr><name>ip</name> != <name>NULL</name></expr>;</condition> <incr><expr><name>ip</name> = <name><name>ip</name>-&gt;<name>next</name></name></expr></incr>) <block>{
+        <expr_stmt><expr><name>newlock</name> = <call><name>dav_fs_alloc_lock</name><argument_list>(<argument><expr><name>lockdb</name></expr></argument>, <argument><expr><name><name>ip</name>-&gt;<name>key</name></name></expr></argument>, <argument><expr><name><name>ip</name>-&gt;<name>locktoken</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>newlock</name>-&gt;<name>is_locknull</name></name> = !<name><name>resource</name>-&gt;<name>exists</name></name></expr>;</expr_stmt>
+
+        <if>if <condition>(<expr><name>calltype</name> == <name>DAV_GETLOCKS_RESOLVED</name></expr>)</condition><then> <block>{
+            <if>if <condition>(<expr>(<name>err</name> = <call><name>dav_fs_resolve</name><argument_list>(<argument><expr><name>lockdb</name></expr></argument>, <argument><expr><name>ip</name></expr></argument>, <argument><expr>&amp;<name>dp</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then> <block>{
+                <comment type="block">/* ### push a higher-level desc? */</comment>
+                <return>return <expr><name>err</name></expr>;</return>
+            }</block></then></if>
+
+            <expr_stmt><expr><name><name>newlock</name>-&gt;<name>scope</name></name> = <name><name>dp</name>-&gt;<name>f</name>.<name>scope</name></name></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>newlock</name>-&gt;<name>type</name></name> = <name><name>dp</name>-&gt;<name>f</name>.<name>type</name></name></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>newlock</name>-&gt;<name>depth</name></name> = <name><name>dp</name>-&gt;<name>f</name>.<name>depth</name></name></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>newlock</name>-&gt;<name>timeout</name></name> = <name><name>dp</name>-&gt;<name>f</name>.<name>timeout</name></name></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>newlock</name>-&gt;<name>owner</name></name> = <name><name>dp</name>-&gt;<name>owner</name></name></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>newlock</name>-&gt;<name>auth_user</name></name> = <name><name>dp</name>-&gt;<name>auth_user</name></name></expr>;</expr_stmt>
+        }</block></then>
+        <else>else <block>{
+            <comment type="block">/* DAV_GETLOCKS_PARTIAL */</comment>
+            <expr_stmt><expr><name><name>newlock</name>-&gt;<name>rectype</name></name> = <name>DAV_LOCKREC_INDIRECT_PARTIAL</name></expr>;</expr_stmt>
+        }</block></else></if>
+
+        <comment type="block">/* hook into the result list */</comment>
+        <expr_stmt><expr><name><name>newlock</name>-&gt;<name>next</name></name> = <name>lock</name></expr>;</expr_stmt>
+        <expr_stmt><expr><name>lock</name> = <name>newlock</name></expr>;</expr_stmt>
+    }</block></for>
+
+    <expr_stmt><expr>*<name>locks</name> = <name>lock</name></expr>;</expr_stmt>
+    <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>dav_error</name> *</type> <name>dav_fs_find_lock</name><parameter_list>(<param><decl><type><name>dav_lockdb</name> *</type><name>lockdb</name></decl></param>,
+                                    <param><decl><type><specifier>const</specifier> <name>dav_resource</name> *</type><name>resource</name></decl></param>,
+                                    <param><decl><type><specifier>const</specifier> <name>dav_locktoken</name> *</type><name>locktoken</name></decl></param>,
+                                    <param><decl><type><name>int</name></type> <name>partial_ok</name></decl></param>,
+                                    <param><decl><type><name>dav_lock</name> **</type><name>lock</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>dav_error</name> *</type><name>err</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_datum_t</name></type> <name>key</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_lock_discovery</name> *</type><name>dp</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_lock_indirect</name> *</type><name>ip</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr>*<name>lock</name> = <name>NULL</name></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>key</name> = <call><name>dav_fs_build_key</name><argument_list>(<argument><expr><name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>resource</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr>(<name>err</name> = <call><name>dav_fs_load_lock_record</name><argument_list>(<argument><expr><name>lockdb</name></expr></argument>, <argument><expr><name>key</name></expr></argument>, <argument><expr><name>DAV_CREATE_LIST</name></expr></argument>,
+                                       <argument><expr>&amp;<name>dp</name></expr></argument>, <argument><expr>&amp;<name>ip</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then> <block>{
+        <comment type="block">/* ### push a higher-level desc? */</comment>
+        <return>return <expr><name>err</name></expr>;</return>
+    }</block></then></if>
+
+    <for>for (<init>;</init> <condition><expr><name>dp</name> != <name>NULL</name></expr>;</condition> <incr><expr><name>dp</name> = <name><name>dp</name>-&gt;<name>next</name></name></expr></incr>) <block>{
+        <if>if <condition>(<expr>!<call><name>dav_compare_locktoken</name><argument_list>(<argument><expr><name>locktoken</name></expr></argument>, <argument><expr><name><name>dp</name>-&gt;<name>locktoken</name></name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <expr_stmt><expr>*<name>lock</name> = <call><name>dav_fs_alloc_lock</name><argument_list>(<argument><expr><name>lockdb</name></expr></argument>, <argument><expr><name>key</name></expr></argument>, <argument><expr><name>locktoken</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name>(*<name>lock</name>)-&gt;<name>is_locknull</name></name> = !<name><name>resource</name>-&gt;<name>exists</name></name></expr>;</expr_stmt>
+            <expr_stmt><expr><name>(*<name>lock</name>)-&gt;<name>scope</name></name> = <name><name>dp</name>-&gt;<name>f</name>.<name>scope</name></name></expr>;</expr_stmt>
+            <expr_stmt><expr><name>(*<name>lock</name>)-&gt;<name>type</name></name> = <name><name>dp</name>-&gt;<name>f</name>.<name>type</name></name></expr>;</expr_stmt>
+            <expr_stmt><expr><name>(*<name>lock</name>)-&gt;<name>depth</name></name> = <name><name>dp</name>-&gt;<name>f</name>.<name>depth</name></name></expr>;</expr_stmt>
+            <expr_stmt><expr><name>(*<name>lock</name>)-&gt;<name>timeout</name></name> = <name><name>dp</name>-&gt;<name>f</name>.<name>timeout</name></name></expr>;</expr_stmt>
+            <expr_stmt><expr><name>(*<name>lock</name>)-&gt;<name>owner</name></name> = <name><name>dp</name>-&gt;<name>owner</name></name></expr>;</expr_stmt>
+            <expr_stmt><expr><name>(*<name>lock</name>)-&gt;<name>auth_user</name></name> = <name><name>dp</name>-&gt;<name>auth_user</name></name></expr>;</expr_stmt>
+            <return>return <expr><name>NULL</name></expr>;</return>
+        }</block></then></if>
+    }</block></for>
+
+    <for>for (<init>;</init> <condition><expr><name>ip</name> != <name>NULL</name></expr>;</condition> <incr><expr><name>ip</name> = <name><name>ip</name>-&gt;<name>next</name></name></expr></incr>) <block>{
+        <if>if <condition>(<expr>!<call><name>dav_compare_locktoken</name><argument_list>(<argument><expr><name>locktoken</name></expr></argument>, <argument><expr><name><name>ip</name>-&gt;<name>locktoken</name></name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <expr_stmt><expr>*<name>lock</name> = <call><name>dav_fs_alloc_lock</name><argument_list>(<argument><expr><name>lockdb</name></expr></argument>, <argument><expr><name><name>ip</name>-&gt;<name>key</name></name></expr></argument>, <argument><expr><name>locktoken</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name>(*<name>lock</name>)-&gt;<name>is_locknull</name></name> = !<name><name>resource</name>-&gt;<name>exists</name></name></expr>;</expr_stmt>
+
+            <comment type="block">/* ### nobody uses the resolving right now! */</comment>
+            <if>if <condition>(<expr><name>partial_ok</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><name>(*<name>lock</name>)-&gt;<name>rectype</name></name> = <name>DAV_LOCKREC_INDIRECT_PARTIAL</name></expr>;</expr_stmt>
+            }</block></then>
+            <else>else <block>{
+                <expr_stmt><expr><name>(*<name>lock</name>)-&gt;<name>rectype</name></name> = <name>DAV_LOCKREC_INDIRECT</name></expr>;</expr_stmt>
+                <if>if <condition>(<expr>(<name>err</name> = <call><name>dav_fs_resolve</name><argument_list>(<argument><expr><name>lockdb</name></expr></argument>, <argument><expr><name>ip</name></expr></argument>, <argument><expr>&amp;<name>dp</name></expr></argument>,
+                                          <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then> <block>{
+                    <comment type="block">/* ### push a higher-level desc? */</comment>
+                    <return>return <expr><name>err</name></expr>;</return>
+                }</block></then></if>
+                <expr_stmt><expr><name>(*<name>lock</name>)-&gt;<name>scope</name></name> = <name><name>dp</name>-&gt;<name>f</name>.<name>scope</name></name></expr>;</expr_stmt>
+                <expr_stmt><expr><name>(*<name>lock</name>)-&gt;<name>type</name></name> = <name><name>dp</name>-&gt;<name>f</name>.<name>type</name></name></expr>;</expr_stmt>
+                <expr_stmt><expr><name>(*<name>lock</name>)-&gt;<name>depth</name></name> = <name><name>dp</name>-&gt;<name>f</name>.<name>depth</name></name></expr>;</expr_stmt>
+                <expr_stmt><expr><name>(*<name>lock</name>)-&gt;<name>timeout</name></name> = <name><name>dp</name>-&gt;<name>f</name>.<name>timeout</name></name></expr>;</expr_stmt>
+                <expr_stmt><expr><name>(*<name>lock</name>)-&gt;<name>owner</name></name> = <name><name>dp</name>-&gt;<name>owner</name></name></expr>;</expr_stmt>
+                <expr_stmt><expr><name>(*<name>lock</name>)-&gt;<name>auth_user</name></name> = <name><name>dp</name>-&gt;<name>auth_user</name></name></expr>;</expr_stmt>
+            }</block></else></if>
+            <return>return <expr><name>NULL</name></expr>;</return>
+        }</block></then></if>
+    }</block></for>
+
+    <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>dav_error</name> *</type> <name>dav_fs_has_locks</name><parameter_list>(<param><decl><type><name>dav_lockdb</name> *</type><name>lockdb</name></decl></param>,
+                                    <param><decl><type><specifier>const</specifier> <name>dav_resource</name> *</type><name>resource</name></decl></param>,
+                                    <param><decl><type><name>int</name> *</type><name>locks_present</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>dav_error</name> *</type><name>err</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_datum_t</name></type> <name>key</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr>*<name>locks_present</name> = 0</expr>;</expr_stmt>
+
+    <if>if <condition>(<expr>(<name>err</name> = <call><name>dav_fs_really_open_lockdb</name><argument_list>(<argument><expr><name>lockdb</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then> <block>{
+        <comment type="block">/* ### insert a higher-level error description */</comment>
+        <return>return <expr><name>err</name></expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/*
+    ** If we opened readonly and the db wasn't there, then there are no
+    ** locks for this resource. Just exit.
+    */</comment>
+    <if>if <condition>(<expr><name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>db</name></name> == <name>NULL</name></expr>)</condition><then>
+        <return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+    <expr_stmt><expr><name>key</name> = <call><name>dav_fs_build_key</name><argument_list>(<argument><expr><name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>resource</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr>*<name>locks_present</name> = <call><name>dav_dbm_exists</name><argument_list>(<argument><expr><name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>db</name></name></expr></argument>, <argument><expr><name>key</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>dav_error</name> *</type> <name>dav_fs_append_locks</name><parameter_list>(<param><decl><type><name>dav_lockdb</name> *</type><name>lockdb</name></decl></param>,
+                                       <param><decl><type><specifier>const</specifier> <name>dav_resource</name> *</type><name>resource</name></decl></param>,
+                                       <param><decl><type><name>int</name></type> <name>make_indirect</name></decl></param>,
+                                       <param><decl><type><specifier>const</specifier> <name>dav_lock</name> *</type><name>lock</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>p</name> <init>= <expr><name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>pool</name></name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_error</name> *</type><name>err</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_lock_indirect</name> *</type><name>ip</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_lock_discovery</name> *</type><name>dp</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_datum_t</name></type> <name>key</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>key</name> = <call><name>dav_fs_build_key</name><argument_list>(<argument><expr><name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>resource</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr>(<name>err</name> = <call><name>dav_fs_load_lock_record</name><argument_list>(<argument><expr><name>lockdb</name></expr></argument>, <argument><expr><name>key</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr>&amp;<name>dp</name></expr></argument>, <argument><expr>&amp;<name>ip</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then> <block>{
+        <comment type="block">/* ### maybe add in a higher-level description */</comment>
+        <return>return <expr><name>err</name></expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/*
+    ** ### when we store the lock more directly, we need to update
+    ** ### lock-&gt;rectype and lock-&gt;is_locknull
+    */</comment>
+
+    <if>if <condition>(<expr><name>make_indirect</name></expr>)</condition><then> <block>{
+        <for>for (<init>;</init> <condition><expr><name>lock</name> != <name>NULL</name></expr>;</condition> <incr><expr><name>lock</name> = <name><name>lock</name>-&gt;<name>next</name></name></expr></incr>) <block>{
+
+            <comment type="block">/* ### this works for any &lt;lock&gt; rectype */</comment>
+            <decl_stmt><decl><type><name>dav_lock_indirect</name> *</type><name>newi</name> <init>= <expr><call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>newi</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+            <comment type="block">/* ### shut off the const warning for now */</comment>
+            <expr_stmt><expr><name><name>newi</name>-&gt;<name>locktoken</name></name> = (<name>dav_locktoken</name> *)<name><name>lock</name>-&gt;<name>locktoken</name></name></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>newi</name>-&gt;<name>timeout</name></name>   = <name><name>lock</name>-&gt;<name>timeout</name></name></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>newi</name>-&gt;<name>key</name></name>       = <name><name>lock</name>-&gt;<name>info</name>-&gt;<name>key</name></name></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>newi</name>-&gt;<name>next</name></name>      = <name>ip</name></expr>;</expr_stmt>
+            <expr_stmt><expr><name>ip</name>              = <name>newi</name></expr>;</expr_stmt>
+        }</block></for>
+    }</block></then>
+    <else>else <block>{
+        <for>for (<init>;</init> <condition><expr><name>lock</name> != <name>NULL</name></expr>;</condition> <incr><expr><name>lock</name> = <name><name>lock</name>-&gt;<name>next</name></name></expr></incr>) <block>{
+            <comment type="block">/* create and link in the right kind of lock */</comment>
+
+            <if>if <condition>(<expr><name><name>lock</name>-&gt;<name>rectype</name></name> == <name>DAV_LOCKREC_DIRECT</name></expr>)</condition><then> <block>{
+                <decl_stmt><decl><type><name>dav_lock_discovery</name> *</type><name>newd</name> <init>= <expr><call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>newd</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+                <expr_stmt><expr><name><name>newd</name>-&gt;<name>f</name>.<name>scope</name></name> = <name><name>lock</name>-&gt;<name>scope</name></name></expr>;</expr_stmt>
+                <expr_stmt><expr><name><name>newd</name>-&gt;<name>f</name>.<name>type</name></name> = <name><name>lock</name>-&gt;<name>type</name></name></expr>;</expr_stmt>
+                <expr_stmt><expr><name><name>newd</name>-&gt;<name>f</name>.<name>depth</name></name> = <name><name>lock</name>-&gt;<name>depth</name></name></expr>;</expr_stmt>
+                <expr_stmt><expr><name><name>newd</name>-&gt;<name>f</name>.<name>timeout</name></name> = <name><name>lock</name>-&gt;<name>timeout</name></name></expr>;</expr_stmt>
+                <comment type="block">/* ### shut off the const warning for now */</comment>
+                <expr_stmt><expr><name><name>newd</name>-&gt;<name>locktoken</name></name> = (<name>dav_locktoken</name> *)<name><name>lock</name>-&gt;<name>locktoken</name></name></expr>;</expr_stmt>
+                <expr_stmt><expr><name><name>newd</name>-&gt;<name>owner</name></name> = <name><name>lock</name>-&gt;<name>owner</name></name></expr>;</expr_stmt>
+                <expr_stmt><expr><name><name>newd</name>-&gt;<name>auth_user</name></name> = <name><name>lock</name>-&gt;<name>auth_user</name></name></expr>;</expr_stmt>
+                <expr_stmt><expr><name><name>newd</name>-&gt;<name>next</name></name> = <name>dp</name></expr>;</expr_stmt>
+                <expr_stmt><expr><name>dp</name> = <name>newd</name></expr>;</expr_stmt>
+            }</block></then>
+            <else>else <block>{
+                <comment type="block">/* DAV_LOCKREC_INDIRECT(_PARTIAL) */</comment>
+
+                <decl_stmt><decl><type><name>dav_lock_indirect</name> *</type><name>newi</name> <init>= <expr><call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>newi</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+                <comment type="block">/* ### shut off the const warning for now */</comment>
+                <expr_stmt><expr><name><name>newi</name>-&gt;<name>locktoken</name></name> = (<name>dav_locktoken</name> *)<name><name>lock</name>-&gt;<name>locktoken</name></name></expr>;</expr_stmt>
+                <expr_stmt><expr><name><name>newi</name>-&gt;<name>key</name></name>       = <name><name>lock</name>-&gt;<name>info</name>-&gt;<name>key</name></name></expr>;</expr_stmt>
+                <expr_stmt><expr><name><name>newi</name>-&gt;<name>next</name></name>      = <name>ip</name></expr>;</expr_stmt>
+                <expr_stmt><expr><name>ip</name>              = <name>newi</name></expr>;</expr_stmt>
+            }</block></else></if>
+        }</block></for>
+    }</block></else></if>
+
+    <if>if <condition>(<expr>(<name>err</name> = <call><name>dav_fs_save_lock_record</name><argument_list>(<argument><expr><name>lockdb</name></expr></argument>, <argument><expr><name>key</name></expr></argument>, <argument><expr><name>dp</name></expr></argument>, <argument><expr><name>ip</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then> <block>{
+        <comment type="block">/* ### maybe add a higher-level description */</comment>
+        <return>return <expr><name>err</name></expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/* we have a special list for recording locknull resources */</comment>
+    <comment type="block">/* ### ack! this can add two copies to the locknull list */</comment>
+    <if>if <condition>(<expr>!<name><name>resource</name>-&gt;<name>exists</name></name>
+        &amp;&amp; (<name>err</name> = <call><name>dav_fs_add_locknull_state</name><argument_list>(<argument><expr><name>lockdb</name></expr></argument>, <argument><expr><name>resource</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then> <block>{
+        <comment type="block">/* ### maybe add a higher-level description */</comment>
+        <return>return <expr><name>err</name></expr>;</return>
+    }</block></then></if>
+
+    <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>dav_error</name> *</type> <name>dav_fs_remove_lock</name><parameter_list>(<param><decl><type><name>dav_lockdb</name> *</type><name>lockdb</name></decl></param>,
+                                      <param><decl><type><specifier>const</specifier> <name>dav_resource</name> *</type><name>resource</name></decl></param>,
+                                      <param><decl><type><specifier>const</specifier> <name>dav_locktoken</name> *</type><name>locktoken</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>dav_error</name> *</type><name>err</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_buffer</name></type> <name>buf</name> <init>= <expr><block>{ <expr>0</expr> }</block></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_lock_discovery</name> *</type><name>dh</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_lock_indirect</name> *</type><name>ih</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_datum_t</name></type> <name>key</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>key</name> = <call><name>dav_fs_build_key</name><argument_list>(<argument><expr><name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>resource</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr><name>locktoken</name> != <name>NULL</name></expr>)</condition><then> <block>{
+        <decl_stmt><decl><type><name>dav_lock_discovery</name> *</type><name>dp</name></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>dav_lock_discovery</name> *</type><name>dprev</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>dav_lock_indirect</name> *</type><name>ip</name></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>dav_lock_indirect</name> *</type><name>iprev</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+
+        <if>if <condition>(<expr>(<name>err</name> = <call><name>dav_fs_load_lock_record</name><argument_list>(<argument><expr><name>lockdb</name></expr></argument>, <argument><expr><name>key</name></expr></argument>, <argument><expr><name>DAV_CREATE_LIST</name></expr></argument>,
+                                           <argument><expr>&amp;<name>dh</name></expr></argument>, <argument><expr>&amp;<name>ih</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then> <block>{
+            <comment type="block">/* ### maybe add a higher-level description */</comment>
+            <return>return <expr><name>err</name></expr>;</return>
+        }</block></then></if>
+
+        <for>for (<init><expr><name>dp</name> = <name>dh</name></expr>;</init> <condition><expr><name>dp</name> != <name>NULL</name></expr>;</condition> <incr><expr><name>dp</name> = <name><name>dp</name>-&gt;<name>next</name></name></expr></incr>) <block>{
+            <if>if <condition>(<expr><call><name>dav_compare_locktoken</name><argument_list>(<argument><expr><name>locktoken</name></expr></argument>, <argument><expr><name><name>dp</name>-&gt;<name>locktoken</name></name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then> <block>{
+                <if>if <condition>(<expr><name>dprev</name></expr>)</condition><then>
+                    <expr_stmt><expr><name><name>dprev</name>-&gt;<name>next</name></name> = <name><name>dp</name>-&gt;<name>next</name></name></expr>;</expr_stmt></then>
+                <else>else
+                    <expr_stmt><expr><name>dh</name> = <name><name>dh</name>-&gt;<name>next</name></name></expr>;</expr_stmt></else></if>
+            }</block></then></if>
+            <expr_stmt><expr><name>dprev</name> = <name>dp</name></expr>;</expr_stmt>
+        }</block></for>
+
+        <for>for (<init><expr><name>ip</name> = <name>ih</name></expr>;</init> <condition><expr><name>ip</name> != <name>NULL</name></expr>;</condition> <incr><expr><name>ip</name> = <name><name>ip</name>-&gt;<name>next</name></name></expr></incr>) <block>{
+            <if>if <condition>(<expr><call><name>dav_compare_locktoken</name><argument_list>(<argument><expr><name>locktoken</name></expr></argument>, <argument><expr><name><name>ip</name>-&gt;<name>locktoken</name></name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then> <block>{
+                <if>if <condition>(<expr><name>iprev</name></expr>)</condition><then>
+                    <expr_stmt><expr><name><name>iprev</name>-&gt;<name>next</name></name> = <name><name>ip</name>-&gt;<name>next</name></name></expr>;</expr_stmt></then>
+                <else>else
+                    <expr_stmt><expr><name>ih</name> = <name><name>ih</name>-&gt;<name>next</name></name></expr>;</expr_stmt></else></if>
+            }</block></then></if>
+            <expr_stmt><expr><name>iprev</name> = <name>ip</name></expr>;</expr_stmt>
+        }</block></for>
+
+    }</block></then></if>
+
+    <comment type="block">/* save the modified locks, or remove all locks (dh=ih=NULL). */</comment>
+    <if>if <condition>(<expr>(<name>err</name> = <call><name>dav_fs_save_lock_record</name><argument_list>(<argument><expr><name>lockdb</name></expr></argument>, <argument><expr><name>key</name></expr></argument>, <argument><expr><name>dh</name></expr></argument>, <argument><expr><name>ih</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then> <block>{
+        <comment type="block">/* ### maybe add a higher-level description */</comment>
+        <return>return <expr><name>err</name></expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/*
+    ** If this resource is a locknull resource AND no more locks exist,
+    ** then remove the locknull member.
+    **
+    ** Note: remove_locknull_state() attempts to convert a locknull member
+    **       to a real member. In this case, all locks are gone, so the
+    **       locknull resource returns to the null state (ie. doesn't exist),
+    **       so there is no need to update the lockdb (and it won't find
+    **       any because a precondition is that none exist).
+    */</comment>
+    <if>if <condition>(<expr>!<name><name>resource</name>-&gt;<name>exists</name></name> &amp;&amp; <name>dh</name> == <name>NULL</name> &amp;&amp; <name>ih</name> == <name>NULL</name>
+        &amp;&amp; (<name>err</name> = <call><name>dav_fs_remove_locknull_member</name><argument_list>(<argument><expr><name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>pool</name></name></expr></argument>,
+                                                <argument><expr><call><name>dav_fs_pathname</name><argument_list>(<argument><expr><name>resource</name></expr></argument>)</argument_list></call></expr></argument>,
+                                                <argument><expr>&amp;<name>buf</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then> <block>{
+        <comment type="block">/* ### maybe add a higher-level description */</comment>
+        <return>return <expr><name>err</name></expr>;</return>
+    }</block></then></if>
+
+    <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type> <name>dav_fs_do_refresh</name><parameter_list>(<param><decl><type><name>dav_lock_discovery</name> *</type><name>dp</name></decl></param>,
+                             <param><decl><type><specifier>const</specifier> <name>dav_locktoken_list</name> *</type><name>ltl</name></decl></param>,
+                             <param><decl><type><name>time_t</name></type> <name>new_time</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>dirty</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+
+    <for>for (<init>;</init> <condition><expr><name>ltl</name> != <name>NULL</name></expr>;</condition> <incr><expr><name>ltl</name> = <name><name>ltl</name>-&gt;<name>next</name></name></expr></incr>) <block>{
+        <if>if <condition>(<expr><call><name>dav_compare_locktoken</name><argument_list>(<argument><expr><name><name>dp</name>-&gt;<name>locktoken</name></name></expr></argument>, <argument><expr><name><name>ltl</name>-&gt;<name>locktoken</name></name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <block>{
+            <expr_stmt><expr><name><name>dp</name>-&gt;<name>f</name>.<name>timeout</name></name> = <name>new_time</name></expr>;</expr_stmt>
+            <expr_stmt><expr><name>dirty</name> = 1</expr>;</expr_stmt>
+            <break>break;</break>
+        }</block></then></if>
+    }</block></for>
+
+    <return>return <expr><name>dirty</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>dav_error</name> *</type> <name>dav_fs_refresh_locks</name><parameter_list>(<param><decl><type><name>dav_lockdb</name> *</type><name>lockdb</name></decl></param>,
+                                        <param><decl><type><specifier>const</specifier> <name>dav_resource</name> *</type><name>resource</name></decl></param>,
+                                        <param><decl><type><specifier>const</specifier> <name>dav_locktoken_list</name> *</type><name>ltl</name></decl></param>,
+                                        <param><decl><type><name>time_t</name></type> <name>new_time</name></decl></param>,
+                                        <param><decl><type><name>dav_lock</name> **</type><name>locks</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>dav_error</name> *</type><name>err</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_datum_t</name></type> <name>key</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_lock_discovery</name> *</type><name>dp</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_lock_discovery</name> *</type><name>dp_scan</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_lock_indirect</name> *</type><name>ip</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>dirty</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_lock</name> *</type><name>newlock</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr>*<name>locks</name> = <name>NULL</name></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>key</name> = <call><name>dav_fs_build_key</name><argument_list>(<argument><expr><name><name>lockdb</name>-&gt;<name>info</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>resource</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr>(<name>err</name> = <call><name>dav_fs_load_lock_record</name><argument_list>(<argument><expr><name>lockdb</name></expr></argument>, <argument><expr><name>key</name></expr></argument>, <argument><expr><name>DAV_CREATE_LIST</name></expr></argument>,
+                                       <argument><expr>&amp;<name>dp</name></expr></argument>, <argument><expr>&amp;<name>ip</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then> <block>{
+        <comment type="block">/* ### maybe add in a higher-level description */</comment>
+        <return>return <expr><name>err</name></expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/* ### we should be refreshing direct AND (resolved) indirect locks! */</comment>
+
+    <comment type="block">/* refresh all of the direct locks on this resource */</comment>
+    <for>for (<init><expr><name>dp_scan</name> = <name>dp</name></expr>;</init> <condition><expr><name>dp_scan</name> != <name>NULL</name></expr>;</condition> <incr><expr><name>dp_scan</name> = <name><name>dp_scan</name>-&gt;<name>next</name></name></expr></incr>) <block>{
+        <if>if <condition>(<expr><call><name>dav_fs_do_refresh</name><argument_list>(<argument><expr><name>dp_scan</name></expr></argument>, <argument><expr><name>ltl</name></expr></argument>, <argument><expr><name>new_time</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <comment type="block">/* the lock was refreshed. return the lock. */</comment>
+            <expr_stmt><expr><name>newlock</name> = <call><name>dav_fs_alloc_lock</name><argument_list>(<argument><expr><name>lockdb</name></expr></argument>, <argument><expr><name>key</name></expr></argument>, <argument><expr><name><name>dp_scan</name>-&gt;<name>locktoken</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>newlock</name>-&gt;<name>is_locknull</name></name> = !<name><name>resource</name>-&gt;<name>exists</name></name></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>newlock</name>-&gt;<name>scope</name></name> = <name><name>dp_scan</name>-&gt;<name>f</name>.<name>scope</name></name></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>newlock</name>-&gt;<name>type</name></name> = <name><name>dp_scan</name>-&gt;<name>f</name>.<name>type</name></name></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>newlock</name>-&gt;<name>depth</name></name> = <name><name>dp_scan</name>-&gt;<name>f</name>.<name>depth</name></name></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>newlock</name>-&gt;<name>timeout</name></name> = <name><name>dp_scan</name>-&gt;<name>f</name>.<name>timeout</name></name></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>newlock</name>-&gt;<name>owner</name></name> = <name><name>dp_scan</name>-&gt;<name>owner</name></name></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>newlock</name>-&gt;<name>auth_user</name></name> = <name><name>dp_scan</name>-&gt;<name>auth_user</name></name></expr>;</expr_stmt>
+
+            <expr_stmt><expr><name><name>newlock</name>-&gt;<name>next</name></name> = *<name>locks</name></expr>;</expr_stmt>
+            <expr_stmt><expr>*<name>locks</name> = <name>newlock</name></expr>;</expr_stmt>
+
+            <expr_stmt><expr><name>dirty</name> = 1</expr>;</expr_stmt>
+        }</block></then></if>
+    }</block></for>
+
+    <comment type="block">/* if we refreshed any locks, then save them back. */</comment>
+    <if>if <condition>(<expr><name>dirty</name>
+        &amp;&amp; (<name>err</name> = <call><name>dav_fs_save_lock_record</name><argument_list>(<argument><expr><name>lockdb</name></expr></argument>, <argument><expr><name>key</name></expr></argument>, <argument><expr><name>dp</name></expr></argument>, <argument><expr><name>ip</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then> <block>{
+        <comment type="block">/* ### maybe add in a higher-level description */</comment>
+        <return>return <expr><name>err</name></expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/* for each indirect lock, find its direct lock and refresh it. */</comment>
+    <for>for (<init>;</init> <condition><expr><name>ip</name> != <name>NULL</name></expr>;</condition> <incr><expr><name>ip</name> = <name><name>ip</name>-&gt;<name>next</name></name></expr></incr>) <block>{
+        <decl_stmt><decl><type><name>dav_lock_discovery</name> *</type><name>ref_dp</name></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>dav_lock_indirect</name> *</type><name>ref_ip</name></decl>;</decl_stmt>
+
+        <if>if <condition>(<expr>(<name>err</name> = <call><name>dav_fs_resolve</name><argument_list>(<argument><expr><name>lockdb</name></expr></argument>, <argument><expr><name>ip</name></expr></argument>, <argument><expr>&amp;<name>dp_scan</name></expr></argument>,
+                                  <argument><expr>&amp;<name>ref_dp</name></expr></argument>, <argument><expr>&amp;<name>ref_ip</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then> <block>{
+            <comment type="block">/* ### push a higher-level desc? */</comment>
+            <return>return <expr><name>err</name></expr>;</return>
+        }</block></then></if>
+        <if>if <condition>(<expr><call><name>dav_fs_do_refresh</name><argument_list>(<argument><expr><name>dp_scan</name></expr></argument>, <argument><expr><name>ltl</name></expr></argument>, <argument><expr><name>new_time</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <comment type="block">/* the lock was refreshed. return the lock. */</comment>
+            <expr_stmt><expr><name>newlock</name> = <call><name>dav_fs_alloc_lock</name><argument_list>(<argument><expr><name>lockdb</name></expr></argument>, <argument><expr><name><name>ip</name>-&gt;<name>key</name></name></expr></argument>, <argument><expr><name><name>dp_scan</name>-&gt;<name>locktoken</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>newlock</name>-&gt;<name>is_locknull</name></name> = !<name><name>resource</name>-&gt;<name>exists</name></name></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>newlock</name>-&gt;<name>scope</name></name> = <name><name>dp_scan</name>-&gt;<name>f</name>.<name>scope</name></name></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>newlock</name>-&gt;<name>type</name></name> = <name><name>dp_scan</name>-&gt;<name>f</name>.<name>type</name></name></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>newlock</name>-&gt;<name>depth</name></name> = <name><name>dp_scan</name>-&gt;<name>f</name>.<name>depth</name></name></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>newlock</name>-&gt;<name>timeout</name></name> = <name><name>dp_scan</name>-&gt;<name>f</name>.<name>timeout</name></name></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>newlock</name>-&gt;<name>owner</name></name> = <name><name>dp_scan</name>-&gt;<name>owner</name></name></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>newlock</name>-&gt;<name>auth_user</name></name> = <name><name>dp_scan</name>-&gt;<name>auth_user</name></name></expr>;</expr_stmt>
+
+            <expr_stmt><expr><name><name>newlock</name>-&gt;<name>next</name></name> = *<name>locks</name></expr>;</expr_stmt>
+            <expr_stmt><expr>*<name>locks</name> = <name>newlock</name></expr>;</expr_stmt>
+
+            <comment type="block">/* save the (resolved) direct lock back */</comment>
+            <if>if <condition>(<expr>(<name>err</name> = <call><name>dav_fs_save_lock_record</name><argument_list>(<argument><expr><name>lockdb</name></expr></argument>, <argument><expr><name><name>ip</name>-&gt;<name>key</name></name></expr></argument>, <argument><expr><name>ref_dp</name></expr></argument>,
+                                               <argument><expr><name>ref_ip</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then> <block>{
+                <comment type="block">/* ### push a higher-level desc? */</comment>
+                <return>return <expr><name>err</name></expr>;</return>
+            }</block></then></if>
+        }</block></then></if>
+    }</block></for>
+
+    <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+
+<decl_stmt><decl><type><specifier>const</specifier> <name>dav_hooks_locks</name></type> <name>dav_hooks_locks_fs</name> <init>=
+<expr><block>{
+    <expr><name>dav_fs_get_supportedlock</name></expr>,
+    <expr><name>dav_fs_parse_locktoken</name></expr>,
+    <expr><name>dav_fs_format_locktoken</name></expr>,
+    <expr><name>dav_fs_compare_locktoken</name></expr>,
+    <expr><name>dav_fs_open_lockdb</name></expr>,
+    <expr><name>dav_fs_close_lockdb</name></expr>,
+    <expr><name>dav_fs_remove_locknull_state</name></expr>,
+    <expr><name>dav_fs_create_lock</name></expr>,
+    <expr><name>dav_fs_get_locks</name></expr>,
+    <expr><name>dav_fs_find_lock</name></expr>,
+    <expr><name>dav_fs_has_locks</name></expr>,
+    <expr><name>dav_fs_append_locks</name></expr>,
+    <expr><name>dav_fs_remove_lock</name></expr>,
+    <expr><name>dav_fs_refresh_locks</name></expr>,
+    <expr><name>NULL</name></expr>, <comment type="block">/* lookup_resource */</comment>
+
+    <expr><name>NULL</name></expr> <comment type="block">/* ctx */</comment>
+}</block></expr></init></decl>;</decl_stmt>
+</unit>

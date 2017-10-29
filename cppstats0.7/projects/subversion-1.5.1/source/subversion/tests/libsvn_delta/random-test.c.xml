@@ -1,0 +1,545 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/subversion-1.5.1/source/subversion/tests/libsvn_delta/random-test.c"><comment type="block">/*
+ * random-test.c:  Test delta generation and application using random data.
+ *
+ * ====================================================================
+ * Copyright (c) 2000-2004 CollabNet.  All rights reserved.
+ *
+ * This software is licensed as described in the file COPYING, which
+ * you should have received as part of this distribution.  The terms
+ * are also available at http://subversion.tigris.org/license-1.html.
+ * If newer versions of this license are posted there, you may use a
+ * newer version instead, at your option.
+ *
+ * This software consists of voluntary contributions made by many
+ * individuals.  For exact contribution history, see the revision
+ * history and logs, available at http://subversion.tigris.org/.
+ * ====================================================================
+ */</comment>
+
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;assert.h&gt;</cpp:file></cpp:include>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>APR_WANT_STDIO</name></cpp:macro></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>APR_WANT_STRFUNC</name></cpp:macro></cpp:define>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_want.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_general.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_getopt.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_file_io.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_delta.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_pools.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_error.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"../svn_test.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"../../libsvn_delta/delta.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"delta-window-test.h"</cpp:file></cpp:include>
+
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>DEFAULT_ITERATIONS</name></cpp:macro> <cpp:value>30</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>DEFAULT_MAXLEN</name></cpp:macro> <cpp:value>(100 * 1024)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>DEFAULT_DUMP_FILES</name></cpp:macro> <cpp:value>0</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>DEFAULT_PRINT_WINDOWS</name></cpp:macro> <cpp:value>0</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SEEDS</name></cpp:macro> <cpp:value>50</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>MAXSEQ</name></cpp:macro> <cpp:value>100</cpp:value></cpp:define>
+
+
+<comment type="block">/* Initialize parameters for the random tests. */</comment>
+<decl_stmt><decl><type><specifier>extern</specifier> <name>int</name></type> <name>test_argc</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>extern</specifier> <specifier>const</specifier> <name>char</name> **</type><name>test_argv</name></decl>;</decl_stmt>
+
+<function><type><specifier>static</specifier> <name>void</name></type> <name>init_params</name><parameter_list>(<param><decl><type><name>apr_uint32_t</name> *</type><name>seed</name></decl></param>,
+                        <param><decl><type><name>apr_uint32_t</name> *</type><name>maxlen</name></decl></param>, <param><decl><type><name>int</name> *</type><name>iterations</name></decl></param>,
+                        <param><decl><type><name>int</name> *</type><name>dump_files</name></decl></param>, <param><decl><type><name>int</name> *</type><name>print_windows</name></decl></param>,
+                        <param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>random_bytes</name></decl></param>,
+                        <param><decl><type><name>apr_uint32_t</name> *</type><name>bytes_range</name></decl></param>,
+                        <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>apr_getopt_t</name> *</type><name>opt</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>char</name></type> <name>optch</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>opt_arg</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_status_t</name></type> <name>status</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr>*<name>seed</name> = (<name>apr_uint32_t</name>) <call><name>apr_time_now</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr>*<name>maxlen</name> = <name>DEFAULT_MAXLEN</name></expr>;</expr_stmt>
+  <expr_stmt><expr>*<name>iterations</name> = <name>DEFAULT_ITERATIONS</name></expr>;</expr_stmt>
+  <expr_stmt><expr>*<name>dump_files</name> = <name>DEFAULT_DUMP_FILES</name></expr>;</expr_stmt>
+  <expr_stmt><expr>*<name>print_windows</name> = <name>DEFAULT_PRINT_WINDOWS</name></expr>;</expr_stmt>
+  <expr_stmt><expr>*<name>random_bytes</name> = <name>NULL</name></expr>;</expr_stmt>
+  <expr_stmt><expr>*<name>bytes_range</name> = 256</expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>apr_getopt_init</name><argument_list>(<argument><expr>&amp;<name>opt</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>, <argument><expr><name>test_argc</name></expr></argument>, <argument><expr><name>test_argv</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <while>while <condition>(<expr><name>APR_SUCCESS</name>
+         == (<name>status</name> = <call><name>apr_getopt</name><argument_list>(<argument><expr><name>opt</name></expr></argument>, <argument><expr>"s:l:n:r:FW"</expr></argument>, <argument><expr>&amp;<name>optch</name></expr></argument>, <argument><expr>&amp;<name>opt_arg</name></expr></argument>)</argument_list></call>)</expr>)</condition>
+    <block>{
+      <switch>switch <condition>(<expr><name>optch</name></expr>)</condition>
+        <block>{
+        <case>case <expr>'s'</expr>:
+          <expr_stmt><expr>*<name>seed</name> = <call><name>atol</name><argument_list>(<argument><expr><name>opt_arg</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <break>break;</break>
+        </case><case>case <expr>'l'</expr>:
+          <expr_stmt><expr>*<name>maxlen</name> = <call><name>atoi</name><argument_list>(<argument><expr><name>opt_arg</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <break>break;</break>
+        </case><case>case <expr>'n'</expr>:
+          <expr_stmt><expr>*<name>iterations</name> = <call><name>atoi</name><argument_list>(<argument><expr><name>opt_arg</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <break>break;</break>
+        </case><case>case <expr>'r'</expr>:
+          <expr_stmt><expr>*<name>random_bytes</name> = <name>opt_arg</name> + 1</expr>;</expr_stmt>
+          <expr_stmt><expr>*<name>bytes_range</name> = <call><name>strlen</name><argument_list>(<argument><expr>*<name>random_bytes</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <break>break;</break>
+        </case><case>case <expr>'F'</expr>:
+          <expr_stmt><expr>*<name>dump_files</name> = !*<name>dump_files</name></expr>;</expr_stmt>
+          <break>break;</break>
+        </case><case>case <expr>'W'</expr>:
+          <expr_stmt><expr>*<name>print_windows</name> = !*<name>print_windows</name></expr>;</expr_stmt>
+          <break>break;</break>
+        </case>}</block></switch>
+    }</block></while>
+}</block></function>
+
+
+<comment type="block">/* Open a temporary file. */</comment>
+<function><type><specifier>static</specifier> <name>apr_file_t</name> *</type>
+<name>open_tempfile</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>name_template</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>apr_status_t</name></type> <name>apr_err</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_file_t</name> *</type><name>fp</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>char</name> *</type><name>templ</name></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr>!<name>name_template</name></expr>)</condition><then>
+    <expr_stmt><expr><name>templ</name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>"tempfile_XXXXXX"</expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+  <else>else
+    <expr_stmt><expr><name>templ</name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>name_template</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+
+  <expr_stmt><expr><name>apr_err</name> = <call><name>apr_file_mktemp</name><argument_list>(<argument><expr>&amp;<name>fp</name></expr></argument>, <argument><expr><name>templ</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>apr_err</name> == 0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>fp</name> != <name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><name>fp</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* Rewind the file pointer */</comment>
+<function><type><specifier>static</specifier> <name>void</name></type> <name>rewind_file</name><parameter_list>(<param><decl><type><name>apr_file_t</name> *</type><name>fp</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>apr_off_t</name></type> <name>offset</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>NDEBUG</name></cpp:ifndef>
+  <decl_stmt><decl><type><name>apr_status_t</name></type> <name>apr_err</name> <init>=
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+    <expr><call><name>apr_file_seek</name><argument_list>(<argument><expr><name>fp</name></expr></argument>, <argument><expr><name>APR_SET</name></expr></argument>, <argument><expr>&amp;<name>offset</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>apr_err</name> == 0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>offset</name> == 0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>dump_file_contents</name><parameter_list>(<param><decl><type><name>apr_file_t</name> *</type><name>fp</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>static</specifier> <name>char</name></type> <name><name>file_buffer</name><index>[<expr>10240</expr>]</index></name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>length</name> <init>= <expr>sizeof <name>file_buffer</name></expr></init></decl>;</decl_stmt>
+  <expr_stmt><expr><call><name>fputs</name><argument_list>(<argument><expr>"--------\n"</expr></argument>, <argument><expr><name>stdout</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <do>do
+    <block>{
+      <expr_stmt><expr><call><name>apr_file_read_full</name><argument_list>(<argument><expr><name>fp</name></expr></argument>, <argument><expr><name>file_buffer</name></expr></argument>, <argument><expr>sizeof <name>file_buffer</name></expr></argument>, <argument><expr>&amp;<name>length</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>fwrite</name><argument_list>(<argument><expr><name>file_buffer</name></expr></argument>, <argument><expr>1</expr></argument>, <argument><expr><name>length</name></expr></argument>, <argument><expr><name>stdout</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block>
+  while <condition>(<expr><name>length</name> == sizeof <name>file_buffer</name></expr>)</condition>;</do>
+  <expr_stmt><expr><call><name>putc</name><argument_list>(<argument><expr>'\n'</expr></argument>, <argument><expr><name>stdout</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>rewind_file</name><argument_list>(<argument><expr><name>fp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<comment type="block">/* Generate a temporary file containing sort-of random data.  Diffs
+   between files of random data tend to be pretty boring, so we try to
+   make sure there are a bunch of common substrings between two runs
+   of this function with the same seedbase.  */</comment>
+<function><type><specifier>static</specifier> <name>apr_file_t</name> *</type>
+<name>generate_random_file</name><parameter_list>(<param><decl><type><name>apr_uint32_t</name></type> <name>maxlen</name></decl></param>,
+                     <param><decl><type><name>apr_uint32_t</name></type> <name>subseed_base</name></decl></param>,
+                     <param><decl><type><name>apr_uint32_t</name> *</type><name>seed</name></decl></param>,
+                     <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>random_bytes</name></decl></param>,
+                     <param><decl><type><name>apr_uint32_t</name></type> <name>bytes_range</name></decl></param>,
+                     <param><decl><type><name>int</name></type> <name>dump_files</name></decl></param>,
+                     <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>static</specifier> <name>char</name></type> <name><name>file_buffer</name><index>[<expr>10240</expr>]</index></name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>char</name> *</type><name>buf</name> <init>= <expr><name>file_buffer</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>char</name> *<specifier>const</specifier></type> <name>end</name> <init>= <expr><name>buf</name> + sizeof <name>file_buffer</name></expr></init></decl>;</decl_stmt>
+
+  <decl_stmt><decl><type><name>apr_uint32_t</name></type> <name>len</name></decl>, <decl><type ref="prev"/><name>seqlen</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_file_t</name> *</type><name>fp</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>unsigned</name> <name>long</name></type> <name>r</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name>fp</name> = <call><name>open_tempfile</name><argument_list>(<argument><expr>"random_XXXXXX"</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>len</name> = <call><name>svn_test_rand</name><argument_list>(<argument><expr><name>seed</name></expr></argument>)</argument_list></call> % <name>maxlen</name></expr>;</expr_stmt> <comment type="block">/* We might go over this by a bit.  */</comment>
+  <while>while <condition>(<expr><name>len</name> &gt; 0</expr>)</condition>
+    <block>{
+      <comment type="block">/* Generate a pseudo-random sequence of up to MAXSEQ bytes,
+         where the seed is in the range [seedbase..seedbase+MAXSEQ-1].
+         (Use our own pseudo-random number generator here to avoid
+         clobbering the seed of the libc random number generator.)  */</comment>
+
+      <expr_stmt><expr><name>seqlen</name> = <call><name>svn_test_rand</name><argument_list>(<argument><expr><name>seed</name></expr></argument>)</argument_list></call> % <name>MAXSEQ</name></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>seqlen</name> &gt; <name>len</name></expr>)</condition><then> <expr_stmt><expr><name>seqlen</name> = <name>len</name></expr>;</expr_stmt></then></if>
+      <expr_stmt><expr><name>len</name> -= <name>seqlen</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name>r</name> = <name>subseed_base</name> + <call><name>svn_test_rand</name><argument_list>(<argument><expr><name>seed</name></expr></argument>)</argument_list></call> % <name>SEEDS</name></expr>;</expr_stmt>
+      <while>while <condition>(<expr><name>seqlen</name>-- &gt; 0</expr>)</condition>
+        <block>{
+          <decl_stmt><decl><type><specifier>const</specifier> <name>int</name></type> <name>ch</name> <init>= <expr>(<name>random_bytes</name>
+                          ? (<name>unsigned</name>)<name><name>random_bytes</name><index>[<expr><name>r</name> % <name>bytes_range</name></expr>]</index></name>
+                          : <name>r</name> % <name>bytes_range</name>)</expr></init></decl>;</decl_stmt>
+          <if>if <condition>(<expr><name>buf</name> == <name>end</name></expr>)</condition><then>
+            <block>{
+              <decl_stmt><decl><type><name>apr_size_t</name></type> <name>ignore_length</name></decl>;</decl_stmt>
+              <expr_stmt><expr><call><name>apr_file_write_full</name><argument_list>(<argument><expr><name>fp</name></expr></argument>, <argument><expr><name>file_buffer</name></expr></argument>, <argument><expr>sizeof <name>file_buffer</name></expr></argument>,
+                                  <argument><expr>&amp;<name>ignore_length</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+              <expr_stmt><expr><name>buf</name> = <name>file_buffer</name></expr>;</expr_stmt>
+            }</block></then></if>
+
+          <expr_stmt><expr>*<name>buf</name>++ = <name>ch</name></expr>;</expr_stmt>
+          <expr_stmt><expr><name>r</name> = <name>r</name> * 1103515245 + 12345</expr>;</expr_stmt>
+        }</block></while>
+    }</block></while>
+
+  <if>if <condition>(<expr><name>buf</name> &gt; <name>file_buffer</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>apr_size_t</name></type> <name>ignore_length</name></decl>;</decl_stmt>
+      <expr_stmt><expr><call><name>apr_file_write_full</name><argument_list>(<argument><expr><name>fp</name></expr></argument>, <argument><expr><name>file_buffer</name></expr></argument>, <argument><expr><name>buf</name> - <name>file_buffer</name></expr></argument>, <argument><expr>&amp;<name>ignore_length</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name>buf</name> = <name>file_buffer</name></expr>;</expr_stmt>
+    }</block></then></if>
+  <expr_stmt><expr><call><name>rewind_file</name><argument_list>(<argument><expr><name>fp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name>dump_files</name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>dump_file_contents</name><argument_list>(<argument><expr><name>fp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <return>return <expr><name>fp</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* Compare two open files. The file positions may change. */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>compare_files</name><parameter_list>(<param><decl><type><name>apr_file_t</name> *</type><name>f1</name></decl></param>, <param><decl><type><name>apr_file_t</name> *</type><name>f2</name></decl></param>, <param><decl><type><name>int</name></type> <name>dump_files</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>static</specifier> <name>char</name></type> <name><name>file_buffer_1</name><index>[<expr>10240</expr>]</index></name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>static</specifier> <name>char</name></type> <name><name>file_buffer_2</name><index>[<expr>10240</expr>]</index></name></decl>;</decl_stmt>
+
+  <decl_stmt><decl><type><name>char</name> *</type><name>c1</name></decl>, *<decl><type ref="prev"/><name>c2</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_off_t</name></type> <name>pos</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>len1</name></decl>, <decl><type ref="prev"/><name>len2</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>rewind_file</name><argument_list>(<argument><expr><name>f1</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>rewind_file</name><argument_list>(<argument><expr><name>f2</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name>dump_files</name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>dump_file_contents</name><argument_list>(<argument><expr><name>f2</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <do>do
+    <block>{
+      <expr_stmt><expr><call><name>apr_file_read_full</name><argument_list>(<argument><expr><name>f1</name></expr></argument>, <argument><expr><name>file_buffer_1</name></expr></argument>, <argument><expr>sizeof <name>file_buffer_1</name></expr></argument>, <argument><expr>&amp;<name>len1</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>apr_file_read_full</name><argument_list>(<argument><expr><name>f2</name></expr></argument>, <argument><expr><name>file_buffer_2</name></expr></argument>, <argument><expr>sizeof <name>file_buffer_2</name></expr></argument>, <argument><expr>&amp;<name>len2</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <for>for (<init><expr><name>c1</name> = <name>file_buffer_1</name></expr>, <expr><name>c2</name> = <name>file_buffer_2</name></expr>;</init>
+           <condition><expr><name>c1</name> &lt; <name>file_buffer_1</name> + <name>len1</name> &amp;&amp; <name>c2</name> &lt; <name>file_buffer_2</name> + <name>len2</name></expr>;</condition>
+           <incr><expr>++<name>c1</name></expr>, <expr>++<name>c2</name></expr>, <expr>++<name>pos</name></expr></incr>)
+        <block>{
+          <if>if <condition>(<expr>*<name>c1</name> != *<name>c2</name></expr>)</condition><then>
+            <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_TEST_FAILED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                     <argument><expr>"mismatch at position %"<name>APR_OFF_T_FMT</name></expr></argument>,
+                                     <argument><expr><name>pos</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+        }</block></for>
+
+      <if>if <condition>(<expr><name>len1</name> != <name>len2</name></expr>)</condition><then>
+        <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_TEST_FAILED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                 <argument><expr>"unequal file sizes at position"
+                                 " %"<name>APR_OFF_T_FMT</name></expr></argument>, <argument><expr><name>pos</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+    }</block>
+  while <condition>(<expr><name>len1</name> == sizeof <name>file_buffer_1</name></expr>)</condition>;</do>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>apr_file_t</name> *</type>
+<name>copy_tempfile</name><parameter_list>(<param><decl><type><name>apr_file_t</name> *</type><name>fp</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>static</specifier> <name>char</name></type> <name><name>file_buffer</name><index>[<expr>10240</expr>]</index></name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_file_t</name> *</type><name>newfp</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>length1</name></decl>, <decl><type ref="prev"/><name>length2</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name>newfp</name> = <call><name>open_tempfile</name><argument_list>(<argument><expr>"copy_XXXXXX"</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>rewind_file</name><argument_list>(<argument><expr><name>fp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <do>do
+    <block>{
+      <expr_stmt><expr><call><name>apr_file_read_full</name><argument_list>(<argument><expr><name>fp</name></expr></argument>, <argument><expr><name>file_buffer</name></expr></argument>, <argument><expr>sizeof <name>file_buffer</name></expr></argument>, <argument><expr>&amp;<name>length1</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>apr_file_write_full</name><argument_list>(<argument><expr><name>newfp</name></expr></argument>, <argument><expr><name>file_buffer</name></expr></argument>, <argument><expr><name>length1</name></expr></argument>, <argument><expr>&amp;<name>length2</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>length1</name> == <name>length2</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block>
+  while <condition>(<expr><name>length1</name> == sizeof <name>file_buffer</name></expr>)</condition>;</do>
+
+  <expr_stmt><expr><call><name>rewind_file</name><argument_list>(<argument><expr><name>fp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>rewind_file</name><argument_list>(<argument><expr><name>newfp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><name>newfp</name></expr>;</return>
+}</block></function>
+
+
+<escape char="0xc"/>
+<comment type="block">/* Implements svn_test_driver_t. */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>random_test</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>msg</name></decl></param>,
+            <param><decl><type><name>svn_boolean_t</name></type> <name>msg_only</name></decl></param>,
+            <param><decl><type><name>svn_test_opts_t</name> *</type><name>opts</name></decl></param>,
+            <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>static</specifier> <name>char</name></type> <name><name>msg_buff</name><index>[<expr>256</expr>]</index></name></decl>;</decl_stmt>
+
+  <decl_stmt><decl><type><name>apr_uint32_t</name></type> <name>seed</name></decl>, <decl><type ref="prev"/><name>bytes_range</name></decl>, <decl><type ref="prev"/><name>maxlen</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>, <decl><type ref="prev"/><name>iterations</name></decl>, <decl><type ref="prev"/><name>dump_files</name></decl>, <decl><type ref="prev"/><name>print_windows</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>random_bytes</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Initialize parameters and print out the seed in case we dump core
+     or something. */</comment>
+  <expr_stmt><expr><call><name>init_params</name><argument_list>(<argument><expr>&amp;<name>seed</name></expr></argument>, <argument><expr>&amp;<name>maxlen</name></expr></argument>, <argument><expr>&amp;<name>iterations</name></expr></argument>, <argument><expr>&amp;<name>dump_files</name></expr></argument>, <argument><expr>&amp;<name>print_windows</name></expr></argument>,
+              <argument><expr>&amp;<name>random_bytes</name></expr></argument>, <argument><expr>&amp;<name>bytes_range</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>sprintf</name><argument_list>(<argument><expr><name>msg_buff</name></expr></argument>, <argument><expr>"random delta test, seed = %lu"</expr></argument>, <argument><expr>(<name>unsigned</name> <name>long</name>) <name>seed</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr>*<name>msg</name> = <name>msg_buff</name></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name>msg_only</name></expr>)</condition><then>
+    <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return></then>
+  <else>else
+    <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"SEED:  %s\n"</expr></argument>, <argument><expr><name>msg_buff</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+
+  <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name>iterations</name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>)
+    <block>{
+      <comment type="block">/* Generate source and target for the delta and its application.  */</comment>
+      <decl_stmt><decl><type><name>apr_uint32_t</name></type> <name>subseed_base</name> <init>= <expr><call><name>svn_test_rand</name><argument_list>(<argument><expr>&amp;<name>seed</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>apr_file_t</name> *</type><name>source</name> <init>= <expr><call><name>generate_random_file</name><argument_list>(<argument><expr><name>maxlen</name></expr></argument>, <argument><expr><name>subseed_base</name></expr></argument>, <argument><expr>&amp;<name>seed</name></expr></argument>,
+                                                <argument><expr><name>random_bytes</name></expr></argument>, <argument><expr><name>bytes_range</name></expr></argument>,
+                                                <argument><expr><name>dump_files</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>apr_file_t</name> *</type><name>target</name> <init>= <expr><call><name>generate_random_file</name><argument_list>(<argument><expr><name>maxlen</name></expr></argument>, <argument><expr><name>subseed_base</name></expr></argument>, <argument><expr>&amp;<name>seed</name></expr></argument>,
+                                                <argument><expr><name>random_bytes</name></expr></argument>, <argument><expr><name>bytes_range</name></expr></argument>,
+                                                <argument><expr><name>dump_files</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>apr_file_t</name> *</type><name>source_copy</name> <init>= <expr><call><name>copy_tempfile</name><argument_list>(<argument><expr><name>source</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>apr_file_t</name> *</type><name>target_regen</name> <init>= <expr><call><name>open_tempfile</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+      <decl_stmt><decl><type><name>svn_txdelta_stream_t</name> *</type><name>txdelta_stream</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>svn_txdelta_window_handler_t</name></type> <name>handler</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>svn_stream_t</name> *</type><name>stream</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>void</name> *</type><name>handler_baton</name></decl>;</decl_stmt>
+
+      <comment type="block">/* Set up a four-stage pipeline: create a delta, convert it to
+         svndiff format, parse it back into delta format, and apply it
+         to a copy of the source file to see if we get the same target
+         back.  */</comment>
+      <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>delta_pool</name> <init>= <expr><call><name>svn_pool_create</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+      <comment type="block">/* Make stage 4: apply the text delta.  */</comment>
+      <expr_stmt><expr><call><name>svn_txdelta_apply</name><argument_list>(<argument><expr><call><name>svn_stream_from_aprfile</name><argument_list>(<argument><expr><name>source_copy</name></expr></argument>, <argument><expr><name>delta_pool</name></expr></argument>)</argument_list></call></expr></argument>,
+                        <argument><expr><call><name>svn_stream_from_aprfile</name><argument_list>(<argument><expr><name>target_regen</name></expr></argument>, <argument><expr><name>delta_pool</name></expr></argument>)</argument_list></call></expr></argument>,
+                        <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>delta_pool</name></expr></argument>, <argument><expr>&amp;<name>handler</name></expr></argument>, <argument><expr>&amp;<name>handler_baton</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <comment type="block">/* Make stage 3: reparse the text delta.  */</comment>
+      <expr_stmt><expr><name>stream</name> = <call><name>svn_txdelta_parse_svndiff</name><argument_list>(<argument><expr><name>handler</name></expr></argument>, <argument><expr><name>handler_baton</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>,
+                                         <argument><expr><name>delta_pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <comment type="block">/* Make stage 2: encode the text delta in svndiff format.  */</comment>
+      <expr_stmt><expr><call><name>svn_txdelta_to_svndiff2</name><argument_list>(<argument><expr>&amp;<name>handler</name></expr></argument>, <argument><expr>&amp;<name>handler_baton</name></expr></argument>, <argument><expr><name>stream</name></expr></argument>, <argument><expr>1</expr></argument>,
+                              <argument><expr><name>delta_pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <comment type="block">/* Make stage 1: create the text delta.  */</comment>
+      <expr_stmt><expr><call><name>svn_txdelta</name><argument_list>(<argument><expr>&amp;<name>txdelta_stream</name></expr></argument>,
+                  <argument><expr><call><name>svn_stream_from_aprfile</name><argument_list>(<argument><expr><name>source</name></expr></argument>, <argument><expr><name>delta_pool</name></expr></argument>)</argument_list></call></expr></argument>,
+                  <argument><expr><call><name>svn_stream_from_aprfile</name><argument_list>(<argument><expr><name>target</name></expr></argument>, <argument><expr><name>delta_pool</name></expr></argument>)</argument_list></call></expr></argument>,
+                  <argument><expr><name>delta_pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_txdelta_send_txstream</name><argument_list>(<argument><expr><name>txdelta_stream</name></expr></argument>,
+                                        <argument><expr><name>handler</name></expr></argument>,
+                                        <argument><expr><name>handler_baton</name></expr></argument>,
+                                        <argument><expr><name>delta_pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name>delta_pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>compare_files</name><argument_list>(<argument><expr><name>target</name></expr></argument>, <argument><expr><name>target_regen</name></expr></argument>, <argument><expr><name>dump_files</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>apr_file_close</name><argument_list>(<argument><expr><name>source</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>apr_file_close</name><argument_list>(<argument><expr><name>target</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>apr_file_close</name><argument_list>(<argument><expr><name>source_copy</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>apr_file_close</name><argument_list>(<argument><expr><name>target_regen</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></for>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<escape char="0xc"/>
+<comment type="block">/* (Note: *LAST_SEED is an output parameter.) */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>do_random_combine_test</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>msg</name></decl></param>,
+                       <param><decl><type><name>svn_boolean_t</name></type> <name>msg_only</name></decl></param>,
+                       <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>,
+                       <param><decl><type><name>apr_uint32_t</name> *</type><name>last_seed</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>static</specifier> <name>char</name></type> <name><name>msg_buff</name><index>[<expr>256</expr>]</index></name></decl>;</decl_stmt>
+
+  <decl_stmt><decl><type><name>apr_uint32_t</name></type> <name>seed</name></decl>, <decl><type ref="prev"/><name>bytes_range</name></decl>, <decl><type ref="prev"/><name>maxlen</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>, <decl><type ref="prev"/><name>iterations</name></decl>, <decl><type ref="prev"/><name>dump_files</name></decl>, <decl><type ref="prev"/><name>print_windows</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>random_bytes</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Initialize parameters and print out the seed in case we dump core
+     or something. */</comment>
+  <expr_stmt><expr><call><name>init_params</name><argument_list>(<argument><expr>&amp;<name>seed</name></expr></argument>, <argument><expr>&amp;<name>maxlen</name></expr></argument>, <argument><expr>&amp;<name>iterations</name></expr></argument>, <argument><expr>&amp;<name>dump_files</name></expr></argument>, <argument><expr>&amp;<name>print_windows</name></expr></argument>,
+              <argument><expr>&amp;<name>random_bytes</name></expr></argument>, <argument><expr>&amp;<name>bytes_range</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>sprintf</name><argument_list>(<argument><expr><name>msg_buff</name></expr></argument>,
+          <argument><expr>"random combine delta test, seed = %lu"</expr></argument>, <argument><expr>(<name>unsigned</name> <name>long</name>) <name>seed</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr>*<name>msg</name> = <name>msg_buff</name></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name>msg_only</name></expr>)</condition><then>
+    <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return></then>
+  <else>else
+    <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"SEED:  %s\n"</expr></argument>, <argument><expr><name>msg_buff</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+
+  <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name>iterations</name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>)
+    <block>{
+      <comment type="block">/* Generate source and target for the delta and its application.  */</comment>
+      <decl_stmt><decl><type><name>apr_uint32_t</name></type> <name>subseed_base</name> <init>= <expr><call><name>svn_test_rand</name><argument_list>(<argument><expr>(*<name>last_seed</name> = <name>seed</name>, &amp;<name>seed</name>)</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>apr_file_t</name> *</type><name>source</name> <init>= <expr><call><name>generate_random_file</name><argument_list>(<argument><expr><name>maxlen</name></expr></argument>, <argument><expr><name>subseed_base</name></expr></argument>, <argument><expr>&amp;<name>seed</name></expr></argument>,
+                                                <argument><expr><name>random_bytes</name></expr></argument>, <argument><expr><name>bytes_range</name></expr></argument>,
+                                                <argument><expr><name>dump_files</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>apr_file_t</name> *</type><name>middle</name> <init>= <expr><call><name>generate_random_file</name><argument_list>(<argument><expr><name>maxlen</name></expr></argument>, <argument><expr><name>subseed_base</name></expr></argument>, <argument><expr>&amp;<name>seed</name></expr></argument>,
+                                                <argument><expr><name>random_bytes</name></expr></argument>, <argument><expr><name>bytes_range</name></expr></argument>,
+                                                <argument><expr><name>dump_files</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>apr_file_t</name> *</type><name>target</name> <init>= <expr><call><name>generate_random_file</name><argument_list>(<argument><expr><name>maxlen</name></expr></argument>, <argument><expr><name>subseed_base</name></expr></argument>, <argument><expr>&amp;<name>seed</name></expr></argument>,
+                                                <argument><expr><name>random_bytes</name></expr></argument>, <argument><expr><name>bytes_range</name></expr></argument>,
+                                                <argument><expr><name>dump_files</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>apr_file_t</name> *</type><name>source_copy</name> <init>= <expr><call><name>copy_tempfile</name><argument_list>(<argument><expr><name>source</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>apr_file_t</name> *</type><name>middle_copy</name> <init>= <expr><call><name>copy_tempfile</name><argument_list>(<argument><expr><name>middle</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>apr_file_t</name> *</type><name>target_regen</name> <init>= <expr><call><name>open_tempfile</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+      <decl_stmt><decl><type><name>svn_txdelta_stream_t</name> *</type><name>txdelta_stream_A</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>svn_txdelta_stream_t</name> *</type><name>txdelta_stream_B</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>svn_txdelta_window_handler_t</name></type> <name>handler</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>svn_stream_t</name> *</type><name>stream</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>void</name> *</type><name>handler_baton</name></decl>;</decl_stmt>
+
+      <comment type="block">/* Set up a four-stage pipeline: create two deltas, combine them
+         and convert the result to svndiff format, parse that back
+         into delta format, and apply it to a copy of the source file
+         to see if we get the same target back.  */</comment>
+      <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>delta_pool</name> <init>= <expr><call><name>svn_pool_create</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+      <comment type="block">/* Make stage 4: apply the text delta.  */</comment>
+      <expr_stmt><expr><call><name>svn_txdelta_apply</name><argument_list>(<argument><expr><call><name>svn_stream_from_aprfile</name><argument_list>(<argument><expr><name>source_copy</name></expr></argument>, <argument><expr><name>delta_pool</name></expr></argument>)</argument_list></call></expr></argument>,
+                        <argument><expr><call><name>svn_stream_from_aprfile</name><argument_list>(<argument><expr><name>target_regen</name></expr></argument>, <argument><expr><name>delta_pool</name></expr></argument>)</argument_list></call></expr></argument>,
+                        <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>delta_pool</name></expr></argument>, <argument><expr>&amp;<name>handler</name></expr></argument>, <argument><expr>&amp;<name>handler_baton</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <comment type="block">/* Make stage 3: reparse the text delta.  */</comment>
+      <expr_stmt><expr><name>stream</name> = <call><name>svn_txdelta_parse_svndiff</name><argument_list>(<argument><expr><name>handler</name></expr></argument>, <argument><expr><name>handler_baton</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>,
+                                         <argument><expr><name>delta_pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <comment type="block">/* Make stage 2: encode the text delta in svndiff format.  */</comment>
+      <expr_stmt><expr><call><name>svn_txdelta_to_svndiff2</name><argument_list>(<argument><expr>&amp;<name>handler</name></expr></argument>, <argument><expr>&amp;<name>handler_baton</name></expr></argument>, <argument><expr><name>stream</name></expr></argument>, <argument><expr>1</expr></argument>,
+                              <argument><expr><name>delta_pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <comment type="block">/* Make stage 1: create the text deltas.  */</comment>
+
+      <expr_stmt><expr><call><name>svn_txdelta</name><argument_list>(<argument><expr>&amp;<name>txdelta_stream_A</name></expr></argument>,
+                  <argument><expr><call><name>svn_stream_from_aprfile</name><argument_list>(<argument><expr><name>source</name></expr></argument>, <argument><expr><name>delta_pool</name></expr></argument>)</argument_list></call></expr></argument>,
+                  <argument><expr><call><name>svn_stream_from_aprfile</name><argument_list>(<argument><expr><name>middle</name></expr></argument>, <argument><expr><name>delta_pool</name></expr></argument>)</argument_list></call></expr></argument>,
+                  <argument><expr><name>delta_pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>svn_txdelta</name><argument_list>(<argument><expr>&amp;<name>txdelta_stream_B</name></expr></argument>,
+                  <argument><expr><call><name>svn_stream_from_aprfile</name><argument_list>(<argument><expr><name>middle_copy</name></expr></argument>, <argument><expr><name>delta_pool</name></expr></argument>)</argument_list></call></expr></argument>,
+                  <argument><expr><call><name>svn_stream_from_aprfile</name><argument_list>(<argument><expr><name>target</name></expr></argument>, <argument><expr><name>delta_pool</name></expr></argument>)</argument_list></call></expr></argument>,
+                  <argument><expr><name>delta_pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <block>{
+        <decl_stmt><decl><type><name>svn_txdelta_window_t</name> *</type><name>window_A</name></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>svn_txdelta_window_t</name> *</type><name>window_B</name></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>svn_txdelta_window_t</name> *</type><name>composite</name></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>wpool</name> <init>= <expr><call><name>svn_pool_create</name><argument_list>(<argument><expr><name>delta_pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+        <do>do
+          <block>{
+            <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_txdelta_next_window</name><argument_list>(<argument><expr>&amp;<name>window_A</name></expr></argument>, <argument><expr><name>txdelta_stream_A</name></expr></argument>,
+                                            <argument><expr><name>wpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <if>if <condition>(<expr><name>print_windows</name></expr>)</condition><then>
+              <expr_stmt><expr><call><name>delta_window_print</name><argument_list>(<argument><expr><name>window_A</name></expr></argument>, <argument><expr>"A "</expr></argument>, <argument><expr><name>stdout</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+            <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_txdelta_next_window</name><argument_list>(<argument><expr>&amp;<name>window_B</name></expr></argument>, <argument><expr><name>txdelta_stream_B</name></expr></argument>,
+                                            <argument><expr><name>wpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <if>if <condition>(<expr><name>print_windows</name></expr>)</condition><then>
+              <expr_stmt><expr><call><name>delta_window_print</name><argument_list>(<argument><expr><name>window_B</name></expr></argument>, <argument><expr>"B "</expr></argument>, <argument><expr><name>stdout</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+            <if>if <condition>(<expr>!<name>window_B</name></expr>)</condition><then>
+              <break>break;</break></then></if>
+            <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>window_A</name> != <name>NULL</name> || <name><name>window_B</name>-&gt;<name>src_ops</name></name> == 0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <if>if <condition>(<expr><name><name>window_B</name>-&gt;<name>src_ops</name></name> == 0</expr>)</condition><then>
+              <block>{
+                <expr_stmt><expr><name>composite</name> = <name>window_B</name></expr>;</expr_stmt>
+                <expr_stmt><expr><name><name>composite</name>-&gt;<name>sview_len</name></name> = 0</expr>;</expr_stmt>
+              }</block></then>
+            <else>else
+              <expr_stmt><expr><name>composite</name> = <call><name>svn_txdelta_compose_windows</name><argument_list>(<argument><expr><name>window_A</name></expr></argument>, <argument><expr><name>window_B</name></expr></argument>,
+                                                      <argument><expr><name>wpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+            <if>if <condition>(<expr><name>print_windows</name></expr>)</condition><then>
+              <expr_stmt><expr><call><name>delta_window_print</name><argument_list>(<argument><expr><name>composite</name></expr></argument>, <argument><expr>"AB"</expr></argument>, <argument><expr><name>stdout</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+            <comment type="block">/* The source view length should not be 0 if there are
+               source copy ops in the window. */</comment>
+            <if>if <condition>(<expr><name>composite</name>
+                &amp;&amp; <name><name>composite</name>-&gt;<name>sview_len</name></name> == 0 &amp;&amp; <name><name>composite</name>-&gt;<name>src_ops</name></name> &gt; 0</expr>)</condition><then>
+              <return>return <expr><call><name>svn_error_create</name>
+                <argument_list>(<argument><expr><name>SVN_ERR_FS_GENERAL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                 <argument><expr>"combined delta window is inconsistent"</expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+            <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>handler</name><argument_list>(<argument><expr><name>composite</name></expr></argument>, <argument><expr><name>handler_baton</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>svn_pool_clear</name><argument_list>(<argument><expr><name>wpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          }</block>
+        while <condition>(<expr><name>composite</name> != <name>NULL</name></expr>)</condition>;</do>
+        <expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name>wpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      }</block>
+
+      <expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name>delta_pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>compare_files</name><argument_list>(<argument><expr><name>target</name></expr></argument>, <argument><expr><name>target_regen</name></expr></argument>, <argument><expr><name>dump_files</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>apr_file_close</name><argument_list>(<argument><expr><name>source</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>apr_file_close</name><argument_list>(<argument><expr><name>middle</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>apr_file_close</name><argument_list>(<argument><expr><name>target</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>apr_file_close</name><argument_list>(<argument><expr><name>source_copy</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>apr_file_close</name><argument_list>(<argument><expr><name>middle_copy</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>apr_file_close</name><argument_list>(<argument><expr><name>target_regen</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></for>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* Implements svn_test_driver_t. */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>random_combine_test</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>msg</name></decl></param>,
+                    <param><decl><type><name>svn_boolean_t</name></type> <name>msg_only</name></decl></param>,
+                    <param><decl><type><name>svn_test_opts_t</name> *</type><name>opts</name></decl></param>,
+                    <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>apr_uint32_t</name></type> <name>seed</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name> <init>= <expr><call><name>do_random_combine_test</name><argument_list>(<argument><expr><name>msg</name></expr></argument>, <argument><expr><name>msg_only</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>, <argument><expr>&amp;<name>seed</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <if>if <condition>(<expr>!<name>msg_only</name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"SEED:  Last seen = %lu\n"</expr></argument>, <argument><expr>(<name>unsigned</name> <name>long</name>) <name>seed</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+  <return>return <expr><name>err</name></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* Change to 1 to enable the unit test for the delta combiner's range index: */</comment>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr>0</expr></cpp:if>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"range-index-test.h"</cpp:file></cpp:include>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+
+<escape char="0xc"/>
+<comment type="block">/* The test table.  */</comment>
+
+<decl_stmt><decl><type>struct <name>svn_test_descriptor_t</name></type> <name><name>test_funcs</name><index>[]</index></name> <init>=
+  <expr><block>{
+    <expr><name>SVN_TEST_NULL</name></expr>,
+    <expr><call><name>SVN_TEST_PASS</name><argument_list>(<argument><expr><name>random_test</name></expr></argument>)</argument_list></call></expr>,
+    <expr><call><name>SVN_TEST_PASS</name><argument_list>(<argument><expr><name>random_combine_test</name></expr></argument>)</argument_list></call></expr>,
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>SVN_RANGE_INDEX_TEST_H</name></cpp:ifdef>
+    <expr><call><name>SVN_TEST_PASS</name><argument_list>(<argument><expr><name>random_range_index_test</name></expr></argument>)</argument_list></call></expr>,
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+    <expr><name>SVN_TEST_NULL</name></expr>
+  }</block></expr></init></decl>;</decl_stmt>
+</unit>

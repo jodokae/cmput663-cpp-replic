@@ -1,0 +1,285 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/subversion-1.5.1/source/subversion/svn/propedit-cmd.c"><comment type="block">/*
+ * propedit-cmd.c -- Edit properties of files/dirs using $EDITOR
+ *
+ * ====================================================================
+ * Copyright (c) 2000-2004 CollabNet.  All rights reserved.
+ *
+ * This software is licensed as described in the file COPYING, which
+ * you should have received as part of this distribution.  The terms
+ * are also available at http://subversion.tigris.org/license-1.html.
+ * If newer versions of this license are posted there, you may use a
+ * newer version instead, at your option.
+ *
+ * This software consists of voluntary contributions made by many
+ * individuals.  For exact contribution history, see the revision
+ * history and logs, available at http://subversion.tigris.org/.
+ * ====================================================================
+ */</comment>
+
+<comment type="block">/* ==================================================================== */</comment>
+
+
+<escape char="0xc"/>
+<comment type="block">/*** Includes. ***/</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_cmdline.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_wc.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_pools.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_client.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_string.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_path.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_error.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_utf.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_props.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"cl.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_private_config.h"</cpp:file></cpp:include>
+
+<escape char="0xc"/>
+<comment type="block">/*** Code. ***/</comment>
+
+<comment type="block">/* This implements the `svn_opt_subcommand_t' interface. */</comment>
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_cl__propedit</name><parameter_list>(<param><decl><type><name>apr_getopt_t</name> *</type><name>os</name></decl></param>,
+                 <param><decl><type><name>void</name> *</type><name>baton</name></decl></param>,
+                 <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_cl__opt_state_t</name> *</type><name>opt_state</name> <init>= <expr>((<name>svn_cl__cmd_baton_t</name> *) <name>baton</name>)-&gt;<name>opt_state</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_client_ctx_t</name> *</type><name>ctx</name> <init>= <expr>((<name>svn_cl__cmd_baton_t</name> *) <name>baton</name>)-&gt;<name>ctx</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>pname</name></decl>, *<decl><type ref="prev"/><name>pname_utf8</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>args</name></decl>, *<decl><type ref="prev"/><name>targets</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Validate the input and get the property's name (and a UTF-8
+     version of that name). */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_opt_parse_num_args</name><argument_list>(<argument><expr>&amp;<name>args</name></expr></argument>, <argument><expr><name>os</name></expr></argument>, <argument><expr>1</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>pname</name> = <call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr>const <name>char</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_utf_cstring_to_utf8</name><argument_list>(<argument><expr>&amp;<name>pname_utf8</name></expr></argument>, <argument><expr><name>pname</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr>! <call><name>svn_prop_name_is_valid</name><argument_list>(<argument><expr><name>pname_utf8</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_CLIENT_PROPERTY_NAME</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                             <argument><expr><call><name>_</name><argument_list>(<argument><expr>"'%s' is not a valid Subversion property name"</expr></argument>)</argument_list></call></expr></argument>,
+                             <argument><expr><name>pname_utf8</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+  <if>if <condition>(<expr><name><name>opt_state</name>-&gt;<name>encoding</name></name> &amp;&amp; !<call><name>svn_prop_needs_translation</name><argument_list>(<argument><expr><name>pname_utf8</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+      <return>return <expr><call><name>svn_error_create</name>
+          <argument_list>(<argument><expr><name>SVN_ERR_UNSUPPORTED_FEATURE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+           <argument><expr><call><name>_</name><argument_list>(<argument><expr>"--encoding option applies only to textual"
+             " Subversion-controlled properties"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <comment type="block">/* Suck up all the remaining arguments into a targets array */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_cl__args_to_target_array_print_reserved</name><argument_list>(<argument><expr>&amp;<name>targets</name></expr></argument>, <argument><expr><name>os</name></expr></argument>,
+                                                      <argument><expr><name><name>opt_state</name>-&gt;<name>targets</name></name></expr></argument>, 
+                                                      <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name><name>opt_state</name>-&gt;<name>revprop</name></name></expr>)</condition><then>  <comment type="block">/* operate on a revprop */</comment>
+    <block>{
+      <decl_stmt><decl><type><name>svn_revnum_t</name></type> <name>rev</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>URL</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>svn_string_t</name> *</type><name>propval</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>temp_dir</name></decl>;</decl_stmt>
+
+      <comment type="block">/* Implicit "." is okay for revision properties; it just helps
+         us find the right repository. */</comment>
+      <expr_stmt><expr><call><name>svn_opt_push_implicit_dot_target</name><argument_list>(<argument><expr><name>targets</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_cl__revprop_prepare</name><argument_list>(<argument><expr>&amp;<name><name>opt_state</name>-&gt;<name>start_revision</name></name></expr></argument>, <argument><expr><name>targets</name></expr></argument>,
+                                      <argument><expr>&amp;<name>URL</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <comment type="block">/* Fetch the current property. */</comment>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_client_revprop_get</name><argument_list>(<argument><expr><name>pname_utf8</name></expr></argument>, <argument><expr>&amp;<name>propval</name></expr></argument>,
+                                     <argument><expr><name>URL</name></expr></argument>, <argument><expr>&amp;(<name><name>opt_state</name>-&gt;<name>start_revision</name></name>)</expr></argument>,
+                                     <argument><expr>&amp;<name>rev</name></expr></argument>, <argument><expr><name>ctx</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr>! <name>propval</name></expr>)</condition><then>
+        <expr_stmt><expr><name>propval</name> = <call><name>svn_string_create</name><argument_list>(<argument><expr>""</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+      <comment type="block">/* Run the editor on a temporary file which contains the
+         original property value... */</comment>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_io_temp_dir</name><argument_list>(<argument><expr>&amp;<name>temp_dir</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_cl__edit_string_externally</name>
+              <argument_list>(<argument><expr>&amp;<name>propval</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+               <argument><expr><name><name>opt_state</name>-&gt;<name>editor_cmd</name></name></expr></argument>, <argument><expr><name>temp_dir</name></expr></argument>,
+               <argument><expr><name>propval</name></expr></argument>, <argument><expr>"svn-prop"</expr></argument>,
+               <argument><expr><name><name>ctx</name>-&gt;<name>config</name></name></expr></argument>,
+               <argument><expr><call><name>svn_prop_needs_translation</name><argument_list>(<argument><expr><name>pname_utf8</name></expr></argument>)</argument_list></call></expr></argument>,
+               <argument><expr><name><name>opt_state</name>-&gt;<name>encoding</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <comment type="block">/* ...and re-set the property's value accordingly. */</comment>
+      <if>if <condition>(<expr><name>propval</name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_client_revprop_set</name><argument_list>(<argument><expr><name>pname_utf8</name></expr></argument>, <argument><expr><name>propval</name></expr></argument>,
+                                         <argument><expr><name>URL</name></expr></argument>, <argument><expr>&amp;(<name><name>opt_state</name>-&gt;<name>start_revision</name></name>)</expr></argument>,
+                                         <argument><expr>&amp;<name>rev</name></expr></argument>, <argument><expr><name><name>opt_state</name>-&gt;<name>force</name></name></expr></argument>, <argument><expr><name>ctx</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+          <expr_stmt><expr><call><name>SVN_ERR</name>
+            <argument_list>(<argument><expr><call><name>svn_cmdline_printf</name>
+             <argument_list>(<argument><expr><name>pool</name></expr></argument>,
+              <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Set new value for property '%s' on revision %ld\n"</expr></argument>)</argument_list></call></expr></argument>,
+              <argument><expr><name>pname_utf8</name></expr></argument>, <argument><expr><name>rev</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+      <else>else
+        <block>{
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_cmdline_printf</name>
+                  <argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"No changes to property '%s' on revision %ld\n"</expr></argument>)</argument_list></call></expr></argument>,
+                   <argument><expr><name>pname_utf8</name></expr></argument>, <argument><expr><name>rev</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></else></if>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name><name>opt_state</name>-&gt;<name>start_revision</name>.<name>kind</name></name> != <name>svn_opt_revision_unspecified</name></expr>)</condition><then>
+    <block>{
+      <return>return <expr><call><name>svn_error_createf</name>
+        <argument_list>(<argument><expr><name>SVN_ERR_CL_ARG_PARSING_ERROR</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+         <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Cannot specify revision for editing versioned property '%s'"</expr></argument>)</argument_list></call></expr></argument>,
+         <argument><expr><name>pname_utf8</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then>
+  <else>else  <comment type="block">/* operate on a normal, versioned property (not a revprop) */</comment>
+    <block>{
+      <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>subpool</name> <init>= <expr><call><name>svn_pool_create</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+      <comment type="block">/* The customary implicit dot rule has been prone to user error
+       * here.  For example, Jon Trowbridge &lt;trow@gnu.og&gt; did
+       *
+       *    $ svn propedit HACKING
+       *
+       * and then when he closed his editor, he was surprised to see
+       *
+       *    Set new value for property 'HACKING' on ''
+       *
+       * ...meaning that the property named 'HACKING' had been set on
+       * the current working directory, with the value taken from the
+       * editor.  So we don't do the implicit dot thing anymore; an
+       * explicit target is always required when editing a versioned
+       * property.
+       */</comment>
+      <if>if <condition>(<expr><name><name>targets</name>-&gt;<name>nelts</name></name> == 0</expr>)</condition><then>
+        <block>{
+          <return>return <expr><call><name>svn_error_create</name>
+            <argument_list>(<argument><expr><name>SVN_ERR_CL_INSUFFICIENT_ARGS</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+             <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Explicit target argument required"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+        }</block></then></if>
+
+      <comment type="block">/* For each target, edit the property PNAME. */</comment>
+      <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name><name>targets</name>-&gt;<name>nelts</name></name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>)
+        <block>{
+          <decl_stmt><decl><type><name>apr_hash_t</name> *</type><name>props</name></decl>;</decl_stmt>
+          <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>target</name> <init>= <expr><call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>targets</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr>const <name>char</name> *</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+          <decl_stmt><decl><type><name>svn_string_t</name> *</type><name>propval</name></decl>, *<decl><type ref="prev"/><name>edited_propval</name></decl>;</decl_stmt>
+          <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>base_dir</name> <init>= <expr><name>target</name></expr></init></decl>;</decl_stmt>
+          <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>target_local</name></decl>;</decl_stmt>
+          <decl_stmt><decl><type><name>svn_wc_adm_access_t</name> *</type><name>adm_access</name></decl>;</decl_stmt>
+          <decl_stmt><decl><type><specifier>const</specifier> <name>svn_wc_entry_t</name> *</type><name>entry</name></decl>;</decl_stmt>
+          <decl_stmt><decl><type><name>svn_opt_revision_t</name></type> <name>peg_revision</name></decl>;</decl_stmt>
+          <decl_stmt><decl><type><name>svn_revnum_t</name></type> <name>base_rev</name> <init>= <expr><name>SVN_INVALID_REVNUM</name></expr></init></decl>;</decl_stmt>
+
+          <expr_stmt><expr><call><name>svn_pool_clear</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_cl__check_cancel</name><argument_list>(<argument><expr><name><name>ctx</name>-&gt;<name>cancel_baton</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+          <comment type="block">/* Propedits can only happen on HEAD or the working copy, so
+             the peg revision can be as unspecified. */</comment>
+          <expr_stmt><expr><name><name>peg_revision</name>.<name>kind</name></name> = <name>svn_opt_revision_unspecified</name></expr>;</expr_stmt>
+
+          <comment type="block">/* Fetch the current property. */</comment>
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_client_propget3</name><argument_list>(<argument><expr>&amp;<name>props</name></expr></argument>, <argument><expr><name>pname_utf8</name></expr></argument>, <argument><expr><name>target</name></expr></argument>,
+                                      <argument><expr>&amp;<name>peg_revision</name></expr></argument>,
+                                      <argument><expr>&amp;(<name><name>opt_state</name>-&gt;<name>start_revision</name></name>)</expr></argument>,
+                                      <argument><expr>&amp;<name>base_rev</name></expr></argument>, <argument><expr><name>svn_depth_empty</name></expr></argument>, 
+                                      <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>ctx</name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+          <comment type="block">/* Get the property value. */</comment>
+          <expr_stmt><expr><name>propval</name> = <call><name>apr_hash_get</name><argument_list>(<argument><expr><name>props</name></expr></argument>, <argument><expr><name>target</name></expr></argument>, <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <if>if <condition>(<expr>! <name>propval</name></expr>)</condition><then>
+            <expr_stmt><expr><name>propval</name> = <call><name>svn_string_create</name><argument_list>(<argument><expr>""</expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+          <if>if <condition>(<expr><call><name>svn_path_is_url</name><argument_list>(<argument><expr><name>target</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+            <block>{
+              <comment type="block">/* For URLs, put the temporary file in the current directory. */</comment>
+              <expr_stmt><expr><name>base_dir</name> = "."</expr>;</expr_stmt>
+            }</block></then>
+          <else>else
+            <block>{
+              <if>if <condition>(<expr><name><name>opt_state</name>-&gt;<name>message</name></name> || <name><name>opt_state</name>-&gt;<name>filedata</name></name> ||
+                  <name><name>opt_state</name>-&gt;<name>revprop_table</name></name></expr>)</condition><then>
+                <block>{
+                  <return>return <expr><call><name>svn_error_create</name>
+                    <argument_list>(<argument><expr><name>SVN_ERR_CL_UNNECESSARY_LOG_MESSAGE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                     <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Local, non-commit operations do not take a log message "
+                       "or revision properties"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+                }</block></then></if>
+
+              <comment type="block">/* Split the path if it is a file path. */</comment>
+              <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_wc_adm_probe_open3</name><argument_list>(<argument><expr>&amp;<name>adm_access</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>target</name></expr></argument>,
+                                             <argument><expr><name>FALSE</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name><name>ctx</name>-&gt;<name>cancel_func</name></name></expr></argument>,
+                                             <argument><expr><name><name>ctx</name>-&gt;<name>cancel_baton</name></name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+              <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_wc_entry</name><argument_list>(<argument><expr>&amp;<name>entry</name></expr></argument>, <argument><expr><name>target</name></expr></argument>, <argument><expr><name>adm_access</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+              <if>if <condition>(<expr>! <name>entry</name></expr>)</condition><then>
+                <return>return <expr><call><name>svn_error_createf</name>
+                  <argument_list>(<argument><expr><name>SVN_ERR_ENTRY_NOT_FOUND</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                   <argument><expr><call><name>_</name><argument_list>(<argument><expr>"'%s' does not appear to be a working copy path"</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>target</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+              <if>if <condition>(<expr><name><name>entry</name>-&gt;<name>kind</name></name> == <name>svn_node_file</name></expr>)</condition><then>
+                <expr_stmt><expr><call><name>svn_path_split</name><argument_list>(<argument><expr><name>target</name></expr></argument>, <argument><expr>&amp;<name>base_dir</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+            }</block></else></if>
+
+          <comment type="block">/* Run the editor on a temporary file which contains the
+             original property value... */</comment>
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_cl__edit_string_externally</name><argument_list>(<argument><expr>&amp;<name>edited_propval</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                                 <argument><expr><name><name>opt_state</name>-&gt;<name>editor_cmd</name></name></expr></argument>,
+                                                 <argument><expr><name>base_dir</name></expr></argument>,
+                                                 <argument><expr><name>propval</name></expr></argument>,
+                                                 <argument><expr>"svn-prop"</expr></argument>,
+                                                 <argument><expr><name><name>ctx</name>-&gt;<name>config</name></name></expr></argument>,
+                                                 <argument><expr><call><name>svn_prop_needs_translation</name>
+                                                 <argument_list>(<argument><expr><name>pname_utf8</name></expr></argument>)</argument_list></call></expr></argument>,
+                                                 <argument><expr><name><name>opt_state</name>-&gt;<name>encoding</name></name></expr></argument>,
+                                                 <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+          <expr_stmt><expr><name>target_local</name> = <call><name>svn_path_is_url</name><argument_list>(<argument><expr><name>target</name></expr></argument>)</argument_list></call> ? <name>target</name>
+            : <call><name>svn_path_local_style</name><argument_list>(<argument><expr><name>target</name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+          <comment type="block">/* ...and re-set the property's value accordingly. */</comment>
+          <if>if <condition>(<expr><name>edited_propval</name> &amp;&amp; !<call><name>svn_string_compare</name><argument_list>(<argument><expr><name>propval</name></expr></argument>, <argument><expr><name>edited_propval</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+            <block>{
+              <decl_stmt><decl><type><name>svn_commit_info_t</name> *</type><name>commit_info</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+              <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name> <init>= <expr><name>SVN_NO_ERROR</name></expr></init></decl>;</decl_stmt>
+
+              <expr_stmt><expr><call><name>svn_cl__check_boolean_prop_val</name><argument_list>(<argument><expr><name>pname_utf8</name></expr></argument>, <argument><expr><name><name>edited_propval</name>-&gt;<name>data</name></name></expr></argument>,
+                                             <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+              <if>if <condition>(<expr><name><name>ctx</name>-&gt;<name>log_msg_func3</name></name></expr>)</condition><then>
+                <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_cl__make_log_msg_baton</name><argument_list>(<argument><expr>&amp;(<name><name>ctx</name>-&gt;<name>log_msg_baton3</name></name>)</expr></argument>,
+                                                   <argument><expr><name>opt_state</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name><name>ctx</name>-&gt;<name>config</name></name></expr></argument>,
+                                                   <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+              <expr_stmt><expr><name>err</name> = <call><name>svn_client_propset3</name><argument_list>(<argument><expr>&amp;<name>commit_info</name></expr></argument>,
+                                        <argument><expr><name>pname_utf8</name></expr></argument>, <argument><expr><name>edited_propval</name></expr></argument>, <argument><expr><name>target</name></expr></argument>,
+                                        <argument><expr><name>svn_depth_empty</name></expr></argument>, <argument><expr><name><name>opt_state</name>-&gt;<name>force</name></name></expr></argument>,
+                                        <argument><expr><name>base_rev</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name><name>opt_state</name>-&gt;<name>revprop_table</name></name></expr></argument>,
+                                        <argument><expr><name>ctx</name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+              <if>if <condition>(<expr><name><name>ctx</name>-&gt;<name>log_msg_func3</name></name></expr>)</condition><then>
+                <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_cl__cleanup_log_msg</name><argument_list>(<argument><expr><name><name>ctx</name>-&gt;<name>log_msg_baton2</name></name></expr></argument>, <argument><expr><name>err</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+              <else>else <if>if <condition>(<expr><name>err</name></expr>)</condition><then>
+                <return>return <expr><name>err</name></expr>;</return></then></if></else></if>
+
+              <comment type="block">/* Print a message if we successfully committed or if it
+                 was just a wc propset (but not if the user aborted an URL
+                 propedit). */</comment>
+              <if>if <condition>(<expr><name>commit_info</name> || ! <call><name>svn_path_is_url</name><argument_list>(<argument><expr><name>target</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+                <expr_stmt><expr><call><name>SVN_ERR</name>
+                  <argument_list>(<argument><expr><call><name>svn_cmdline_printf</name>
+                   <argument_list>(<argument><expr><name>subpool</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Set new value for property '%s' on '%s'\n"</expr></argument>)</argument_list></call></expr></argument>,
+                    <argument><expr><name>pname_utf8</name></expr></argument>, <argument><expr><name>target_local</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+              <if>if <condition>(<expr><name>commit_info</name> &amp;&amp; ! <name><name>opt_state</name>-&gt;<name>quiet</name></name></expr>)</condition><then>
+                <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_cl__print_commit_info</name><argument_list>(<argument><expr><name>commit_info</name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+            }</block></then>
+          <else>else
+            <block>{
+              <expr_stmt><expr><call><name>SVN_ERR</name>
+                <argument_list>(<argument><expr><call><name>svn_cmdline_printf</name>
+                 <argument_list>(<argument><expr><name>subpool</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"No changes to property '%s' on '%s'\n"</expr></argument>)</argument_list></call></expr></argument>,
+                  <argument><expr><name>pname_utf8</name></expr></argument>, <argument><expr><name>target_local</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></else></if>
+        }</block></for>
+      <expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if></else></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+</unit>

@@ -1,0 +1,542 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/subversion-1.5.1/source/subversion/libsvn_fs_base/bdb/strings-table.c"><comment type="block">/* strings-table.c : operations on the `strings' table
+ *
+ * ====================================================================
+ * Copyright (c) 2000-2004 CollabNet.  All rights reserved.
+ *
+ * This software is licensed as described in the file COPYING, which
+ * you should have received as part of this distribution.  The terms
+ * are also available at http://subversion.tigris.org/license-1.html.
+ * If newer versions of this license are posted there, you may use a
+ * newer version instead, at your option.
+ *
+ * This software consists of voluntary contributions made by many
+ * individuals.  For exact contribution history, see the revision
+ * history and logs, available at http://subversion.tigris.org/.
+ * ====================================================================
+ */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"bdb_compat.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_fs.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_pools.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"../fs.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"../err.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"dbt.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"../trail.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"../key-gen.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"../../libsvn_fs/fs-loader.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"bdb-err.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"strings-table.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_private_config.h"</cpp:file></cpp:include>
+
+<escape char="0xc"/>
+<comment type="block">/*** Creating and opening the strings table. ***/</comment>
+
+<function><type><name>int</name></type>
+<name>svn_fs_bdb__open_strings_table</name><parameter_list>(<param><decl><type><name>DB</name> **</type><name>strings_p</name></decl></param>,
+                               <param><decl><type><name>DB_ENV</name> *</type><name>env</name></decl></param>,
+                               <param><decl><type><name>svn_boolean_t</name></type> <name>create</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>u_int32_t</name></type> <name>open_flags</name> <init>= <expr>(<name>create</name> ? (<name>DB_CREATE</name> | <name>DB_EXCL</name>) : 0)</expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>DB</name> *</type><name>strings</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>BDB_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_bdb__check_version</name><argument_list>()</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>BDB_ERR</name><argument_list>(<argument><expr><call><name>db_create</name><argument_list>(<argument><expr>&amp;<name>strings</name></expr></argument>, <argument><expr><name>env</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Enable duplicate keys. This allows the data to be spread out across
+     multiple records. Note: this must occur before -&gt;open().  */</comment>
+  <expr_stmt><expr><call><name>BDB_ERR</name><argument_list>(<argument><expr><call><name><name>strings</name>-&gt;<name>set_flags</name></name><argument_list>(<argument><expr><name>strings</name></expr></argument>, <argument><expr><name>DB_DUP</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>BDB_ERR</name><argument_list>(<argument><expr><call>(<name><name>strings</name>-&gt;<name>open</name></name>)<argument_list>(<argument><expr><call><name>SVN_BDB_OPEN_PARAMS</name><argument_list>(<argument><expr><name>strings</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr></argument>,
+                          <argument><expr>"strings"</expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>DB_BTREE</name></expr></argument>,
+                          <argument><expr><name>open_flags</name></expr></argument>, <argument><expr>0666</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name>create</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>DBT</name></type> <name>key</name></decl>, <decl><type ref="prev"/><name>value</name></decl>;</decl_stmt>
+
+      <comment type="block">/* Create the `next-key' table entry.  */</comment>
+      <expr_stmt><expr><call><name>BDB_ERR</name><argument_list>(<argument><expr><call><name><name>strings</name>-&gt;<name>put</name></name>
+              <argument_list>(<argument><expr><name>strings</name></expr></argument>, <argument><expr>0</expr></argument>,
+               <argument><expr><call><name>svn_fs_base__str_to_dbt</name><argument_list>(<argument><expr>&amp;<name>key</name></expr></argument>, <argument><expr><name>NEXT_KEY_KEY</name></expr></argument>)</argument_list></call></expr></argument>,
+               <argument><expr><call><name>svn_fs_base__str_to_dbt</name><argument_list>(<argument><expr>&amp;<name>value</name></expr></argument>, <argument><expr>"0"</expr></argument>)</argument_list></call></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <expr_stmt><expr>*<name>strings_p</name> = <name>strings</name></expr>;</expr_stmt>
+  <return>return <expr>0</expr>;</return>
+}</block></function>
+
+
+<escape char="0xc"/>
+<comment type="block">/*** Storing and retrieving strings.  ***/</comment>
+
+<comment type="block">/* Allocate *CURSOR and advance it to first row in the set of rows
+   whose key is defined by QUERY.  Set *LENGTH to the size of that
+   first row.  */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>locate_key</name><parameter_list>(<param><decl><type><name>apr_size_t</name> *</type><name>length</name></decl></param>,
+           <param><decl><type><name>DBC</name> **</type><name>cursor</name></decl></param>,
+           <param><decl><type><name>DBT</name> *</type><name>query</name></decl></param>,
+           <param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+           <param><decl><type><name>trail_t</name> *</type><name>trail</name></decl></param>,
+           <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>base_fs_data_t</name> *</type><name>bfd</name> <init>= <expr><name><name>fs</name>-&gt;<name>fsap_data</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>db_err</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>DBT</name></type> <name>result</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>svn_fs_base__trail_debug</name><argument_list>(<argument><expr><name>trail</name></expr></argument>, <argument><expr>"strings"</expr></argument>, <argument><expr>"cursor"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>BDB_WRAP</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"creating cursor for reading a string"</expr></argument>)</argument_list></call></expr></argument>,
+                   <argument><expr><call><name><name>bfd</name>-&gt;<name>strings</name>-&gt;<name>cursor</name></name><argument_list>(<argument><expr><name><name>bfd</name>-&gt;<name>strings</name></name></expr></argument>, <argument><expr><name><name>trail</name>-&gt;<name>db_txn</name></name></expr></argument>,
+                                        <argument><expr><name>cursor</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Set up the DBT for reading the length of the record. */</comment>
+  <expr_stmt><expr><call><name>svn_fs_base__clear_dbt</name><argument_list>(<argument><expr>&amp;<name>result</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>result</name>.<name>ulen</name></name> = 0</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>result</name>.<name>flags</name></name> |= <name>DB_DBT_USERMEM</name></expr>;</expr_stmt>
+
+  <comment type="block">/* Advance the cursor to the key that we're looking for. */</comment>
+  <expr_stmt><expr><name>db_err</name> = <call><name>svn_bdb_dbc_get</name><argument_list>(<argument><expr>*<name>cursor</name></expr></argument>, <argument><expr><name>query</name></expr></argument>, <argument><expr>&amp;<name>result</name></expr></argument>, <argument><expr><name>DB_SET</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* We don't need to svn_fs_base__track_dbt() the result, because nothing
+     was allocated in it. */</comment>
+
+  <comment type="block">/* If there's no such node, return an appropriately specific error.  */</comment>
+  <if>if <condition>(<expr><name>db_err</name> == <name>DB_NOTFOUND</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>svn_bdb_dbc_close</name><argument_list>(<argument><expr>*<name>cursor</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <return>return <expr><call><name>svn_error_createf</name>
+        <argument_list>(<argument><expr><name>SVN_ERR_FS_NO_SUCH_STRING</name></expr></argument>, <argument><expr>0</expr></argument>,
+         <argument><expr>"No such string '%s'"</expr></argument>, <argument><expr>(const <name>char</name> *)<name><name>query</name>-&gt;<name>data</name></name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+  <if>if <condition>(<expr><name>db_err</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>DBT</name></type> <name>rerun</name></decl>;</decl_stmt>
+
+      <if>if <condition>(<expr><name>db_err</name> != <name>SVN_BDB_DB_BUFFER_SMALL</name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>svn_bdb_dbc_close</name><argument_list>(<argument><expr>*<name>cursor</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <return>return <expr><call><name>BDB_WRAP</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr>"moving cursor"</expr></argument>, <argument><expr><name>db_err</name></expr></argument>)</argument_list></call></expr>;</return>
+        }</block></then></if>
+
+      <comment type="block">/* We got an SVN_BDB_DB_BUFFER_SMALL (typical since we have a
+         zero length buf), so we need to re-run the operation to make
+         it happen. */</comment>
+      <expr_stmt><expr><call><name>svn_fs_base__clear_dbt</name><argument_list>(<argument><expr>&amp;<name>rerun</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>rerun</name>.<name>flags</name></name> |= <name>DB_DBT_USERMEM</name> | <name>DB_DBT_PARTIAL</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name>db_err</name> = <call><name>svn_bdb_dbc_get</name><argument_list>(<argument><expr>*<name>cursor</name></expr></argument>, <argument><expr><name>query</name></expr></argument>, <argument><expr>&amp;<name>rerun</name></expr></argument>, <argument><expr><name>DB_SET</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>db_err</name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>svn_bdb_dbc_close</name><argument_list>(<argument><expr>*<name>cursor</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <return>return <expr><call><name>BDB_WRAP</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr>"rerunning cursor move"</expr></argument>, <argument><expr><name>db_err</name></expr></argument>)</argument_list></call></expr>;</return>
+        }</block></then></if>
+    }</block></then></if>
+
+  <comment type="block">/* ### this cast might not be safe? */</comment>
+  <expr_stmt><expr>*<name>length</name> = (<name>apr_size_t</name>) <name><name>result</name>.<name>size</name></name></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* Advance CURSOR by a single row in the set of rows whose keys match
+   CURSOR's current location.  Set *LENGTH to the size of that next
+   row.  If any error occurs, CURSOR will be destroyed.  */</comment>
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>get_next_length</name><parameter_list>(<param><decl><type><name>apr_size_t</name> *</type><name>length</name></decl></param>, <param><decl><type><name>DBC</name> *</type><name>cursor</name></decl></param>, <param><decl><type><name>DBT</name> *</type><name>query</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>DBT</name></type> <name>result</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>db_err</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Set up the DBT for reading the length of the record. */</comment>
+  <expr_stmt><expr><call><name>svn_fs_base__clear_dbt</name><argument_list>(<argument><expr>&amp;<name>result</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>result</name>.<name>ulen</name></name> = 0</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>result</name>.<name>flags</name></name> |= <name>DB_DBT_USERMEM</name></expr>;</expr_stmt>
+
+  <comment type="block">/* Note: this may change the QUERY DBT, but that's okay: we're going
+     to be sticking with the same key anyways.  */</comment>
+  <expr_stmt><expr><name>db_err</name> = <call><name>svn_bdb_dbc_get</name><argument_list>(<argument><expr><name>cursor</name></expr></argument>, <argument><expr><name>query</name></expr></argument>, <argument><expr>&amp;<name>result</name></expr></argument>, <argument><expr><name>DB_NEXT_DUP</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Note that we exit on DB_NOTFOUND. The caller uses that to end a loop. */</comment>
+  <if>if <condition>(<expr><name>db_err</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>DBT</name></type> <name>rerun</name></decl>;</decl_stmt>
+
+      <if>if <condition>(<expr><name>db_err</name> != <name>SVN_BDB_DB_BUFFER_SMALL</name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>svn_bdb_dbc_close</name><argument_list>(<argument><expr><name>cursor</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <return>return <expr><name>db_err</name></expr>;</return>
+        }</block></then></if>
+
+      <comment type="block">/* We got an SVN_BDB_DB_BUFFER_SMALL (typical since we have a
+         zero length buf), so we need to re-run the operation to make
+         it happen. */</comment>
+      <expr_stmt><expr><call><name>svn_fs_base__clear_dbt</name><argument_list>(<argument><expr>&amp;<name>rerun</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>rerun</name>.<name>flags</name></name> |= <name>DB_DBT_USERMEM</name> | <name>DB_DBT_PARTIAL</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name>db_err</name> = <call><name>svn_bdb_dbc_get</name><argument_list>(<argument><expr><name>cursor</name></expr></argument>, <argument><expr><name>query</name></expr></argument>, <argument><expr>&amp;<name>rerun</name></expr></argument>, <argument><expr><name>DB_NEXT_DUP</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>db_err</name></expr>)</condition><then>
+        <expr_stmt><expr><call><name>svn_bdb_dbc_close</name><argument_list>(<argument><expr><name>cursor</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+    }</block></then></if>
+
+  <comment type="block">/* ### this cast might not be safe? */</comment>
+  <expr_stmt><expr>*<name>length</name> = (<name>apr_size_t</name>) <name><name>result</name>.<name>size</name></name></expr>;</expr_stmt>
+  <return>return <expr><name>db_err</name></expr>;</return>
+}</block></function>
+
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_fs_bdb__string_read</name><parameter_list>(<param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+                        <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>key</name></decl></param>,
+                        <param><decl><type><name>char</name> *</type><name>buf</name></decl></param>,
+                        <param><decl><type><name>svn_filesize_t</name></type> <name>offset</name></decl></param>,
+                        <param><decl><type><name>apr_size_t</name> *</type><name>len</name></decl></param>,
+                        <param><decl><type><name>trail_t</name> *</type><name>trail</name></decl></param>,
+                        <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>int</name></type> <name>db_err</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>DBT</name></type> <name>query</name></decl>, <decl><type ref="prev"/><name>result</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>DBC</name> *</type><name>cursor</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>length</name></decl>, <decl><type ref="prev"/><name>bytes_read</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>svn_fs_base__str_to_dbt</name><argument_list>(<argument><expr>&amp;<name>query</name></expr></argument>, <argument><expr><name>key</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>locate_key</name><argument_list>(<argument><expr>&amp;<name>length</name></expr></argument>, <argument><expr>&amp;<name>cursor</name></expr></argument>, <argument><expr>&amp;<name>query</name></expr></argument>, <argument><expr><name>fs</name></expr></argument>, <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Seek through the records for this key, trying to find the record that
+     includes OFFSET. Note that we don't require reading from more than
+     one record since we're allowed to return partial reads.  */</comment>
+  <while>while <condition>(<expr><name>length</name> &lt;= <name>offset</name></expr>)</condition>
+    <block>{
+      <expr_stmt><expr><name>offset</name> -= <name>length</name></expr>;</expr_stmt>
+
+      <comment type="block">/* Remember, if any error happens, our cursor has been closed
+         for us. */</comment>
+      <expr_stmt><expr><name>db_err</name> = <call><name>get_next_length</name><argument_list>(<argument><expr>&amp;<name>length</name></expr></argument>, <argument><expr><name>cursor</name></expr></argument>, <argument><expr>&amp;<name>query</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <comment type="block">/* No more records? They tried to read past the end. */</comment>
+      <if>if <condition>(<expr><name>db_err</name> == <name>DB_NOTFOUND</name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr>*<name>len</name> = 0</expr>;</expr_stmt>
+          <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+        }</block></then></if>
+      <if>if <condition>(<expr><name>db_err</name></expr>)</condition><then>
+        <return>return <expr><call><name>BDB_WRAP</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr>"reading string"</expr></argument>, <argument><expr><name>db_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+    }</block></while>
+
+  <comment type="block">/* The current record contains OFFSET. Fetch the contents now. Note that
+     OFFSET has been moved to be relative to this record. The length could
+     quite easily extend past this record, so we use DB_DBT_PARTIAL and
+     read successive records until we've filled the request.  */</comment>
+  <while>while <condition>(<expr>1</expr>)</condition>
+    <block>{
+      <expr_stmt><expr><call><name>svn_fs_base__clear_dbt</name><argument_list>(<argument><expr>&amp;<name>result</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>result</name>.<name>data</name></name> = <name>buf</name> + <name>bytes_read</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>result</name>.<name>ulen</name></name> = *<name>len</name> - <name>bytes_read</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>result</name>.<name>doff</name></name> = (<name>u_int32_t</name>)<name>offset</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>result</name>.<name>dlen</name></name> = *<name>len</name> - <name>bytes_read</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>result</name>.<name>flags</name></name> |= (<name>DB_DBT_USERMEM</name> | <name>DB_DBT_PARTIAL</name>)</expr>;</expr_stmt>
+      <expr_stmt><expr><name>db_err</name> = <call><name>svn_bdb_dbc_get</name><argument_list>(<argument><expr><name>cursor</name></expr></argument>, <argument><expr>&amp;<name>query</name></expr></argument>, <argument><expr>&amp;<name>result</name></expr></argument>, <argument><expr><name>DB_CURRENT</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>db_err</name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>svn_bdb_dbc_close</name><argument_list>(<argument><expr><name>cursor</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <return>return <expr><call><name>BDB_WRAP</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr>"reading string"</expr></argument>, <argument><expr><name>db_err</name></expr></argument>)</argument_list></call></expr>;</return>
+        }</block></then></if>
+
+      <expr_stmt><expr><name>bytes_read</name> += <name><name>result</name>.<name>size</name></name></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>bytes_read</name> == *<name>len</name></expr>)</condition><then>
+        <block>{
+          <comment type="block">/* Done with the cursor. */</comment>
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>BDB_WRAP</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr>"closing string-reading cursor"</expr></argument>,
+                           <argument><expr><call><name>svn_bdb_dbc_close</name><argument_list>(<argument><expr><name>cursor</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <break>break;</break>
+        }</block></then></if>
+
+      <comment type="block">/* Remember, if any error happens, our cursor has been closed
+         for us. */</comment>
+      <expr_stmt><expr><name>db_err</name> = <call><name>get_next_length</name><argument_list>(<argument><expr>&amp;<name>length</name></expr></argument>, <argument><expr><name>cursor</name></expr></argument>, <argument><expr>&amp;<name>query</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>db_err</name> == <name>DB_NOTFOUND</name></expr>)</condition><then>
+        <break>break;</break></then></if>
+      <if>if <condition>(<expr><name>db_err</name></expr>)</condition><then>
+        <return>return <expr><call><name>BDB_WRAP</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr>"reading string"</expr></argument>, <argument><expr><name>db_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+      <comment type="block">/* We'll be reading from the beginning of the next record */</comment>
+      <expr_stmt><expr><name>offset</name> = 0</expr>;</expr_stmt>
+    }</block></while>
+
+  <expr_stmt><expr>*<name>len</name> = <name>bytes_read</name></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* Get the current 'next-key' value and bump the record. */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>get_key_and_bump</name><parameter_list>(<param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+                 <param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>key</name></decl></param>,
+                 <param><decl><type><name>trail_t</name> *</type><name>trail</name></decl></param>,
+                 <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>base_fs_data_t</name> *</type><name>bfd</name> <init>= <expr><name><name>fs</name>-&gt;<name>fsap_data</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>DBC</name> *</type><name>cursor</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>char</name></type> <name><name>next_key</name><index>[<expr><name>MAX_KEY_SIZE</name></expr>]</index></name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>key_len</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>db_err</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>DBT</name></type> <name>query</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>DBT</name></type> <name>result</name></decl>;</decl_stmt>
+
+  <comment type="block">/* ### todo: see issue #409 for why bumping the key as part of this
+     trail is problematic. */</comment>
+
+  <comment type="block">/* Open a cursor and move it to the 'next-key' value. We can then fetch
+     the contents and use the cursor to overwrite those contents. Since
+     this database allows duplicates, we can't do an arbitrary 'put' to
+     write the new value -- that would append, not overwrite.  */</comment>
+
+  <expr_stmt><expr><call><name>svn_fs_base__trail_debug</name><argument_list>(<argument><expr><name>trail</name></expr></argument>, <argument><expr>"strings"</expr></argument>, <argument><expr>"cursor"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>BDB_WRAP</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr>"creating cursor for reading a string"</expr></argument>,
+                   <argument><expr><call><name><name>bfd</name>-&gt;<name>strings</name>-&gt;<name>cursor</name></name><argument_list>(<argument><expr><name><name>bfd</name>-&gt;<name>strings</name></name></expr></argument>, <argument><expr><name><name>trail</name>-&gt;<name>db_txn</name></name></expr></argument>,
+                                        <argument><expr>&amp;<name>cursor</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Advance the cursor to 'next-key' and read it. */</comment>
+
+  <expr_stmt><expr><name>db_err</name> = <call><name>svn_bdb_dbc_get</name><argument_list>(<argument><expr><name>cursor</name></expr></argument>,
+                           <argument><expr><call><name>svn_fs_base__str_to_dbt</name><argument_list>(<argument><expr>&amp;<name>query</name></expr></argument>, <argument><expr><name>NEXT_KEY_KEY</name></expr></argument>)</argument_list></call></expr></argument>,
+                           <argument><expr><call><name>svn_fs_base__result_dbt</name><argument_list>(<argument><expr>&amp;<name>result</name></expr></argument>)</argument_list></call></expr></argument>,
+                           <argument><expr><name>DB_SET</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>db_err</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>svn_bdb_dbc_close</name><argument_list>(<argument><expr><name>cursor</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <return>return <expr><call><name>BDB_WRAP</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr>"getting next-key value"</expr></argument>, <argument><expr><name>db_err</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+
+  <expr_stmt><expr><call><name>svn_fs_base__track_dbt</name><argument_list>(<argument><expr>&amp;<name>result</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr>*<name>key</name> = <call><name>apr_pstrmemdup</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name><name>result</name>.<name>data</name></name></expr></argument>, <argument><expr><name><name>result</name>.<name>size</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Bump to future key. */</comment>
+  <expr_stmt><expr><name>key_len</name> = <name><name>result</name>.<name>size</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>svn_fs_base__next_key</name><argument_list>(<argument><expr><name><name>result</name>.<name>data</name></name></expr></argument>, <argument><expr>&amp;<name>key_len</name></expr></argument>, <argument><expr><name>next_key</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Shove the new key back into the database, at the cursor position. */</comment>
+  <expr_stmt><expr><name>db_err</name> = <call><name>svn_bdb_dbc_put</name><argument_list>(<argument><expr><name>cursor</name></expr></argument>, <argument><expr>&amp;<name>query</name></expr></argument>,
+                           <argument><expr><call><name>svn_fs_base__str_to_dbt</name><argument_list>(<argument><expr>&amp;<name>result</name></expr></argument>, <argument><expr><name>next_key</name></expr></argument>)</argument_list></call></expr></argument>,
+                           <argument><expr><name>DB_CURRENT</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>db_err</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>svn_bdb_dbc_close</name><argument_list>(<argument><expr><name>cursor</name></expr></argument>)</argument_list></call></expr>;</expr_stmt> <comment type="block">/* ignore the error, the original is
+                                    more important. */</comment>
+      <return>return <expr><call><name>BDB_WRAP</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr>"bumping next string key"</expr></argument>, <argument><expr><name>db_err</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+
+  <return>return <expr><call><name>BDB_WRAP</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr>"closing string-reading cursor"</expr></argument>,
+                  <argument><expr><call><name>svn_bdb_dbc_close</name><argument_list>(<argument><expr><name>cursor</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_fs_bdb__string_append</name><parameter_list>(<param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+                          <param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>key</name></decl></param>,
+                          <param><decl><type><name>apr_size_t</name></type> <name>len</name></decl></param>,
+                          <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>buf</name></decl></param>,
+                          <param><decl><type><name>trail_t</name> *</type><name>trail</name></decl></param>,
+                          <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>base_fs_data_t</name> *</type><name>bfd</name> <init>= <expr><name><name>fs</name>-&gt;<name>fsap_data</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>DBT</name></type> <name>query</name></decl>, <decl><type ref="prev"/><name>result</name></decl>;</decl_stmt>
+
+  <comment type="block">/* If the passed-in key is NULL, we graciously generate a new string
+     using the value of the `next-key' record in the strings table. */</comment>
+  <if>if <condition>(<expr>*<name>key</name> == <name>NULL</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>get_key_and_bump</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>key</name></expr></argument>, <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <comment type="block">/* Store a new record into the database. */</comment>
+  <expr_stmt><expr><call><name>svn_fs_base__trail_debug</name><argument_list>(<argument><expr><name>trail</name></expr></argument>, <argument><expr>"strings"</expr></argument>, <argument><expr>"put"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>BDB_WRAP</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr>"appending string"</expr></argument>,
+                   <argument><expr><call><name><name>bfd</name>-&gt;<name>strings</name>-&gt;<name>put</name></name>
+                   <argument_list>(<argument><expr><name><name>bfd</name>-&gt;<name>strings</name></name></expr></argument>, <argument><expr><name><name>trail</name>-&gt;<name>db_txn</name></name></expr></argument>,
+                    <argument><expr><call><name>svn_fs_base__str_to_dbt</name><argument_list>(<argument><expr>&amp;<name>query</name></expr></argument>, <argument><expr>*<name>key</name></expr></argument>)</argument_list></call></expr></argument>,
+                    <argument><expr><call><name>svn_fs_base__set_dbt</name><argument_list>(<argument><expr>&amp;<name>result</name></expr></argument>, <argument><expr><name>buf</name></expr></argument>, <argument><expr><name>len</name></expr></argument>)</argument_list></call></expr></argument>,
+                    <argument><expr>0</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_fs_bdb__string_clear</name><parameter_list>(<param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+                         <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>key</name></decl></param>,
+                         <param><decl><type><name>trail_t</name> *</type><name>trail</name></decl></param>,
+                         <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>base_fs_data_t</name> *</type><name>bfd</name> <init>= <expr><name><name>fs</name>-&gt;<name>fsap_data</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>db_err</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>DBT</name></type> <name>query</name></decl>, <decl><type ref="prev"/><name>result</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>svn_fs_base__str_to_dbt</name><argument_list>(<argument><expr>&amp;<name>query</name></expr></argument>, <argument><expr><name>key</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Torch the prior contents */</comment>
+  <expr_stmt><expr><call><name>svn_fs_base__trail_debug</name><argument_list>(<argument><expr><name>trail</name></expr></argument>, <argument><expr>"strings"</expr></argument>, <argument><expr>"del"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>db_err</name> = <call><name><name>bfd</name>-&gt;<name>strings</name>-&gt;<name>del</name></name><argument_list>(<argument><expr><name><name>bfd</name>-&gt;<name>strings</name></name></expr></argument>, <argument><expr><name><name>trail</name>-&gt;<name>db_txn</name></name></expr></argument>, <argument><expr>&amp;<name>query</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* If there's no such node, return an appropriately specific error.  */</comment>
+  <if>if <condition>(<expr><name>db_err</name> == <name>DB_NOTFOUND</name></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_createf</name>
+      <argument_list>(<argument><expr><name>SVN_ERR_FS_NO_SUCH_STRING</name></expr></argument>, <argument><expr>0</expr></argument>,
+       <argument><expr>"No such string '%s'"</expr></argument>, <argument><expr><name>key</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <comment type="block">/* Handle any other error conditions.  */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>BDB_WRAP</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr>"clearing string"</expr></argument>, <argument><expr><name>db_err</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Shove empty data back in for this key. */</comment>
+  <expr_stmt><expr><call><name>svn_fs_base__clear_dbt</name><argument_list>(<argument><expr>&amp;<name>result</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>result</name>.<name>data</name></name> = 0</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>result</name>.<name>size</name></name> = 0</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>result</name>.<name>flags</name></name> |= <name>DB_DBT_USERMEM</name></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>svn_fs_base__trail_debug</name><argument_list>(<argument><expr><name>trail</name></expr></argument>, <argument><expr>"strings"</expr></argument>, <argument><expr>"put"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><call><name>BDB_WRAP</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr>"storing empty contents"</expr></argument>,
+                  <argument><expr><call><name><name>bfd</name>-&gt;<name>strings</name>-&gt;<name>put</name></name><argument_list>(<argument><expr><name><name>bfd</name>-&gt;<name>strings</name></name></expr></argument>, <argument><expr><name><name>trail</name>-&gt;<name>db_txn</name></name></expr></argument>,
+                                    <argument><expr>&amp;<name>query</name></expr></argument>, <argument><expr>&amp;<name>result</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_fs_bdb__string_size</name><parameter_list>(<param><decl><type><name>svn_filesize_t</name> *</type><name>size</name></decl></param>,
+                        <param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+                        <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>key</name></decl></param>,
+                        <param><decl><type><name>trail_t</name> *</type><name>trail</name></decl></param>,
+                        <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>int</name></type> <name>db_err</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>DBT</name></type> <name>query</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>DBC</name> *</type><name>cursor</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>length</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_filesize_t</name></type> <name>total</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>svn_fs_base__str_to_dbt</name><argument_list>(<argument><expr>&amp;<name>query</name></expr></argument>, <argument><expr><name>key</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>locate_key</name><argument_list>(<argument><expr>&amp;<name>length</name></expr></argument>, <argument><expr>&amp;<name>cursor</name></expr></argument>, <argument><expr>&amp;<name>query</name></expr></argument>, <argument><expr><name>fs</name></expr></argument>, <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name>total</name> = <name>length</name></expr>;</expr_stmt>
+  <while>while <condition>(<expr>1</expr>)</condition>
+    <block>{
+      <comment type="block">/* Remember, if any error happens, our cursor has been closed
+         for us. */</comment>
+      <expr_stmt><expr><name>db_err</name> = <call><name>get_next_length</name><argument_list>(<argument><expr>&amp;<name>length</name></expr></argument>, <argument><expr><name>cursor</name></expr></argument>, <argument><expr>&amp;<name>query</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <comment type="block">/* No more records? Then return the total length. */</comment>
+      <if>if <condition>(<expr><name>db_err</name> == <name>DB_NOTFOUND</name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr>*<name>size</name> = <name>total</name></expr>;</expr_stmt>
+          <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+        }</block></then></if>
+      <if>if <condition>(<expr><name>db_err</name></expr>)</condition><then>
+        <return>return <expr><call><name>BDB_WRAP</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr>"fetching string length"</expr></argument>, <argument><expr><name>db_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+      <expr_stmt><expr><name>total</name> += <name>length</name></expr>;</expr_stmt>
+    }</block></while>
+
+  <comment type="block">/* NOTREACHED */</comment>
+}</block></function>
+
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_fs_bdb__string_delete</name><parameter_list>(<param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+                          <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>key</name></decl></param>,
+                          <param><decl><type><name>trail_t</name> *</type><name>trail</name></decl></param>,
+                          <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>base_fs_data_t</name> *</type><name>bfd</name> <init>= <expr><name><name>fs</name>-&gt;<name>fsap_data</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>db_err</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>DBT</name></type> <name>query</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>svn_fs_base__trail_debug</name><argument_list>(<argument><expr><name>trail</name></expr></argument>, <argument><expr>"strings"</expr></argument>, <argument><expr>"del"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>db_err</name> = <call><name><name>bfd</name>-&gt;<name>strings</name>-&gt;<name>del</name></name><argument_list>(<argument><expr><name><name>bfd</name>-&gt;<name>strings</name></name></expr></argument>, <argument><expr><name><name>trail</name>-&gt;<name>db_txn</name></name></expr></argument>,
+                             <argument><expr><call><name>svn_fs_base__str_to_dbt</name><argument_list>(<argument><expr>&amp;<name>query</name></expr></argument>, <argument><expr><name>key</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* If there's no such node, return an appropriately specific error.  */</comment>
+  <if>if <condition>(<expr><name>db_err</name> == <name>DB_NOTFOUND</name></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_createf</name>
+      <argument_list>(<argument><expr><name>SVN_ERR_FS_NO_SUCH_STRING</name></expr></argument>, <argument><expr>0</expr></argument>,
+       <argument><expr>"No such string '%s'"</expr></argument>, <argument><expr><name>key</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <comment type="block">/* Handle any other error conditions.  */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>BDB_WRAP</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr>"deleting string"</expr></argument>, <argument><expr><name>db_err</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_fs_bdb__string_copy</name><parameter_list>(<param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+                        <param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>new_key</name></decl></param>,
+                        <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>key</name></decl></param>,
+                        <param><decl><type><name>trail_t</name> *</type><name>trail</name></decl></param>,
+                        <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>base_fs_data_t</name> *</type><name>bfd</name> <init>= <expr><name><name>fs</name>-&gt;<name>fsap_data</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>DBT</name></type> <name>query</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>DBT</name></type> <name>result</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>DBT</name></type> <name>copykey</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>DBC</name> *</type><name>cursor</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>db_err</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Copy off the old key in case the caller is sharing storage
+     between the old and new keys. */</comment>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>old_key</name> <init>= <expr><call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>key</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>get_key_and_bump</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>new_key</name></expr></argument>, <argument><expr><name>trail</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>svn_fs_base__trail_debug</name><argument_list>(<argument><expr><name>trail</name></expr></argument>, <argument><expr>"strings"</expr></argument>, <argument><expr>"cursor"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>BDB_WRAP</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr>"creating cursor for reading a string"</expr></argument>,
+                   <argument><expr><call><name><name>bfd</name>-&gt;<name>strings</name>-&gt;<name>cursor</name></name><argument_list>(<argument><expr><name><name>bfd</name>-&gt;<name>strings</name></name></expr></argument>, <argument><expr><name><name>trail</name>-&gt;<name>db_txn</name></name></expr></argument>,
+                                        <argument><expr>&amp;<name>cursor</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>svn_fs_base__str_to_dbt</name><argument_list>(<argument><expr>&amp;<name>query</name></expr></argument>, <argument><expr><name>old_key</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>svn_fs_base__str_to_dbt</name><argument_list>(<argument><expr>&amp;<name>copykey</name></expr></argument>, <argument><expr>*<name>new_key</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>svn_fs_base__clear_dbt</name><argument_list>(<argument><expr>&amp;<name>result</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Move to the first record and fetch its data (under BDB's mem mgmt). */</comment>
+  <expr_stmt><expr><name>db_err</name> = <call><name>svn_bdb_dbc_get</name><argument_list>(<argument><expr><name>cursor</name></expr></argument>, <argument><expr>&amp;<name>query</name></expr></argument>, <argument><expr>&amp;<name>result</name></expr></argument>, <argument><expr><name>DB_SET</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>db_err</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>svn_bdb_dbc_close</name><argument_list>(<argument><expr><name>cursor</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <return>return <expr><call><name>BDB_WRAP</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr>"getting next-key value"</expr></argument>, <argument><expr><name>db_err</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+
+  <while>while <condition>(<expr>1</expr>)</condition>
+    <block>{
+      <comment type="block">/* ### can we pass a BDB-provided buffer to another BDB function?
+         ### they are supposed to have a duration up to certain points
+         ### of calling back into BDB, but I'm not sure what the exact
+         ### rules are. it is definitely nicer to use BDB buffers here
+         ### to simplify things and reduce copies, but... hrm.
+      */</comment>
+
+      <comment type="block">/* Write the data to the database */</comment>
+      <expr_stmt><expr><call><name>svn_fs_base__trail_debug</name><argument_list>(<argument><expr><name>trail</name></expr></argument>, <argument><expr>"strings"</expr></argument>, <argument><expr>"put"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name>db_err</name> = <call><name><name>bfd</name>-&gt;<name>strings</name>-&gt;<name>put</name></name><argument_list>(<argument><expr><name><name>bfd</name>-&gt;<name>strings</name></name></expr></argument>, <argument><expr><name><name>trail</name>-&gt;<name>db_txn</name></name></expr></argument>,
+                                 <argument><expr>&amp;<name>copykey</name></expr></argument>, <argument><expr>&amp;<name>result</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>db_err</name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>svn_bdb_dbc_close</name><argument_list>(<argument><expr><name>cursor</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <return>return <expr><call><name>BDB_WRAP</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr>"writing copied data"</expr></argument>, <argument><expr><name>db_err</name></expr></argument>)</argument_list></call></expr>;</return>
+        }</block></then></if>
+
+      <comment type="block">/* Read the next chunk. Terminate loop if we're done. */</comment>
+      <expr_stmt><expr><call><name>svn_fs_base__clear_dbt</name><argument_list>(<argument><expr>&amp;<name>result</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name>db_err</name> = <call><name>svn_bdb_dbc_get</name><argument_list>(<argument><expr><name>cursor</name></expr></argument>, <argument><expr>&amp;<name>query</name></expr></argument>, <argument><expr>&amp;<name>result</name></expr></argument>, <argument><expr><name>DB_NEXT_DUP</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>db_err</name> == <name>DB_NOTFOUND</name></expr>)</condition><then>
+        <break>break;</break></then></if>
+      <if>if <condition>(<expr><name>db_err</name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>svn_bdb_dbc_close</name><argument_list>(<argument><expr><name>cursor</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <return>return <expr><call><name>BDB_WRAP</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr>"fetching string data for a copy"</expr></argument>, <argument><expr><name>db_err</name></expr></argument>)</argument_list></call></expr>;</return>
+        }</block></then></if>
+    }</block></while>
+
+  <return>return <expr><call><name>BDB_WRAP</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr>"closing string-reading cursor"</expr></argument>,
+                  <argument><expr><call><name>svn_bdb_dbc_close</name><argument_list>(<argument><expr><name>cursor</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+</unit>

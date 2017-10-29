@@ -1,0 +1,800 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/subversion-1.5.1/source/subversion/libsvn_delta/text_delta.c"><comment type="block">/*
+ * text-delta.c -- Internal text delta representation
+ *
+ * ====================================================================
+ * Copyright (c) 2000-2006 CollabNet.  All rights reserved.
+ *
+ * This software is licensed as described in the file COPYING, which
+ * you should have received as part of this distribution.  The terms
+ * are also available at http://subversion.tigris.org/license-1.html.
+ * If newer versions of this license are posted there, you may use a
+ * newer version instead, at your option.
+ *
+ * This software consists of voluntary contributions made by many
+ * individuals.  For exact contribution history, see the revision
+ * history and logs, available at http://subversion.tigris.org/.
+ * ====================================================================
+ */</comment>
+
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;assert.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;string.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_general.h&gt;</cpp:file></cpp:include>        <comment type="block">/* for APR_INLINE */</comment>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_md5.h&gt;</cpp:file></cpp:include>            <comment type="block">/* for, um...MD5 stuff */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_delta.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_io.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_pools.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"delta.h"</cpp:file></cpp:include>
+
+<escape char="0xc"/>
+<comment type="block">/* Text delta stream descriptor. */</comment>
+
+<struct>struct <name>svn_txdelta_stream_t</name> <block>{
+  <comment type="block">/* Copied from parameters to svn_txdelta_stream_create. */</comment>
+  <decl_stmt><decl><type><name>void</name> *</type><name>baton</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_txdelta_next_window_fn_t</name></type> <name>next_window</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_txdelta_md5_digest_fn_t</name></type> <name>md5_digest</name></decl>;</decl_stmt>
+}</block>;</struct>
+
+<comment type="block">/* Delta stream baton. */</comment>
+<struct>struct <name>txdelta_baton</name> <block>{
+  <comment type="block">/* These are copied from parameters passed to svn_txdelta. */</comment>
+  <decl_stmt><decl><type><name>svn_stream_t</name> *</type><name>source</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_stream_t</name> *</type><name>target</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Private data */</comment>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>more_source</name></decl>;</decl_stmt>    <comment type="block">/* FALSE if source stream hit EOF. */</comment>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>more</name></decl>;</decl_stmt>           <comment type="block">/* TRUE if there are more data in the pool. */</comment>
+  <decl_stmt><decl><type><name>svn_filesize_t</name></type> <name>pos</name></decl>;</decl_stmt>           <comment type="block">/* Offset of next read in source file. */</comment>
+  <decl_stmt><decl><type><name>char</name> *</type><name>buf</name></decl>;</decl_stmt>                    <comment type="block">/* Buffer for vdelta data. */</comment>
+
+  <decl_stmt><decl><type><name>apr_md5_ctx_t</name></type> <name>context</name></decl>;</decl_stmt>        <comment type="block">/* APR's MD5 context container. */</comment>
+
+  <comment type="block">/* Calculated digest from MD5 operations.
+     NOTE:  This is only valid after this stream has returned the NULL
+     (final) window.  */</comment>
+  <decl_stmt><decl><type><name>unsigned</name> <name>char</name></type> <name><name>digest</name><index>[<expr><name>APR_MD5_DIGESTSIZE</name></expr>]</index></name></decl>;</decl_stmt>
+}</block>;</struct>
+
+
+<comment type="block">/* Target-push stream descriptor. */</comment>
+
+<struct>struct <name>tpush_baton</name> <block>{
+  <comment type="block">/* These are copied from parameters passed to svn_txdelta_target_push. */</comment>
+  <decl_stmt><decl><type><name>svn_stream_t</name> *</type><name>source</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_txdelta_window_handler_t</name></type> <name>wh</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>void</name> *</type><name>whb</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Private data */</comment>
+  <decl_stmt><decl><type><name>char</name> *</type><name>buf</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_filesize_t</name></type> <name>source_offset</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>source_len</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>source_done</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>target_len</name></decl>;</decl_stmt>
+}</block>;</struct>
+
+
+<comment type="block">/* Text delta applicator.  */</comment>
+
+<struct>struct <name>apply_baton</name> <block>{
+  <comment type="block">/* These are copied from parameters passed to svn_txdelta_apply.  */</comment>
+  <decl_stmt><decl><type><name>svn_stream_t</name> *</type><name>source</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_stream_t</name> *</type><name>target</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Private data.  Between calls, SBUF contains the data from the
+   * last window's source view, as specified by SBUF_OFFSET and
+   * SBUF_LEN.  The contents of TBUF are not interesting between
+   * calls.  */</comment>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl>;</decl_stmt>             <comment type="block">/* Pool to allocate data from */</comment>
+  <decl_stmt><decl><type><name>char</name> *</type><name>sbuf</name></decl>;</decl_stmt>                   <comment type="block">/* Source buffer */</comment>
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>sbuf_size</name></decl>;</decl_stmt>         <comment type="block">/* Allocated source buffer space */</comment>
+  <decl_stmt><decl><type><name>svn_filesize_t</name></type> <name>sbuf_offset</name></decl>;</decl_stmt>   <comment type="block">/* Offset of SBUF data in source stream */</comment>
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>sbuf_len</name></decl>;</decl_stmt>          <comment type="block">/* Length of SBUF data */</comment>
+  <decl_stmt><decl><type><name>char</name> *</type><name>tbuf</name></decl>;</decl_stmt>                   <comment type="block">/* Target buffer */</comment>
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>tbuf_size</name></decl>;</decl_stmt>         <comment type="block">/* Allocated target buffer space */</comment>
+
+  <decl_stmt><decl><type><name>apr_md5_ctx_t</name></type> <name>md5_context</name></decl>;</decl_stmt>    <comment type="block">/* Leads to result_digest below. */</comment>
+  <decl_stmt><decl><type><name>unsigned</name> <name>char</name> *</type><name>result_digest</name></decl>;</decl_stmt> <comment type="block">/* MD5 digest of resultant fulltext;
+                                   must point to at least APR_MD5_DIGESTSIZE
+                                   bytes of storage. */</comment>
+
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>error_info</name></decl>;</decl_stmt>       <comment type="block">/* Optional extra info for error returns. */</comment>
+}</block>;</struct>
+
+
+<escape char="0xc"/>
+<function><type><name>svn_txdelta_window_t</name> *</type>
+<name>svn_txdelta__make_window</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>svn_txdelta__ops_baton_t</name> *</type><name>build_baton</name></decl></param>,
+                         <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_txdelta_window_t</name> *</type><name>window</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_string_t</name> *</type><name>new_data</name> <init>= <expr><call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>new_data</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name>window</name> = <call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>window</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>window</name>-&gt;<name>sview_offset</name></name> = 0</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>window</name>-&gt;<name>sview_len</name></name> = 0</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>window</name>-&gt;<name>tview_len</name></name> = 0</expr>;</expr_stmt>
+
+  <expr_stmt><expr><name><name>window</name>-&gt;<name>num_ops</name></name> = <name><name>build_baton</name>-&gt;<name>num_ops</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>window</name>-&gt;<name>src_ops</name></name> = <name><name>build_baton</name>-&gt;<name>src_ops</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>window</name>-&gt;<name>ops</name></name> = <name><name>build_baton</name>-&gt;<name>ops</name></name></expr>;</expr_stmt>
+
+  <comment type="block">/* just copy the fields over, rather than alloc/copying into a whole new
+     svn_string_t structure. */</comment>
+  <comment type="block">/* ### would be much nicer if window-&gt;new_data were not a ptr... */</comment>
+  <expr_stmt><expr><name><name>new_data</name>-&gt;<name>data</name></name> = <name><name>build_baton</name>-&gt;<name>new_data</name>-&gt;<name>data</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>new_data</name>-&gt;<name>len</name></name> = <name><name>build_baton</name>-&gt;<name>new_data</name>-&gt;<name>len</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>window</name>-&gt;<name>new_data</name></name> = <name>new_data</name></expr>;</expr_stmt>
+
+  <return>return <expr><name>window</name></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* Compute and return a delta window using the vdelta or xdelta algorithm on
+   DATA, which contains SOURCE_LEN bytes of source data and TARGET_LEN
+   bytes of target data.  SOURCE_OFFSET gives the offset of the source
+   data, and is simply copied into the window's sview_offset field. */</comment>
+<function><type><specifier>static</specifier> <name>svn_txdelta_window_t</name> *</type>
+<name>compute_window</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>data</name></decl></param>, <param><decl><type><name>apr_size_t</name></type> <name>source_len</name></decl></param>, <param><decl><type><name>apr_size_t</name></type> <name>target_len</name></decl></param>,
+               <param><decl><type><name>svn_filesize_t</name></type> <name>source_offset</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_txdelta__ops_baton_t</name></type> <name>build_baton</name> <init>= <expr><block>{ <expr>0</expr> }</block></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_txdelta_window_t</name> *</type><name>window</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Compute the delta operations. */</comment>
+  <expr_stmt><expr><name><name>build_baton</name>.<name>new_data</name></name> = <call><name>svn_stringbuf_create</name><argument_list>(<argument><expr>""</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name>source_len</name> == 0</expr>)</condition><then>
+    <expr_stmt><expr><call><name>svn_txdelta__vdelta</name><argument_list>(<argument><expr>&amp;<name>build_baton</name></expr></argument>, <argument><expr><name>data</name></expr></argument>, <argument><expr><name>source_len</name></expr></argument>, <argument><expr><name>target_len</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+  <else>else
+    <expr_stmt><expr><call><name>svn_txdelta__xdelta</name><argument_list>(<argument><expr>&amp;<name>build_baton</name></expr></argument>, <argument><expr><name>data</name></expr></argument>, <argument><expr><name>source_len</name></expr></argument>, <argument><expr><name>target_len</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+
+  <comment type="block">/* Create and return the delta window. */</comment>
+  <expr_stmt><expr><name>window</name> = <call><name>svn_txdelta__make_window</name><argument_list>(<argument><expr>&amp;<name>build_baton</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>window</name>-&gt;<name>sview_offset</name></name> = <name>source_offset</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>window</name>-&gt;<name>sview_len</name></name> = <name>source_len</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>window</name>-&gt;<name>tview_len</name></name> = <name>target_len</name></expr>;</expr_stmt>
+  <return>return <expr><name>window</name></expr>;</return>
+}</block></function>
+
+
+<escape char="0xc"/>
+<function><type><name>svn_txdelta_window_t</name> *</type>
+<name>svn_txdelta_window_dup</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>svn_txdelta_window_t</name> *</type><name>window</name></decl></param>,
+                       <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_txdelta__ops_baton_t</name></type> <name>build_baton</name> <init>= <expr><block>{ <expr>0</expr> }</block></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_txdelta_window_t</name> *</type><name>new_window</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>apr_size_t</name></type> <name>ops_size</name> <init>= <expr>(<name><name>window</name>-&gt;<name>num_ops</name></name> * <sizeof>sizeof<argument_list>(<argument><expr>*<name><name>build_baton</name>.<name>ops</name></name></expr></argument>)</argument_list></sizeof>)</expr></init></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name><name>build_baton</name>.<name>num_ops</name></name> = <name><name>window</name>-&gt;<name>num_ops</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>build_baton</name>.<name>src_ops</name></name> = <name><name>window</name>-&gt;<name>src_ops</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>build_baton</name>.<name>ops_size</name></name> = <name><name>window</name>-&gt;<name>num_ops</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>build_baton</name>.<name>ops</name></name> = <call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>ops_size</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name><name>build_baton</name>.<name>ops</name></name></expr></argument>, <argument><expr><name><name>window</name>-&gt;<name>ops</name></name></expr></argument>, <argument><expr><name>ops_size</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>build_baton</name>.<name>new_data</name></name> =
+    <call><name>svn_stringbuf_create_from_string</name><argument_list>(<argument><expr><name><name>window</name>-&gt;<name>new_data</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name>new_window</name> = <call><name>svn_txdelta__make_window</name><argument_list>(<argument><expr>&amp;<name>build_baton</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>new_window</name>-&gt;<name>sview_offset</name></name> = <name><name>window</name>-&gt;<name>sview_offset</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>new_window</name>-&gt;<name>sview_len</name></name> = <name><name>window</name>-&gt;<name>sview_len</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>new_window</name>-&gt;<name>tview_len</name></name> = <name><name>window</name>-&gt;<name>tview_len</name></name></expr>;</expr_stmt>
+  <return>return <expr><name>new_window</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* This is a private interlibrary compatibility wrapper. */</comment>
+<function_decl><type><name>svn_txdelta_window_t</name> *</type>
+<name>svn_txdelta__copy_window</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>svn_txdelta_window_t</name> *</type><name>window</name></decl></param>,
+                         <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>;</function_decl>
+<function><type><name>svn_txdelta_window_t</name> *</type>
+<name>svn_txdelta__copy_window</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>svn_txdelta_window_t</name> *</type><name>window</name></decl></param>,
+                         <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <return>return <expr><call><name>svn_txdelta_window_dup</name><argument_list>(<argument><expr><name>window</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<escape char="0xc"/>
+<comment type="block">/* Insert a delta op into a delta window. */</comment>
+
+<decl_stmt><decl><type><name>void</name></type>
+<name>svn_txdelta__insert_op</name><argument_list>(<argument><expr><name>svn_txdelta__ops_baton_t</name> *<name>build_baton</name></expr></argument>,
+                       <argument>enum <expr><name>svn_delta_action</name> <name>opcode</name></expr></argument>,
+                       <argument><expr><name>apr_size_t</name> <name>offset</name></expr></argument>,
+                       <argument><expr><name>apr_size_t</name> <name>length</name></expr></argument>,
+                       <argument><expr>const <name>char</name> *<name>new_data</name></expr></argument>,
+                       <argument><expr><name>apr_pool_t</name> *<name>pool</name></expr></argument>)</argument_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_txdelta_op_t</name> *</type><name>op</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Check if this op can be merged with the previous op. The vdelta
+     algorithm will never generate such ops, but the delta combiner
+     can, and this is the obvious place to make the check. */</comment>
+  <if>if <condition>(<expr><name><name>build_baton</name>-&gt;<name>num_ops</name></name> &gt; 0</expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><name>op</name> = &amp;<name><name>build_baton</name>-&gt;<name>ops</name><index>[<expr><name><name>build_baton</name>-&gt;<name>num_ops</name></name> - 1</expr>]</index></name></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name><name>op</name>-&gt;<name>action_code</name></name> == <name>opcode</name>
+          &amp;&amp; (<name>opcode</name> == <name>svn_txdelta_new</name>
+              || <name><name>op</name>-&gt;<name>offset</name></name> + <name><name>op</name>-&gt;<name>length</name></name> == <name>offset</name>)</expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><name><name>op</name>-&gt;<name>length</name></name> += <name>length</name></expr>;</expr_stmt>
+          <if>if <condition>(<expr><name>opcode</name> == <name>svn_txdelta_new</name></expr>)</condition><then>
+            <expr_stmt><expr><call><name>svn_stringbuf_appendbytes</name><argument_list>(<argument><expr><name><name>build_baton</name>-&gt;<name>new_data</name></name></expr></argument>,
+                                      <argument><expr><name>new_data</name></expr></argument>, <argument><expr><name>length</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+          <return>return;</return>
+        }</block></then></if>
+    }</block></then></if>
+
+  <comment type="block">/* Create space for the new op. */</comment>
+  <if>if <condition>(<expr><name><name>build_baton</name>-&gt;<name>num_ops</name></name> == <name><name>build_baton</name>-&gt;<name>ops_size</name></name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>svn_txdelta_op_t</name> *<specifier>const</specifier></type> <name>old_ops</name> <init>= <expr><name><name>build_baton</name>-&gt;<name>ops</name></name></expr></init></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>int</name> <specifier>const</specifier></type> <name>new_ops_size</name> <init>= <expr>(<name><name>build_baton</name>-&gt;<name>ops_size</name></name> == 0
+                                ? 16 : 2 * <name><name>build_baton</name>-&gt;<name>ops_size</name></name>)</expr></init></decl>;</decl_stmt>
+      <expr_stmt><expr><name><name>build_baton</name>-&gt;<name>ops</name></name> =
+        <call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>new_ops_size</name> * <sizeof>sizeof<argument_list>(<argument><expr>*<name><name>build_baton</name>-&gt;<name>ops</name></name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <comment type="block">/* Copy any existing ops into the new array */</comment>
+      <if>if <condition>(<expr><name>old_ops</name></expr>)</condition><then>
+        <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name><name>build_baton</name>-&gt;<name>ops</name></name></expr></argument>, <argument><expr><name>old_ops</name></expr></argument>,
+               <argument><expr><name><name>build_baton</name>-&gt;<name>ops_size</name></name> * <sizeof>sizeof<argument_list>(<argument><expr>*<name><name>build_baton</name>-&gt;<name>ops</name></name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+      <expr_stmt><expr><name><name>build_baton</name>-&gt;<name>ops_size</name></name> = <name>new_ops_size</name></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <comment type="block">/* Insert the op. svn_delta_source and svn_delta_target are
+     just inserted. For svn_delta_new, the new data must be
+     copied into the window. */</comment>
+  <expr_stmt><expr><name>op</name> = &amp;<name><name>build_baton</name>-&gt;<name>ops</name><index>[<expr><name><name>build_baton</name>-&gt;<name>num_ops</name></name></expr>]</index></name></expr>;</expr_stmt>
+  <switch>switch <condition>(<expr><name>opcode</name></expr>)</condition>
+    <block>{
+    <case>case <expr><name>svn_txdelta_source</name></expr>:
+      <expr_stmt><expr>++<name><name>build_baton</name>-&gt;<name>src_ops</name></name></expr>;</expr_stmt>
+      <comment type="block">/*** FALLTHRU ***/</comment>
+    </case><case>case <expr><name>svn_txdelta_target</name></expr>:
+      <expr_stmt><expr><name><name>op</name>-&gt;<name>action_code</name></name> = <name>opcode</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>op</name>-&gt;<name>offset</name></name> = <name>offset</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>op</name>-&gt;<name>length</name></name> = <name>length</name></expr>;</expr_stmt>
+      <break>break;</break>
+    </case><case>case <expr><name>svn_txdelta_new</name></expr>:
+      <expr_stmt><expr><name><name>op</name>-&gt;<name>action_code</name></name> = <name>opcode</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>op</name>-&gt;<name>offset</name></name> = <name><name>build_baton</name>-&gt;<name>new_data</name>-&gt;<name>len</name></name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>op</name>-&gt;<name>length</name></name> = <name>length</name></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>svn_stringbuf_appendbytes</name><argument_list>(<argument><expr><name><name>build_baton</name>-&gt;<name>new_data</name></name></expr></argument>, <argument><expr><name>new_data</name></expr></argument>, <argument><expr><name>length</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <break>break;</break>
+    </case><default>default:
+      <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr>!"unknown delta op."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    </default>}</block></switch>
+
+  <expr_stmt><expr>++<name><name>build_baton</name>-&gt;<name>num_ops</name></name></expr>;</expr_stmt>
+}</block></decl></decl_stmt>
+
+
+<escape char="0xc"/>
+<comment type="block">/* Generic delta stream functions. */</comment>
+
+<function><type><name>svn_txdelta_stream_t</name> *</type>
+<name>svn_txdelta_stream_create</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>,
+                          <param><decl><type><name>svn_txdelta_next_window_fn_t</name></type> <name>next_window</name></decl></param>,
+                          <param><decl><type><name>svn_txdelta_md5_digest_fn_t</name></type> <name>md5_digest</name></decl></param>,
+                          <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_txdelta_stream_t</name> *</type><name>stream</name> <init>= <expr><call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>stream</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name><name>stream</name>-&gt;<name>baton</name></name> = <name>baton</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>stream</name>-&gt;<name>next_window</name></name> = <name>next_window</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>stream</name>-&gt;<name>md5_digest</name></name> = <name>md5_digest</name></expr>;</expr_stmt>
+
+  <return>return <expr><name>stream</name></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_txdelta_next_window</name><parameter_list>(<param><decl><type><name>svn_txdelta_window_t</name> **</type><name>window</name></decl></param>,
+                        <param><decl><type><name>svn_txdelta_stream_t</name> *</type><name>stream</name></decl></param>,
+                        <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <return>return <expr><call><name><name>stream</name>-&gt;<name>next_window</name></name><argument_list>(<argument><expr><name>window</name></expr></argument>, <argument><expr><name><name>stream</name>-&gt;<name>baton</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>const</specifier> <name>unsigned</name> <name>char</name> *</type>
+<name>svn_txdelta_md5_digest</name><parameter_list>(<param><decl><type><name>svn_txdelta_stream_t</name> *</type><name>stream</name></decl></param>)</parameter_list>
+<block>{
+  <return>return <expr><call><name><name>stream</name>-&gt;<name>md5_digest</name></name><argument_list>(<argument><expr><name><name>stream</name>-&gt;<name>baton</name></name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+<escape char="0xc"/>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>txdelta_next_window</name><parameter_list>(<param><decl><type><name>svn_txdelta_window_t</name> **</type><name>window</name></decl></param>,
+                    <param><decl><type><name>void</name> *</type><name>baton</name></decl></param>,
+                    <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>txdelta_baton</name> *</type><name>b</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>source_len</name> <init>= <expr><name>SVN_DELTA_WINDOW_SIZE</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>target_len</name> <init>= <expr><name>SVN_DELTA_WINDOW_SIZE</name></expr></init></decl>;</decl_stmt>
+
+  <comment type="block">/* Read the source stream. */</comment>
+  <if>if <condition>(<expr><name><name>b</name>-&gt;<name>more_source</name></name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_stream_read</name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>source</name></name></expr></argument>, <argument><expr><name><name>b</name>-&gt;<name>buf</name></name></expr></argument>, <argument><expr>&amp;<name>source_len</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>b</name>-&gt;<name>more_source</name></name> = (<name>source_len</name> == <name>SVN_DELTA_WINDOW_SIZE</name>)</expr>;</expr_stmt>
+    }</block></then>
+  <else>else
+    <expr_stmt><expr><name>source_len</name> = 0</expr>;</expr_stmt></else></if>
+
+  <comment type="block">/* Read the target stream. */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_stream_read</name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>target</name></name></expr></argument>, <argument><expr><name><name>b</name>-&gt;<name>buf</name></name> + <name>source_len</name></expr></argument>,
+                          <argument><expr>&amp;<name>target_len</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>pos</name></name> += <name>source_len</name></expr>;</expr_stmt>
+
+  <comment type="block">/* ### The apr_md5 functions always return APR_SUCCESS.  At one
+     point, we proposed to APR folks that the interfaces change to
+     return void, but for some people that was apparently not a good
+     idea, and we didn't bother pressing the matter.  In the meantime,
+     we just ignore their return values below. */</comment>
+  <if>if <condition>(<expr><name>target_len</name> == 0</expr>)</condition><then>
+    <block>{
+      <comment type="block">/* No target data?  We're done; return the final window. */</comment>
+      <expr_stmt><expr><call><name>apr_md5_final</name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>digest</name></name></expr></argument>, <argument><expr>&amp;(<name><name>b</name>-&gt;<name>context</name></name>)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr>*<name>window</name> = <name>NULL</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>b</name>-&gt;<name>more</name></name> = <name>FALSE</name></expr>;</expr_stmt>
+      <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+    }</block></then>
+  <else>else
+    <block>{
+      <expr_stmt><expr><call><name>apr_md5_update</name><argument_list>(<argument><expr>&amp;(<name><name>b</name>-&gt;<name>context</name></name>)</expr></argument>, <argument><expr><name><name>b</name>-&gt;<name>buf</name></name> + <name>source_len</name></expr></argument>,
+                     <argument><expr><name>target_len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if>
+
+  <expr_stmt><expr>*<name>window</name> = <call><name>compute_window</name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>buf</name></name></expr></argument>, <argument><expr><name>source_len</name></expr></argument>, <argument><expr><name>target_len</name></expr></argument>,
+                           <argument><expr><name><name>b</name>-&gt;<name>pos</name></name> - <name>source_len</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* That's it. */</comment>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>unsigned</name> <name>char</name> *</type>
+<name>txdelta_md5_digest</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>txdelta_baton</name> *</type><name>b</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+  <comment type="block">/* If there are more windows for this stream, the digest has not yet
+     been calculated.  */</comment>
+  <if>if <condition>(<expr><name><name>b</name>-&gt;<name>more</name></name></expr>)</condition><then>
+    <return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+  <return>return <expr><name><name>b</name>-&gt;<name>digest</name></name></expr>;</return>
+}</block></function>
+
+
+<function><type><name>void</name></type>
+<name>svn_txdelta</name><parameter_list>(<param><decl><type><name>svn_txdelta_stream_t</name> **</type><name>stream</name></decl></param>,
+            <param><decl><type><name>svn_stream_t</name> *</type><name>source</name></decl></param>,
+            <param><decl><type><name>svn_stream_t</name> *</type><name>target</name></decl></param>,
+            <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>txdelta_baton</name> *</type><name>b</name> <init>= <expr><call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>b</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>source</name></name> = <name>source</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>target</name></name> = <name>target</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>more_source</name></name> = <name>TRUE</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>more</name></name> = <name>TRUE</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>pos</name></name> = 0</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>buf</name></name> = <call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>2 * <name>SVN_DELTA_WINDOW_SIZE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Initialize MD5 digest calculation. */</comment>
+  <expr_stmt><expr><call><name>apr_md5_init</name><argument_list>(<argument><expr>&amp;(<name><name>b</name>-&gt;<name>context</name></name>)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr>*<name>stream</name> = <call><name>svn_txdelta_stream_create</name><argument_list>(<argument><expr><name>b</name></expr></argument>, <argument><expr><name>txdelta_next_window</name></expr></argument>,
+                                     <argument><expr><name>txdelta_md5_digest</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+
+<escape char="0xc"/>
+<comment type="block">/* Functions for implementing a "target push" delta. */</comment>
+
+<comment type="block">/* This is the write handler for a target-push delta stream.  It reads
+ * source data, buffers target data, and fires off delta windows when
+ * the target data buffer is full. */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>tpush_write_handler</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>data</name></decl></param>, <param><decl><type><name>apr_size_t</name> *</type><name>len</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>tpush_baton</name> *</type><name>tb</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>chunk_len</name></decl>, <decl><type ref="prev"/><name>data_len</name> <init>= <expr>*<name>len</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name> <init>= <expr><call><name>svn_pool_create</name><argument_list>(<argument><expr><name><name>tb</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_txdelta_window_t</name> *</type><name>window</name></decl>;</decl_stmt>
+
+  <while>while <condition>(<expr><name>data_len</name> &gt; 0</expr>)</condition>
+    <block>{
+      <expr_stmt><expr><call><name>svn_pool_clear</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <comment type="block">/* Make sure we're all full up on source data, if possible. */</comment>
+      <if>if <condition>(<expr><name><name>tb</name>-&gt;<name>source_len</name></name> == 0 &amp;&amp; !<name><name>tb</name>-&gt;<name>source_done</name></name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><name><name>tb</name>-&gt;<name>source_len</name></name> = <name>SVN_DELTA_WINDOW_SIZE</name></expr>;</expr_stmt>
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_stream_read</name><argument_list>(<argument><expr><name><name>tb</name>-&gt;<name>source</name></name></expr></argument>, <argument><expr><name><name>tb</name>-&gt;<name>buf</name></name></expr></argument>, <argument><expr>&amp;<name><name>tb</name>-&gt;<name>source_len</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <if>if <condition>(<expr><name><name>tb</name>-&gt;<name>source_len</name></name> &lt; <name>SVN_DELTA_WINDOW_SIZE</name></expr>)</condition><then>
+            <expr_stmt><expr><name><name>tb</name>-&gt;<name>source_done</name></name> = <name>TRUE</name></expr>;</expr_stmt></then></if>
+        }</block></then></if>
+
+      <comment type="block">/* Copy in the target data, up to SVN_DELTA_WINDOW_SIZE. */</comment>
+      <expr_stmt><expr><name>chunk_len</name> = <name>SVN_DELTA_WINDOW_SIZE</name> - <name><name>tb</name>-&gt;<name>target_len</name></name></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>chunk_len</name> &gt; <name>data_len</name></expr>)</condition><then>
+        <expr_stmt><expr><name>chunk_len</name> = <name>data_len</name></expr>;</expr_stmt></then></if>
+      <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name><name>tb</name>-&gt;<name>buf</name></name> + <name><name>tb</name>-&gt;<name>source_len</name></name> + <name><name>tb</name>-&gt;<name>target_len</name></name></expr></argument>, <argument><expr><name>data</name></expr></argument>, <argument><expr><name>chunk_len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name>data</name> += <name>chunk_len</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name>data_len</name> -= <name>chunk_len</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>tb</name>-&gt;<name>target_len</name></name> += <name>chunk_len</name></expr>;</expr_stmt>
+
+      <comment type="block">/* If we're full of target data, compute and fire off a window. */</comment>
+      <if>if <condition>(<expr><name><name>tb</name>-&gt;<name>target_len</name></name> == <name>SVN_DELTA_WINDOW_SIZE</name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><name>window</name> = <call><name>compute_window</name><argument_list>(<argument><expr><name><name>tb</name>-&gt;<name>buf</name></name></expr></argument>, <argument><expr><name><name>tb</name>-&gt;<name>source_len</name></name></expr></argument>, <argument><expr><name><name>tb</name>-&gt;<name>target_len</name></name></expr></argument>,
+                                  <argument><expr><name><name>tb</name>-&gt;<name>source_offset</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>tb</name>-&gt;<name>wh</name></name><argument_list>(<argument><expr><name>window</name></expr></argument>, <argument><expr><name><name>tb</name>-&gt;<name>whb</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><name><name>tb</name>-&gt;<name>source_offset</name></name> += <name><name>tb</name>-&gt;<name>source_len</name></name></expr>;</expr_stmt>
+          <expr_stmt><expr><name><name>tb</name>-&gt;<name>source_len</name></name> = 0</expr>;</expr_stmt>
+          <expr_stmt><expr><name><name>tb</name>-&gt;<name>target_len</name></name> = 0</expr>;</expr_stmt>
+        }</block></then></if>
+    }</block></while>
+
+  <expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* This is the close handler for a target-push delta stream.  It sends
+ * a final window if there is any buffered target data, and then sends
+ * a NULL window signifying the end of the window stream. */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>tpush_close_handler</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>tpush_baton</name> *</type><name>tb</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_txdelta_window_t</name> *</type><name>window</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Send a final window if we have any residual target data. */</comment>
+  <if>if <condition>(<expr><name><name>tb</name>-&gt;<name>target_len</name></name> &gt; 0</expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><name>window</name> = <call><name>compute_window</name><argument_list>(<argument><expr><name><name>tb</name>-&gt;<name>buf</name></name></expr></argument>, <argument><expr><name><name>tb</name>-&gt;<name>source_len</name></name></expr></argument>, <argument><expr><name><name>tb</name>-&gt;<name>target_len</name></name></expr></argument>,
+                              <argument><expr><name><name>tb</name>-&gt;<name>source_offset</name></name></expr></argument>, <argument><expr><name><name>tb</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>tb</name>-&gt;<name>wh</name></name><argument_list>(<argument><expr><name>window</name></expr></argument>, <argument><expr><name><name>tb</name>-&gt;<name>whb</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <comment type="block">/* Send a final NULL window signifying the end. */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>tb</name>-&gt;<name>wh</name></name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr><name><name>tb</name>-&gt;<name>whb</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><name>svn_stream_t</name> *</type>
+<name>svn_txdelta_target_push</name><parameter_list>(<param><decl><type><name>svn_txdelta_window_handler_t</name></type> <name>handler</name></decl></param>,
+                        <param><decl><type><name>void</name> *</type><name>handler_baton</name></decl></param>, <param><decl><type><name>svn_stream_t</name> *</type><name>source</name></decl></param>,
+                        <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>tpush_baton</name> *</type><name>tb</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_stream_t</name> *</type><name>stream</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Initialize baton. */</comment>
+  <expr_stmt><expr><name>tb</name> = <call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>tb</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>tb</name>-&gt;<name>source</name></name> = <name>source</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>tb</name>-&gt;<name>wh</name></name> = <name>handler</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>tb</name>-&gt;<name>whb</name></name> = <name>handler_baton</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>tb</name>-&gt;<name>pool</name></name> = <name>pool</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>tb</name>-&gt;<name>buf</name></name> = <call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>2 * <name>SVN_DELTA_WINDOW_SIZE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>tb</name>-&gt;<name>source_offset</name></name> = 0</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>tb</name>-&gt;<name>source_len</name></name> = 0</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>tb</name>-&gt;<name>source_done</name></name> = <name>FALSE</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>tb</name>-&gt;<name>target_len</name></name> = 0</expr>;</expr_stmt>
+
+  <comment type="block">/* Create and return writable stream. */</comment>
+  <expr_stmt><expr><name>stream</name> = <call><name>svn_stream_create</name><argument_list>(<argument><expr><name>tb</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>svn_stream_set_write</name><argument_list>(<argument><expr><name>stream</name></expr></argument>, <argument><expr><name>tpush_write_handler</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>svn_stream_set_close</name><argument_list>(<argument><expr><name>stream</name></expr></argument>, <argument><expr><name>tpush_close_handler</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><name>stream</name></expr>;</return>
+}</block></function>
+
+
+<escape char="0xc"/>
+<comment type="block">/* Functions for applying deltas.  */</comment>
+
+<comment type="block">/* Ensure that BUF has enough space for VIEW_LEN bytes.  */</comment>
+<function><type><specifier>static</specifier> <name>APR_INLINE</name> <name>void</name></type>
+<name>size_buffer</name><parameter_list>(<param><decl><type><name>char</name> **</type><name>buf</name></decl></param>, <param><decl><type><name>apr_size_t</name> *</type><name>buf_size</name></decl></param>,
+            <param><decl><type><name>apr_size_t</name></type> <name>view_len</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <if>if <condition>(<expr><name>view_len</name> &gt; *<name>buf_size</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr>*<name>buf_size</name> *= 2</expr>;</expr_stmt>
+      <if>if <condition>(<expr>*<name>buf_size</name> &lt; <name>view_len</name></expr>)</condition><then>
+        <expr_stmt><expr>*<name>buf_size</name> = <name>view_len</name></expr>;</expr_stmt></then></if>
+      <expr_stmt><expr>*<name>buf</name> = <call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>*<name>buf_size</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+}</block></function>
+
+
+<function><type><name>void</name></type>
+<name>svn_txdelta_apply_instructions</name><parameter_list>(<param><decl><type><name>svn_txdelta_window_t</name> *</type><name>window</name></decl></param>,
+                               <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>sbuf</name></decl></param>, <param><decl><type><name>char</name> *</type><name>tbuf</name></decl></param>,
+                               <param><decl><type><name>apr_size_t</name> *</type><name>tlen</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>svn_txdelta_op_t</name> *</type><name>op</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>i</name></decl>, <decl><type ref="prev"/><name>j</name></decl>, <decl><type ref="prev"/><name>tpos</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+
+  <for>for (<init><expr><name>op</name> = <name><name>window</name>-&gt;<name>ops</name></name></expr>;</init> <condition><expr><name>op</name> &lt; <name><name>window</name>-&gt;<name>ops</name></name> + <name><name>window</name>-&gt;<name>num_ops</name></name></expr>;</condition> <incr><expr><name>op</name>++</expr></incr>)
+    <block>{
+      <decl_stmt><decl><type><specifier>const</specifier> <name>apr_size_t</name></type> <name>buf_len</name> <init>= <expr>(<name><name>op</name>-&gt;<name>length</name></name> &lt; *<name>tlen</name> - <name>tpos</name>
+                                  ? <name><name>op</name>-&gt;<name>length</name></name> : *<name>tlen</name> - <name>tpos</name>)</expr></init></decl>;</decl_stmt>
+
+      <comment type="block">/* Check some invariants common to all instructions.  */</comment>
+      <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>tpos</name> + <name><name>op</name>-&gt;<name>length</name></name> &lt;= <name><name>window</name>-&gt;<name>tview_len</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <switch>switch <condition>(<expr><name><name>op</name>-&gt;<name>action_code</name></name></expr>)</condition>
+        <block>{
+        <case>case <expr><name>svn_txdelta_source</name></expr>:
+          <comment type="block">/* Copy from source area.  */</comment>
+          <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>op</name>-&gt;<name>offset</name></name> + <name><name>op</name>-&gt;<name>length</name></name> &lt;= <name><name>window</name>-&gt;<name>sview_len</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>tbuf</name> + <name>tpos</name></expr></argument>, <argument><expr><name>sbuf</name> + <name><name>op</name>-&gt;<name>offset</name></name></expr></argument>, <argument><expr><name>buf_len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <break>break;</break>
+
+        </case><case>case <expr><name>svn_txdelta_target</name></expr>:
+          <comment type="block">/* Copy from target area.  Don't use memcpy() since its
+             semantics aren't guaranteed for overlapping memory areas,
+             and target copies are allowed to overlap to generate
+             repeated data.  */</comment>
+          <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>op</name>-&gt;<name>offset</name></name> &lt; <name>tpos</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <for>for (<init><expr><name>i</name> = <name><name>op</name>-&gt;<name>offset</name></name></expr>, <expr><name>j</name> = <name>tpos</name></expr>;</init> <condition><expr><name>i</name> &lt; <name><name>op</name>-&gt;<name>offset</name></name> + <name>buf_len</name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>)
+            <expr_stmt><expr><name><name>tbuf</name><index>[<expr><name>j</name>++</expr>]</index></name> = <name><name>tbuf</name><index>[<expr><name>i</name></expr>]</index></name></expr>;</expr_stmt></for>
+          <break>break;</break>
+
+        </case><case>case <expr><name>svn_txdelta_new</name></expr>:
+          <comment type="block">/* Copy from window new area.  */</comment>
+          <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>op</name>-&gt;<name>offset</name></name> + <name><name>op</name>-&gt;<name>length</name></name> &lt;= <name><name>window</name>-&gt;<name>new_data</name>-&gt;<name>len</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>tbuf</name> + <name>tpos</name></expr></argument>,
+                 <argument><expr><name><name>window</name>-&gt;<name>new_data</name>-&gt;<name>data</name></name> + <name><name>op</name>-&gt;<name>offset</name></name></expr></argument>,
+                 <argument><expr><name>buf_len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <break>break;</break>
+
+        </case><default>default:
+          <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr>!"Invalid delta instruction code"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        </default>}</block></switch>
+
+      <expr_stmt><expr><name>tpos</name> += <name><name>op</name>-&gt;<name>length</name></name></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>tpos</name> &gt;= *<name>tlen</name></expr>)</condition><then>
+        <return>return;</return></then></if>                 <comment type="block">/* The buffer is full. */</comment>
+    }</block></for>
+
+  <comment type="block">/* Check that we produced the right amount of data.  */</comment>
+  <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>tpos</name> == <name><name>window</name>-&gt;<name>tview_len</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr>*<name>tlen</name> = <name>tpos</name></expr>;</expr_stmt>
+}</block></function>
+
+<comment type="block">/* This is a private interlibrary compatibility wrapper. */</comment>
+<function_decl><type><name>void</name></type>
+<name>svn_txdelta__apply_instructions</name><parameter_list>(<param><decl><type><name>svn_txdelta_window_t</name> *</type><name>window</name></decl></param>,
+                                <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>sbuf</name></decl></param>, <param><decl><type><name>char</name> *</type><name>tbuf</name></decl></param>,
+                                <param><decl><type><name>apr_size_t</name> *</type><name>tlen</name></decl></param>)</parameter_list>;</function_decl>
+<function><type><name>void</name></type>
+<name>svn_txdelta__apply_instructions</name><parameter_list>(<param><decl><type><name>svn_txdelta_window_t</name> *</type><name>window</name></decl></param>,
+                                <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>sbuf</name></decl></param>, <param><decl><type><name>char</name> *</type><name>tbuf</name></decl></param>,
+                                <param><decl><type><name>apr_size_t</name> *</type><name>tlen</name></decl></param>)</parameter_list>
+<block>{
+  <expr_stmt><expr><call><name>svn_txdelta_apply_instructions</name><argument_list>(<argument><expr><name>window</name></expr></argument>, <argument><expr><name>sbuf</name></expr></argument>, <argument><expr><name>tbuf</name></expr></argument>, <argument><expr><name>tlen</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+
+<comment type="block">/* Apply WINDOW to the streams given by APPL.  */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>apply_window</name><parameter_list>(<param><decl><type><name>svn_txdelta_window_t</name> *</type><name>window</name></decl></param>, <param><decl><type><name>void</name> *</type><name>baton</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>apply_baton</name> *</type><name>ab</name> <init>= <expr>(struct <name>apply_baton</name> *) <name>baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>len</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr><name>window</name> == <name>NULL</name></expr>)</condition><then>
+    <block>{
+      <comment type="block">/* We're done; just clean up.  */</comment>
+      <if>if <condition>(<expr><name><name>ab</name>-&gt;<name>result_digest</name></name></expr>)</condition><then>
+        <expr_stmt><expr><call><name>apr_md5_final</name><argument_list>(<argument><expr><name><name>ab</name>-&gt;<name>result_digest</name></name></expr></argument>, <argument><expr>&amp;(<name><name>ab</name>-&gt;<name>md5_context</name></name>)</expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+      <expr_stmt><expr><name>err</name> = <call><name>svn_stream_close</name><argument_list>(<argument><expr><name><name>ab</name>-&gt;<name>target</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name><name>ab</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <return>return <expr><name>err</name></expr>;</return>
+    }</block></then></if>
+
+  <comment type="block">/* Make sure the source view didn't slide backwards.  */</comment>
+  <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>window</name>-&gt;<name>sview_len</name></name> == 0
+         || (<name><name>window</name>-&gt;<name>sview_offset</name></name> &gt;= <name><name>ab</name>-&gt;<name>sbuf_offset</name></name>
+             &amp;&amp; (<name><name>window</name>-&gt;<name>sview_offset</name></name> + <name><name>window</name>-&gt;<name>sview_len</name></name>
+                 &gt;= <name><name>ab</name>-&gt;<name>sbuf_offset</name></name> + <name><name>ab</name>-&gt;<name>sbuf_len</name></name>))</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Make sure there's enough room in the target buffer.  */</comment>
+  <expr_stmt><expr><call><name>size_buffer</name><argument_list>(<argument><expr>&amp;<name><name>ab</name>-&gt;<name>tbuf</name></name></expr></argument>, <argument><expr>&amp;<name><name>ab</name>-&gt;<name>tbuf_size</name></name></expr></argument>, <argument><expr><name><name>window</name>-&gt;<name>tview_len</name></name></expr></argument>, <argument><expr><name><name>ab</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Prepare the source buffer for reading from the input stream.  */</comment>
+  <if>if <condition>(<expr><name><name>window</name>-&gt;<name>sview_offset</name></name> != <name><name>ab</name>-&gt;<name>sbuf_offset</name></name>
+      || <name><name>window</name>-&gt;<name>sview_len</name></name> &gt; <name><name>ab</name>-&gt;<name>sbuf_size</name></name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>char</name> *</type><name>old_sbuf</name> <init>= <expr><name><name>ab</name>-&gt;<name>sbuf</name></name></expr></init></decl>;</decl_stmt>
+
+      <comment type="block">/* Make sure there's enough room.  */</comment>
+      <expr_stmt><expr><call><name>size_buffer</name><argument_list>(<argument><expr>&amp;<name><name>ab</name>-&gt;<name>sbuf</name></name></expr></argument>, <argument><expr>&amp;<name><name>ab</name>-&gt;<name>sbuf_size</name></name></expr></argument>, <argument><expr><name><name>window</name>-&gt;<name>sview_len</name></name></expr></argument>, <argument><expr><name><name>ab</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <comment type="block">/* If the existing view overlaps with the new view, copy the
+       * overlap to the beginning of the new buffer.  */</comment>
+      <if>if <condition>(<expr><name><name>ab</name>-&gt;<name>sbuf_offset</name></name> + <name><name>ab</name>-&gt;<name>sbuf_len</name></name> &gt; <name><name>window</name>-&gt;<name>sview_offset</name></name></expr>)</condition><then>
+        <block>{
+          <decl_stmt><decl><type><name>apr_size_t</name></type> <name>start</name> <init>=
+            <expr><call>(<name>apr_size_t</name>)<argument_list>(<argument><expr><name><name>window</name>-&gt;<name>sview_offset</name></name> - <name><name>ab</name>-&gt;<name>sbuf_offset</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+          <expr_stmt><expr><call><name>memmove</name><argument_list>(<argument><expr><name><name>ab</name>-&gt;<name>sbuf</name></name></expr></argument>, <argument><expr><name>old_sbuf</name> + <name>start</name></expr></argument>, <argument><expr><name><name>ab</name>-&gt;<name>sbuf_len</name></name> - <name>start</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><name><name>ab</name>-&gt;<name>sbuf_len</name></name> -= <name>start</name></expr>;</expr_stmt>
+        }</block></then>
+      <else>else
+        <expr_stmt><expr><name><name>ab</name>-&gt;<name>sbuf_len</name></name> = 0</expr>;</expr_stmt></else></if>
+      <expr_stmt><expr><name><name>ab</name>-&gt;<name>sbuf_offset</name></name> = <name><name>window</name>-&gt;<name>sview_offset</name></name></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <comment type="block">/* Read the remainder of the source view into the buffer.  */</comment>
+  <if>if <condition>(<expr><name><name>ab</name>-&gt;<name>sbuf_len</name></name> &lt; <name><name>window</name>-&gt;<name>sview_len</name></name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><name>len</name> = <name><name>window</name>-&gt;<name>sview_len</name></name> - <name><name>ab</name>-&gt;<name>sbuf_len</name></name></expr>;</expr_stmt>
+      <expr_stmt><expr><name>err</name> = <call><name>svn_stream_read</name><argument_list>(<argument><expr><name><name>ab</name>-&gt;<name>source</name></name></expr></argument>, <argument><expr><name><name>ab</name>-&gt;<name>sbuf</name></name> + <name><name>ab</name>-&gt;<name>sbuf_len</name></name></expr></argument>, <argument><expr>&amp;<name>len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>err</name> == <name>SVN_NO_ERROR</name> &amp;&amp; <name>len</name> != <name><name>window</name>-&gt;<name>sview_len</name></name> - <name><name>ab</name>-&gt;<name>sbuf_len</name></name></expr>)</condition><then>
+        <expr_stmt><expr><name>err</name> = <call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_INCOMPLETE_DATA</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                               <argument><expr>"Delta source ended unexpectedly"</expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+      <if>if <condition>(<expr><name>err</name> != <name>SVN_NO_ERROR</name></expr>)</condition><then>
+        <return>return <expr><name>err</name></expr>;</return></then></if>
+      <expr_stmt><expr><name><name>ab</name>-&gt;<name>sbuf_len</name></name> = <name><name>window</name>-&gt;<name>sview_len</name></name></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <comment type="block">/* Apply the window instructions to the source view to generate
+     the target view.  */</comment>
+  <expr_stmt><expr><name>len</name> = <name><name>window</name>-&gt;<name>tview_len</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>svn_txdelta_apply_instructions</name><argument_list>(<argument><expr><name>window</name></expr></argument>, <argument><expr><name><name>ab</name>-&gt;<name>sbuf</name></name></expr></argument>, <argument><expr><name><name>ab</name>-&gt;<name>tbuf</name></name></expr></argument>, <argument><expr>&amp;<name>len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>len</name> == <name><name>window</name>-&gt;<name>tview_len</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Write out the output. */</comment>
+
+  <comment type="block">/* ### We've also considered just adding two (optionally null)
+     arguments to svn_stream_create(): read_checksum and
+     write_checksum.  Then instead of every caller updating an md5
+     context when it calls svn_stream_write() or svn_stream_read(),
+     streams would do it automatically, and verify the checksum in
+     svn_stream_closed().  But this might be overkill for issue #689;
+     so for now we just update the context here. */</comment>
+  <if>if <condition>(<expr><name><name>ab</name>-&gt;<name>result_digest</name></name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>apr_md5_update</name><argument_list>(<argument><expr>&amp;(<name><name>ab</name>-&gt;<name>md5_context</name></name>)</expr></argument>, <argument><expr><name><name>ab</name>-&gt;<name>tbuf</name></name></expr></argument>, <argument><expr><name>len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <return>return <expr><call><name>svn_stream_write</name><argument_list>(<argument><expr><name><name>ab</name>-&gt;<name>target</name></name></expr></argument>, <argument><expr><name><name>ab</name>-&gt;<name>tbuf</name></name></expr></argument>, <argument><expr>&amp;<name>len</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+<function><type><name>void</name></type>
+<name>svn_txdelta_apply</name><parameter_list>(<param><decl><type><name>svn_stream_t</name> *</type><name>source</name></decl></param>,
+                  <param><decl><type><name>svn_stream_t</name> *</type><name>target</name></decl></param>,
+                  <param><decl><type><name>unsigned</name> <name>char</name> *</type><name>result_digest</name></decl></param>,
+                  <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>error_info</name></decl></param>,
+                  <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>,
+                  <param><decl><type><name>svn_txdelta_window_handler_t</name> *</type><name>handler</name></decl></param>,
+                  <param><decl><type><name>void</name> **</type><name>handler_baton</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>subpool</name> <init>= <expr><call><name>svn_pool_create</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type>struct <name>apply_baton</name> *</type><name>ab</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name>ab</name> = <call><name>apr_palloc</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>ab</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>ab</name>-&gt;<name>source</name></name> = <name>source</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>ab</name>-&gt;<name>target</name></name> = <name>target</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>ab</name>-&gt;<name>pool</name></name> = <name>subpool</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>ab</name>-&gt;<name>sbuf</name></name> = <name>NULL</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>ab</name>-&gt;<name>sbuf_size</name></name> = 0</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>ab</name>-&gt;<name>sbuf_offset</name></name> = 0</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>ab</name>-&gt;<name>sbuf_len</name></name> = 0</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>ab</name>-&gt;<name>tbuf</name></name> = <name>NULL</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>ab</name>-&gt;<name>tbuf_size</name></name> = 0</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>ab</name>-&gt;<name>result_digest</name></name> = <name>result_digest</name></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name>result_digest</name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>apr_md5_init</name><argument_list>(<argument><expr>&amp;(<name><name>ab</name>-&gt;<name>md5_context</name></name>)</expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <if>if <condition>(<expr><name>error_info</name></expr>)</condition><then>
+    <expr_stmt><expr><name><name>ab</name>-&gt;<name>error_info</name></name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>, <argument><expr><name>error_info</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+  <else>else
+    <expr_stmt><expr><name><name>ab</name>-&gt;<name>error_info</name></name> = <name>NULL</name></expr>;</expr_stmt></else></if>
+
+  <expr_stmt><expr>*<name>handler</name> = <name>apply_window</name></expr>;</expr_stmt>
+  <expr_stmt><expr>*<name>handler_baton</name> = <name>ab</name></expr>;</expr_stmt>
+}</block></function>
+
+
+<escape char="0xc"/>
+<comment type="block">/* Convenience routines */</comment>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_txdelta_send_string</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>svn_string_t</name> *</type><name>string</name></decl></param>,
+                        <param><decl><type><name>svn_txdelta_window_handler_t</name></type> <name>handler</name></decl></param>,
+                        <param><decl><type><name>void</name> *</type><name>handler_baton</name></decl></param>,
+                        <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_txdelta_window_t</name></type> <name>window</name> <init>= <expr><block>{ <expr>0</expr> }</block></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_txdelta_op_t</name></type> <name>op</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Build a single `new' op */</comment>
+  <expr_stmt><expr><name><name>op</name>.<name>action_code</name></name> = <name>svn_txdelta_new</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>op</name>.<name>offset</name></name> = 0</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>op</name>.<name>length</name></name> = <name><name>string</name>-&gt;<name>len</name></name></expr>;</expr_stmt>
+
+  <comment type="block">/* Build a single window containing a ptr to the string. */</comment>
+  <expr_stmt><expr><name><name>window</name>.<name>tview_len</name></name> = <name><name>string</name>-&gt;<name>len</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>window</name>.<name>num_ops</name></name> = 1</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>window</name>.<name>ops</name></name> = &amp;<name>op</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>window</name>.<name>new_data</name></name> = <name>string</name></expr>;</expr_stmt>
+
+  <comment type="block">/* Push the one window at the handler. */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call>(*<name>handler</name>)<argument_list>(<argument><expr>&amp;<name>window</name></expr></argument>, <argument><expr><name>handler_baton</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Push a NULL at the handler, because we're done. */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call>(*<name>handler</name>)<argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>handler_baton</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type><name>svn_txdelta_send_stream</name><parameter_list>(<param><decl><type><name>svn_stream_t</name> *</type><name>stream</name></decl></param>,
+                                     <param><decl><type><name>svn_txdelta_window_handler_t</name></type> <name>handler</name></decl></param>,
+                                     <param><decl><type><name>void</name> *</type><name>handler_baton</name></decl></param>,
+                                     <param><decl><type><name>unsigned</name> <name>char</name> *</type><name>digest</name></decl></param>,
+                                     <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_txdelta_stream_t</name> *</type><name>txstream</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name></decl>;</decl_stmt>
+
+  <comment type="block">/* ### this is a hack. we should simply read from the stream, construct
+     ### some windows, and pass those to the handler. there isn't any reason
+     ### to crank up a full "diff" algorithm just to copy a stream.
+     ###
+     ### will fix RSN. */</comment>
+
+  <comment type="block">/* Create a delta stream which converts an *empty* bytestream into the
+     target bytestream. */</comment>
+  <expr_stmt><expr><call><name>svn_txdelta</name><argument_list>(<argument><expr>&amp;<name>txstream</name></expr></argument>, <argument><expr><call><name>svn_stream_empty</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>stream</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>err</name> = <call><name>svn_txdelta_send_txstream</name><argument_list>(<argument><expr><name>txstream</name></expr></argument>, <argument><expr><name>handler</name></expr></argument>, <argument><expr><name>handler_baton</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name>digest</name> &amp;&amp; (! <name>err</name>)</expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><specifier>const</specifier> <name>unsigned</name> <name>char</name> *</type><name>result_md5</name></decl>;</decl_stmt>
+      <expr_stmt><expr><name>result_md5</name> = <call><name>svn_txdelta_md5_digest</name><argument_list>(<argument><expr><name>txstream</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <comment type="block">/* Since err is null, result_md5 "cannot" be null. */</comment>
+      <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>digest</name></expr></argument>, <argument><expr><name>result_md5</name></expr></argument>, <argument><expr><name>APR_MD5_DIGESTSIZE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <return>return <expr><name>err</name></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type><name>svn_txdelta_send_txstream</name><parameter_list>(<param><decl><type><name>svn_txdelta_stream_t</name> *</type><name>txstream</name></decl></param>,
+                                       <param><decl><type><name>svn_txdelta_window_handler_t</name></type> <name>handler</name></decl></param>,
+                                       <param><decl><type><name>void</name> *</type><name>handler_baton</name></decl></param>,
+                                       <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_txdelta_window_t</name> *</type><name>window</name></decl>;</decl_stmt>
+
+  <comment type="block">/* create a pool just for the windows */</comment>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>wpool</name> <init>= <expr><call><name>svn_pool_create</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <do>do
+    <block>{
+      <comment type="block">/* free the window (if any) */</comment>
+      <expr_stmt><expr><call><name>svn_pool_clear</name><argument_list>(<argument><expr><name>wpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <comment type="block">/* read in a single delta window */</comment>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_txdelta_next_window</name><argument_list>(<argument><expr>&amp;<name>window</name></expr></argument>, <argument><expr><name>txstream</name></expr></argument>, <argument><expr><name>wpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <comment type="block">/* shove it at the handler */</comment>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call>(*<name>handler</name>)<argument_list>(<argument><expr><name>window</name></expr></argument>, <argument><expr><name>handler_baton</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block>
+  while <condition>(<expr><name>window</name> != <name>NULL</name></expr>)</condition>;</do>
+
+  <expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name>wpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+</unit>

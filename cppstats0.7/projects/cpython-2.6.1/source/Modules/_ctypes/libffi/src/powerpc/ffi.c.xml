@@ -1,0 +1,1431 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/cpython-2.6.1/source/Modules/_ctypes/libffi/src/powerpc/ffi.c"><comment type="block">/* -----------------------------------------------------------------------
+   ffi.c - Copyright (c) 1998 Geoffrey Keating
+   Copyright (C) 2007 Free Software Foundation, Inc
+   Copyright (C) 2008 Red Hat, Inc
+
+   PowerPC Foreign Function Interface
+
+   Permission is hereby granted, free of charge, to any person obtaining
+   a copy of this software and associated documentation files (the
+   ``Software''), to deal in the Software without restriction, including
+   without limitation the rights to use, copy, modify, merge, publish,
+   distribute, sublicense, and/or sell copies of the Software, and to
+   permit persons to whom the Software is furnished to do so, subject to
+   the following conditions:
+
+   The above copyright notice and this permission notice shall be included
+   in all copies or substantial portions of the Software.
+
+   THE SOFTWARE IS PROVIDED ``AS IS'', WITHOUT WARRANTY OF ANY KIND, EXPRESS
+   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+   IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES OR
+   OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+   ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+   OTHER DEALINGS IN THE SOFTWARE.
+   ----------------------------------------------------------------------- */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;ffi.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;ffi_common.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;stdlib.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;stdio.h&gt;</cpp:file></cpp:include>
+
+
+<function_decl><type><specifier>extern</specifier> <name>void</name></type> <name>ffi_closure_SYSV</name> <parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>;</function_decl>
+<function_decl><type><specifier>extern</specifier> <name>void</name> <name>FFI_HIDDEN</name></type> <name>ffi_closure_LINUX64</name> <parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>;</function_decl>
+
+<enum>enum <block>{
+  <comment type="block">/* The assembly depends on these exact flags.  */</comment>
+  <decl><name>FLAG_RETURNS_SMST</name>	<init>= <expr>1 &lt;&lt; (31-31)</expr></init></decl>, <comment type="block">/* Used for FFI_SYSV small structs.  */</comment>
+  <decl><name>FLAG_RETURNS_NOTHING</name>  <init>= <expr>1 &lt;&lt; (31-30)</expr></init></decl>, <comment type="block">/* These go in cr7 */</comment>
+  <decl><name>FLAG_RETURNS_FP</name>       <init>= <expr>1 &lt;&lt; (31-29)</expr></init></decl>,
+  <decl><name>FLAG_RETURNS_64BITS</name>   <init>= <expr>1 &lt;&lt; (31-28)</expr></init></decl>,
+
+  <decl><name>FLAG_RETURNS_128BITS</name>  <init>= <expr>1 &lt;&lt; (31-27)</expr></init></decl>, <comment type="block">/* cr6  */</comment>
+
+  <decl><name>FLAG_ARG_NEEDS_COPY</name>   <init>= <expr>1 &lt;&lt; (31- 7)</expr></init></decl>,
+  <decl><name>FLAG_FP_ARGUMENTS</name>     <init>= <expr>1 &lt;&lt; (31- 6)</expr></init></decl>, <comment type="block">/* cr1.eq; specified by ABI */</comment>
+  <decl><name>FLAG_4_GPR_ARGUMENTS</name>  <init>= <expr>1 &lt;&lt; (31- 5)</expr></init></decl>,
+  <decl><name>FLAG_RETVAL_REFERENCE</name> <init>= <expr>1 &lt;&lt; (31- 4)</expr></init></decl>
+}</block>;</enum>
+
+<comment type="block">/* About the SYSV ABI.  */</comment>
+<decl_stmt><decl><type><name>unsigned</name> <name>int</name></type> <name>NUM_GPR_ARG_REGISTERS</name> <init>= <expr>8</expr></init></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>__NO_FPRS__</name></cpp:ifndef>
+<decl_stmt><decl><type><name>unsigned</name> <name>int</name></type> <name>NUM_FPR_ARG_REGISTERS</name> <init>= <expr>8</expr></init></decl>;</decl_stmt>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+<decl_stmt><decl><type><name>unsigned</name> <name>int</name></type> <name>NUM_FPR_ARG_REGISTERS</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<enum>enum <block>{ <decl><name>ASM_NEEDS_REGISTERS</name> <init>= <expr>4</expr></init></decl> }</block>;</enum>
+
+<comment type="block">/* ffi_prep_args_SYSV is called by the assembly routine once stack space
+   has been allocated for the function's arguments.
+
+   The stack layout we want looks like this:
+
+   |   Return address from ffi_call_SYSV 4bytes	|	higher addresses
+   |--------------------------------------------|
+   |   Previous backchain pointer	4	|       stack pointer here
+   |--------------------------------------------|&lt;+ &lt;&lt;&lt;	on entry to
+   |   Saved r28-r31			4*4	| |	ffi_call_SYSV
+   |--------------------------------------------| |
+   |   GPR registers r3-r10		8*4	| |	ffi_call_SYSV
+   |--------------------------------------------| |
+   |   FPR registers f1-f8 (optional)	8*8	| |
+   |--------------------------------------------| |	stack	|
+   |   Space for copied structures		| |	grows	|
+   |--------------------------------------------| |	down    V
+   |   Parameters that didn't fit in registers  | |
+   |--------------------------------------------| |	lower addresses
+   |   Space for callee's LR		4	| |
+   |--------------------------------------------| |	stack pointer here
+   |   Current backchain pointer	4	|-/	during
+   |--------------------------------------------|   &lt;&lt;&lt;	ffi_call_SYSV
+
+*/</comment>
+
+<function><type><name>void</name></type>
+<name>ffi_prep_args_SYSV</name> <parameter_list>(<param><decl><type><name>extended_cif</name> *</type><name>ecif</name></decl></param>, <param><decl><type><name>unsigned</name> *<specifier>const</specifier></type> <name>stack</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>unsigned</name></type> <name>bytes</name> <init>= <expr><name><name>ecif</name>-&gt;<name>cif</name>-&gt;<name>bytes</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>unsigned</name></type> <name>flags</name> <init>= <expr><name><name>ecif</name>-&gt;<name>cif</name>-&gt;<name>flags</name></name></expr></init></decl>;</decl_stmt>
+
+  <typedef>typedef <type><union>union <block>{
+    <decl_stmt><decl><type><name>char</name> *</type><name>c</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>unsigned</name> *</type><name>u</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>long</name> <name>long</name> *</type><name>ll</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>float</name> *</type><name>f</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>double</name> *</type><name>d</name></decl>;</decl_stmt>
+  }</block></union></type> <name>valp</name>;</typedef>
+
+  <comment type="block">/* 'stacktop' points at the previous backchain pointer.  */</comment>
+  <decl_stmt><decl><type><name>valp</name></type> <name>stacktop</name></decl>;</decl_stmt>
+
+  <comment type="block">/* 'gpr_base' points at the space for gpr3, and grows upwards as
+     we use GPR registers.  */</comment>
+  <decl_stmt><decl><type><name>valp</name></type> <name>gpr_base</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>intarg_count</name></decl>;</decl_stmt>
+
+  <comment type="block">/* 'fpr_base' points at the space for fpr1, and grows upwards as
+     we use FPR registers.  */</comment>
+  <decl_stmt><decl><type><name>valp</name></type> <name>fpr_base</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>fparg_count</name></decl>;</decl_stmt>
+
+  <comment type="block">/* 'copy_space' grows down as we put structures in it.  It should
+     stay 16-byte aligned.  */</comment>
+  <decl_stmt><decl><type><name>valp</name></type> <name>copy_space</name></decl>;</decl_stmt>
+
+  <comment type="block">/* 'next_arg' grows up as we put parameters in it.  */</comment>
+  <decl_stmt><decl><type><name>valp</name></type> <name>next_arg</name></decl>;</decl_stmt>
+
+  <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>, <decl><type ref="prev"/><name>ii</name> <name>MAYBE_UNUSED</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>ffi_type</name> **</type><name>ptr</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>double</name></type> <name>double_tmp</name></decl>;</decl_stmt>
+  <union>union <block>{
+    <decl_stmt><decl><type><name>void</name> **</type><name>v</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name> **</type><name>c</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>signed</name> <name>char</name> **</type><name>sc</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>unsigned</name> <name>char</name> **</type><name>uc</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>signed</name> <name>short</name> **</type><name>ss</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>unsigned</name> <name>short</name> **</type><name>us</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>unsigned</name> <name>int</name> **</type><name>ui</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>long</name> <name>long</name> **</type><name>ll</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>float</name> **</type><name>f</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>double</name> **</type><name>d</name></decl>;</decl_stmt>
+  }</block> <decl><name>p_argv</name></decl>;</union>
+  <decl_stmt><decl><type><name>size_t</name></type> <name>struct_copy_size</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>unsigned</name></type> <name>gprvalue</name></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr><name><name>ecif</name>-&gt;<name>cif</name>-&gt;<name>abi</name></name> == <name>FFI_LINUX_SOFT_FLOAT</name></expr>)</condition><then>
+    <expr_stmt><expr><name>NUM_FPR_ARG_REGISTERS</name> = 0</expr>;</expr_stmt></then></if>
+
+  <expr_stmt><expr><name><name>stacktop</name>.<name>c</name></name> = (<name>char</name> *) <name>stack</name> + <name>bytes</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>gpr_base</name>.<name>u</name></name> = <name><name>stacktop</name>.<name>u</name></name> - <name>ASM_NEEDS_REGISTERS</name> - <name>NUM_GPR_ARG_REGISTERS</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name>intarg_count</name> = 0</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>fpr_base</name>.<name>d</name></name> = <name><name>gpr_base</name>.<name>d</name></name> - <name>NUM_FPR_ARG_REGISTERS</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name>fparg_count</name> = 0</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>copy_space</name>.<name>c</name></name> = ((<name>flags</name> &amp; <name>FLAG_FP_ARGUMENTS</name>) ? <name><name>fpr_base</name>.<name>c</name></name> : <name><name>gpr_base</name>.<name>c</name></name>)</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>next_arg</name>.<name>u</name></name> = <name>stack</name> + 2</expr>;</expr_stmt>
+
+  <comment type="block">/* Check that everything starts aligned properly.  */</comment>
+  <expr_stmt><expr><call><name>FFI_ASSERT</name> <argument_list>(<argument><expr>((<name>unsigned</name>) (<name>char</name> *) <name>stack</name> &amp; 0xF) == 0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>FFI_ASSERT</name> <argument_list>(<argument><expr>((<name>unsigned</name>) <name><name>copy_space</name>.<name>c</name></name> &amp; 0xF) == 0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>FFI_ASSERT</name> <argument_list>(<argument><expr>((<name>unsigned</name>) <name><name>stacktop</name>.<name>c</name></name> &amp; 0xF) == 0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>FFI_ASSERT</name> <argument_list>(<argument><expr>(<name>bytes</name> &amp; 0xF) == 0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>FFI_ASSERT</name> <argument_list>(<argument><expr><name><name>copy_space</name>.<name>c</name></name> &gt;= <name><name>next_arg</name>.<name>c</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Deal with return values that are actually pass-by-reference.  */</comment>
+  <if>if <condition>(<expr><name>flags</name> &amp; <name>FLAG_RETVAL_REFERENCE</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr>*<name><name>gpr_base</name>.<name>u</name></name>++ = (<name>unsigned</name> <name>long</name>) (<name>char</name> *) <name><name>ecif</name>-&gt;<name>rvalue</name></name></expr>;</expr_stmt>
+      <expr_stmt><expr><name>intarg_count</name>++</expr>;</expr_stmt>
+    }</block></then></if>
+
+  <comment type="block">/* Now for the arguments.  */</comment>
+  <expr_stmt><expr><name><name>p_argv</name>.<name>v</name></name> = <name><name>ecif</name>-&gt;<name>avalue</name></name></expr>;</expr_stmt>
+  <for>for (<init><expr><name>ptr</name> = <name><name>ecif</name>-&gt;<name>cif</name>-&gt;<name>arg_types</name></name></expr>, <expr><name>i</name> = <name><name>ecif</name>-&gt;<name>cif</name>-&gt;<name>nargs</name></name></expr>;</init>
+       <condition><expr><name>i</name> &gt; 0</expr>;</condition>
+       <incr><expr><name>i</name>--</expr>, <expr><name>ptr</name>++</expr>, <expr><name><name>p_argv</name>.<name>v</name></name>++</expr></incr>)
+    <block>{
+      <switch>switch <condition>(<expr><name>(*<name>ptr</name>)-&gt;<name>type</name></name></expr>)</condition>
+	<block>{
+	<case>case <expr><name>FFI_TYPE_FLOAT</name></expr>:
+	  <comment type="block">/* With FFI_LINUX_SOFT_FLOAT floats are handled like UINT32.  */</comment>
+	  <if>if <condition>(<expr><name><name>ecif</name>-&gt;<name>cif</name>-&gt;<name>abi</name></name> == <name>FFI_LINUX_SOFT_FLOAT</name></expr>)</condition><then>
+	    <goto>goto <name>soft_float_prep</name>;</goto></then></if>
+	  <expr_stmt><expr><name>double_tmp</name> = **<name><name>p_argv</name>.<name>f</name></name></expr>;</expr_stmt>
+	  <if>if <condition>(<expr><name>fparg_count</name> &gt;= <name>NUM_FPR_ARG_REGISTERS</name></expr>)</condition><then>
+	    <block>{
+	      <expr_stmt><expr>*<name><name>next_arg</name>.<name>f</name></name> = (<name>float</name>) <name>double_tmp</name></expr>;</expr_stmt>
+	      <expr_stmt><expr><name><name>next_arg</name>.<name>u</name></name> += 1</expr>;</expr_stmt>
+	    }</block></then>
+	  <else>else
+	    <expr_stmt><expr>*<name><name>fpr_base</name>.<name>d</name></name>++ = <name>double_tmp</name></expr>;</expr_stmt></else></if>
+	  <expr_stmt><expr><name>fparg_count</name>++</expr>;</expr_stmt>
+	  <expr_stmt><expr><call><name>FFI_ASSERT</name> <argument_list>(<argument><expr><name>flags</name> &amp; <name>FLAG_FP_ARGUMENTS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	  <break>break;</break>
+
+	</case><case>case <expr><name>FFI_TYPE_DOUBLE</name></expr>:
+	  <comment type="block">/* With FFI_LINUX_SOFT_FLOAT doubles are handled like UINT64.  */</comment>
+	  <if>if <condition>(<expr><name><name>ecif</name>-&gt;<name>cif</name>-&gt;<name>abi</name></name> == <name>FFI_LINUX_SOFT_FLOAT</name></expr>)</condition><then>
+	    <goto>goto <name>soft_double_prep</name>;</goto></then></if>
+	  <expr_stmt><expr><name>double_tmp</name> = **<name><name>p_argv</name>.<name>d</name></name></expr>;</expr_stmt>
+
+	  <if>if <condition>(<expr><name>fparg_count</name> &gt;= <name>NUM_FPR_ARG_REGISTERS</name></expr>)</condition><then>
+	    <block>{
+	      <if>if <condition>(<expr><name>intarg_count</name> &gt;= <name>NUM_GPR_ARG_REGISTERS</name>
+		  &amp;&amp; <name>intarg_count</name> % 2 != 0</expr>)</condition><then>
+		<block>{
+		  <expr_stmt><expr><name>intarg_count</name>++</expr>;</expr_stmt>
+		  <expr_stmt><expr><name><name>next_arg</name>.<name>u</name></name>++</expr>;</expr_stmt>
+		}</block></then></if>
+	      <expr_stmt><expr>*<name><name>next_arg</name>.<name>d</name></name> = <name>double_tmp</name></expr>;</expr_stmt>
+	      <expr_stmt><expr><name><name>next_arg</name>.<name>u</name></name> += 2</expr>;</expr_stmt>
+	    }</block></then>
+	  <else>else
+	    <expr_stmt><expr>*<name><name>fpr_base</name>.<name>d</name></name>++ = <name>double_tmp</name></expr>;</expr_stmt></else></if>
+	  <expr_stmt><expr><name>fparg_count</name>++</expr>;</expr_stmt>
+	  <expr_stmt><expr><call><name>FFI_ASSERT</name> <argument_list>(<argument><expr><name>flags</name> &amp; <name>FLAG_FP_ARGUMENTS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	  <break>break;</break>
+
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>FFI_TYPE_LONGDOUBLE</name> != <name>FFI_TYPE_DOUBLE</name></expr></cpp:if>
+	</case><case>case <expr><name>FFI_TYPE_LONGDOUBLE</name></expr>:
+	  <if>if <condition>(<expr>(<name><name>ecif</name>-&gt;<name>cif</name>-&gt;<name>abi</name></name> != <name>FFI_LINUX</name>)
+		&amp;&amp; (<name><name>ecif</name>-&gt;<name>cif</name>-&gt;<name>abi</name></name> != <name>FFI_LINUX_SOFT_FLOAT</name>)</expr>)</condition><then>
+	    <goto>goto <name>do_struct</name>;</goto></then></if>
+	  <comment type="block">/* The soft float ABI for long doubles works like this,
+	     a long double is passed in four consecutive gprs if available.
+	     A maximum of 2 long doubles can be passed in gprs.
+	     If we do not have 4 gprs left, the long double is passed on the
+	     stack, 4-byte aligned.  */</comment>
+	  <if>if <condition>(<expr><name><name>ecif</name>-&gt;<name>cif</name>-&gt;<name>abi</name></name> == <name>FFI_LINUX_SOFT_FLOAT</name></expr>)</condition><then>
+	    <block>{
+	      <decl_stmt><decl><type><name>unsigned</name> <name>int</name></type> <name>int_tmp</name> <init>= <expr>(*<name><name>p_argv</name>.<name>ui</name></name>)<index>[<expr>0</expr>]</index></expr></init></decl>;</decl_stmt>
+	      <if>if <condition>(<expr><name>intarg_count</name> &gt;= <name>NUM_GPR_ARG_REGISTERS</name> - 3</expr>)</condition><then>
+		<block>{
+		  <if>if <condition>(<expr><name>intarg_count</name> &lt; <name>NUM_GPR_ARG_REGISTERS</name></expr>)</condition><then>
+		    <expr_stmt><expr><name>intarg_count</name> += <name>NUM_GPR_ARG_REGISTERS</name> - <name>intarg_count</name></expr>;</expr_stmt></then></if>
+		  <expr_stmt><expr>*<name><name>next_arg</name>.<name>u</name></name> = <name>int_tmp</name></expr>;</expr_stmt>
+		  <expr_stmt><expr><name><name>next_arg</name>.<name>u</name></name>++</expr>;</expr_stmt>
+		  <for>for (<init><expr><name>ii</name> = 1</expr>;</init> <condition><expr><name>ii</name> &lt; 4</expr>;</condition> <incr><expr><name>ii</name>++</expr></incr>)
+		    <block>{
+		      <expr_stmt><expr><name>int_tmp</name> = (*<name><name>p_argv</name>.<name>ui</name></name>)<index>[<expr><name>ii</name></expr>]</index></expr>;</expr_stmt>
+		      <expr_stmt><expr>*<name><name>next_arg</name>.<name>u</name></name> = <name>int_tmp</name></expr>;</expr_stmt>
+		      <expr_stmt><expr><name><name>next_arg</name>.<name>u</name></name>++</expr>;</expr_stmt>
+		    }</block></for>
+		}</block></then>
+	      <else>else
+		<block>{
+		  <expr_stmt><expr>*<name><name>gpr_base</name>.<name>u</name></name>++ = <name>int_tmp</name></expr>;</expr_stmt>
+		  <for>for (<init><expr><name>ii</name> = 1</expr>;</init> <condition><expr><name>ii</name> &lt; 4</expr>;</condition> <incr><expr><name>ii</name>++</expr></incr>)
+		    <block>{
+		      <expr_stmt><expr><name>int_tmp</name> = (*<name><name>p_argv</name>.<name>ui</name></name>)<index>[<expr><name>ii</name></expr>]</index></expr>;</expr_stmt>
+		      <expr_stmt><expr>*<name><name>gpr_base</name>.<name>u</name></name>++ = <name>int_tmp</name></expr>;</expr_stmt>
+		    }</block></for>
+		}</block></else></if>
+	      <expr_stmt><expr><name>intarg_count</name> +=4</expr>;</expr_stmt>
+	    }</block></then>
+	  <else>else
+	    <block>{
+	      <expr_stmt><expr><name>double_tmp</name> = (*<name><name>p_argv</name>.<name>d</name></name>)<index>[<expr>0</expr>]</index></expr>;</expr_stmt>
+
+	      <if>if <condition>(<expr><name>fparg_count</name> &gt;= <name>NUM_FPR_ARG_REGISTERS</name> - 1</expr>)</condition><then>
+		<block>{
+		  <if>if <condition>(<expr><name>intarg_count</name> &gt;= <name>NUM_GPR_ARG_REGISTERS</name>
+		      &amp;&amp; <name>intarg_count</name> % 2 != 0</expr>)</condition><then>
+		    <block>{
+		      <expr_stmt><expr><name>intarg_count</name>++</expr>;</expr_stmt>
+		      <expr_stmt><expr><name><name>next_arg</name>.<name>u</name></name>++</expr>;</expr_stmt>
+		    }</block></then></if>
+		  <expr_stmt><expr>*<name><name>next_arg</name>.<name>d</name></name> = <name>double_tmp</name></expr>;</expr_stmt>
+		  <expr_stmt><expr><name><name>next_arg</name>.<name>u</name></name> += 2</expr>;</expr_stmt>
+		  <expr_stmt><expr><name>double_tmp</name> = (*<name><name>p_argv</name>.<name>d</name></name>)<index>[<expr>1</expr>]</index></expr>;</expr_stmt>
+		  <expr_stmt><expr>*<name><name>next_arg</name>.<name>d</name></name> = <name>double_tmp</name></expr>;</expr_stmt>
+		  <expr_stmt><expr><name><name>next_arg</name>.<name>u</name></name> += 2</expr>;</expr_stmt>
+		}</block></then>
+	      <else>else
+		<block>{
+		  <expr_stmt><expr>*<name><name>fpr_base</name>.<name>d</name></name>++ = <name>double_tmp</name></expr>;</expr_stmt>
+		  <expr_stmt><expr><name>double_tmp</name> = (*<name><name>p_argv</name>.<name>d</name></name>)<index>[<expr>1</expr>]</index></expr>;</expr_stmt>
+		  <expr_stmt><expr>*<name><name>fpr_base</name>.<name>d</name></name>++ = <name>double_tmp</name></expr>;</expr_stmt>
+		}</block></else></if>
+
+	      <expr_stmt><expr><name>fparg_count</name> += 2</expr>;</expr_stmt>
+	      <expr_stmt><expr><call><name>FFI_ASSERT</name> <argument_list>(<argument><expr><name>flags</name> &amp; <name>FLAG_FP_ARGUMENTS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	    }</block></else></if>
+	  <break>break;</break>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+	</case><case>case <expr><name>FFI_TYPE_UINT64</name></expr>:
+	</case><case>case <expr><name>FFI_TYPE_SINT64</name></expr>:
+	<label><name>soft_double_prep</name>:</label>
+	  <if>if <condition>(<expr><name>intarg_count</name> == <name>NUM_GPR_ARG_REGISTERS</name>-1</expr>)</condition><then>
+	    <expr_stmt><expr><name>intarg_count</name>++</expr>;</expr_stmt></then></if>
+	  <if>if <condition>(<expr><name>intarg_count</name> &gt;= <name>NUM_GPR_ARG_REGISTERS</name></expr>)</condition><then>
+	    <block>{
+	      <if>if <condition>(<expr><name>intarg_count</name> % 2 != 0</expr>)</condition><then>
+		<block>{
+		  <expr_stmt><expr><name>intarg_count</name>++</expr>;</expr_stmt>
+		  <expr_stmt><expr><name><name>next_arg</name>.<name>u</name></name>++</expr>;</expr_stmt>
+		}</block></then></if>
+	      <expr_stmt><expr>*<name><name>next_arg</name>.<name>ll</name></name> = **<name><name>p_argv</name>.<name>ll</name></name></expr>;</expr_stmt>
+	      <expr_stmt><expr><name><name>next_arg</name>.<name>u</name></name> += 2</expr>;</expr_stmt>
+	    }</block></then>
+	  <else>else
+	    <block>{
+	      <comment type="block">/* whoops: abi states only certain register pairs
+	       * can be used for passing long long int
+	       * specifically (r3,r4), (r5,r6), (r7,r8),
+	       * (r9,r10) and if next arg is long long but
+	       * not correct starting register of pair then skip
+	       * until the proper starting register
+	       */</comment>
+	      <if>if <condition>(<expr><name>intarg_count</name> % 2 != 0</expr>)</condition><then>
+		<block>{
+		  <expr_stmt><expr><name>intarg_count</name> ++</expr>;</expr_stmt>
+		  <expr_stmt><expr><name><name>gpr_base</name>.<name>u</name></name>++</expr>;</expr_stmt>
+		}</block></then></if>
+	      <expr_stmt><expr>*<name><name>gpr_base</name>.<name>ll</name></name>++ = **<name><name>p_argv</name>.<name>ll</name></name></expr>;</expr_stmt>
+	    }</block></else></if>
+	  <expr_stmt><expr><name>intarg_count</name> += 2</expr>;</expr_stmt>
+	  <break>break;</break>
+
+	</case><case>case <expr><name>FFI_TYPE_STRUCT</name></expr>:
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>FFI_TYPE_LONGDOUBLE</name> != <name>FFI_TYPE_DOUBLE</name></expr></cpp:if>
+	<label><name>do_struct</name>:</label>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	  <expr_stmt><expr><name>struct_copy_size</name> = (<name>(*<name>ptr</name>)-&gt;<name>size</name></name> + 15) &amp; ~0xF</expr>;</expr_stmt>
+	  <expr_stmt><expr><name><name>copy_space</name>.<name>c</name></name> -= <name>struct_copy_size</name></expr>;</expr_stmt>
+	  <expr_stmt><expr><call><name>memcpy</name> <argument_list>(<argument><expr><name><name>copy_space</name>.<name>c</name></name></expr></argument>, <argument><expr>*<name><name>p_argv</name>.<name>c</name></name></expr></argument>, <argument><expr><name>(*<name>ptr</name>)-&gt;<name>size</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+	  <expr_stmt><expr><name>gprvalue</name> = (<name>unsigned</name> <name>long</name>) <name><name>copy_space</name>.<name>c</name></name></expr>;</expr_stmt>
+
+	  <expr_stmt><expr><call><name>FFI_ASSERT</name> <argument_list>(<argument><expr><name><name>copy_space</name>.<name>c</name></name> &gt; <name><name>next_arg</name>.<name>c</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	  <expr_stmt><expr><call><name>FFI_ASSERT</name> <argument_list>(<argument><expr><name>flags</name> &amp; <name>FLAG_ARG_NEEDS_COPY</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	  <goto>goto <name>putgpr</name>;</goto>
+
+	</case><case>case <expr><name>FFI_TYPE_UINT8</name></expr>:
+	  <expr_stmt><expr><name>gprvalue</name> = **<name><name>p_argv</name>.<name>uc</name></name></expr>;</expr_stmt>
+	  <goto>goto <name>putgpr</name>;</goto>
+	</case><case>case <expr><name>FFI_TYPE_SINT8</name></expr>:
+	  <expr_stmt><expr><name>gprvalue</name> = **<name><name>p_argv</name>.<name>sc</name></name></expr>;</expr_stmt>
+	  <goto>goto <name>putgpr</name>;</goto>
+	</case><case>case <expr><name>FFI_TYPE_UINT16</name></expr>:
+	  <expr_stmt><expr><name>gprvalue</name> = **<name><name>p_argv</name>.<name>us</name></name></expr>;</expr_stmt>
+	  <goto>goto <name>putgpr</name>;</goto>
+	</case><case>case <expr><name>FFI_TYPE_SINT16</name></expr>:
+	  <expr_stmt><expr><name>gprvalue</name> = **<name><name>p_argv</name>.<name>ss</name></name></expr>;</expr_stmt>
+	  <goto>goto <name>putgpr</name>;</goto>
+
+	</case><case>case <expr><name>FFI_TYPE_INT</name></expr>:
+	</case><case>case <expr><name>FFI_TYPE_UINT32</name></expr>:
+	</case><case>case <expr><name>FFI_TYPE_SINT32</name></expr>:
+	</case><case>case <expr><name>FFI_TYPE_POINTER</name></expr>:
+	<label><name>soft_float_prep</name>:</label>
+
+	  <expr_stmt><expr><name>gprvalue</name> = **<name><name>p_argv</name>.<name>ui</name></name></expr>;</expr_stmt>
+
+	<label><name>putgpr</name>:</label>
+	  <if>if <condition>(<expr><name>intarg_count</name> &gt;= <name>NUM_GPR_ARG_REGISTERS</name></expr>)</condition><then>
+	    <expr_stmt><expr>*<name><name>next_arg</name>.<name>u</name></name>++ = <name>gprvalue</name></expr>;</expr_stmt></then>
+	  <else>else
+	    <expr_stmt><expr>*<name><name>gpr_base</name>.<name>u</name></name>++ = <name>gprvalue</name></expr>;</expr_stmt></else></if>
+	  <expr_stmt><expr><name>intarg_count</name>++</expr>;</expr_stmt>
+	  <break>break;</break>
+	</case>}</block></switch>
+    }</block></for>
+
+  <comment type="block">/* Check that we didn't overrun the stack...  */</comment>
+  <expr_stmt><expr><call><name>FFI_ASSERT</name> <argument_list>(<argument><expr><name><name>copy_space</name>.<name>c</name></name> &gt;= <name><name>next_arg</name>.<name>c</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>FFI_ASSERT</name> <argument_list>(<argument><expr><name><name>gpr_base</name>.<name>u</name></name> &lt;= <name><name>stacktop</name>.<name>u</name></name> - <name>ASM_NEEDS_REGISTERS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>FFI_ASSERT</name> <argument_list>(<argument><expr><name><name>fpr_base</name>.<name>u</name></name>
+	      &lt;= <name><name>stacktop</name>.<name>u</name></name> - <name>ASM_NEEDS_REGISTERS</name> - <name>NUM_GPR_ARG_REGISTERS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>FFI_ASSERT</name> <argument_list>(<argument><expr><name>flags</name> &amp; <name>FLAG_4_GPR_ARGUMENTS</name> || <name>intarg_count</name> &lt;= 4</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<comment type="block">/* About the LINUX64 ABI.  */</comment>
+<enum>enum <block>{
+  <decl><name>NUM_GPR_ARG_REGISTERS64</name> <init>= <expr>8</expr></init></decl>,
+  <decl><name>NUM_FPR_ARG_REGISTERS64</name> <init>= <expr>13</expr></init></decl>
+}</block>;</enum>
+<enum>enum <block>{ <decl><name>ASM_NEEDS_REGISTERS64</name> <init>= <expr>4</expr></init></decl> }</block>;</enum>
+
+<comment type="block">/* ffi_prep_args64 is called by the assembly routine once stack space
+   has been allocated for the function's arguments.
+
+   The stack layout we want looks like this:
+
+   |   Ret addr from ffi_call_LINUX64	8bytes	|	higher addresses
+   |--------------------------------------------|
+   |   CR save area			8bytes	|
+   |--------------------------------------------|
+   |   Previous backchain pointer	8	|	stack pointer here
+   |--------------------------------------------|&lt;+ &lt;&lt;&lt;	on entry to
+   |   Saved r28-r31			4*8	| |	ffi_call_LINUX64
+   |--------------------------------------------| |
+   |   GPR registers r3-r10		8*8	| |
+   |--------------------------------------------| |
+   |   FPR registers f1-f13 (optional)	13*8	| |
+   |--------------------------------------------| |
+   |   Parameter save area		        | |
+   |--------------------------------------------| |
+   |   TOC save area			8	| |
+   |--------------------------------------------| |	stack	|
+   |   Linker doubleword		8	| |	grows	|
+   |--------------------------------------------| |	down	V
+   |   Compiler doubleword		8	| |
+   |--------------------------------------------| |	lower addresses
+   |   Space for callee's LR		8	| |
+   |--------------------------------------------| |
+   |   CR save area			8	| |
+   |--------------------------------------------| |	stack pointer here
+   |   Current backchain pointer	8	|-/	during
+   |--------------------------------------------|   &lt;&lt;&lt;	ffi_call_LINUX64
+
+*/</comment>
+
+<function><type><name>void</name> <name>FFI_HIDDEN</name></type>
+<name>ffi_prep_args64</name> <parameter_list>(<param><decl><type><name>extended_cif</name> *</type><name>ecif</name></decl></param>, <param><decl><type><name>unsigned</name> <name>long</name> *<specifier>const</specifier></type> <name>stack</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>unsigned</name> <name>long</name></type> <name>bytes</name> <init>= <expr><name><name>ecif</name>-&gt;<name>cif</name>-&gt;<name>bytes</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>unsigned</name> <name>long</name></type> <name>flags</name> <init>= <expr><name><name>ecif</name>-&gt;<name>cif</name>-&gt;<name>flags</name></name></expr></init></decl>;</decl_stmt>
+
+  <typedef>typedef <type><union>union <block>{
+    <decl_stmt><decl><type><name>char</name> *</type><name>c</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>unsigned</name> <name>long</name> *</type><name>ul</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>float</name> *</type><name>f</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>double</name> *</type><name>d</name></decl>;</decl_stmt>
+  }</block></union></type> <name>valp</name>;</typedef>
+
+  <comment type="block">/* 'stacktop' points at the previous backchain pointer.  */</comment>
+  <decl_stmt><decl><type><name>valp</name></type> <name>stacktop</name></decl>;</decl_stmt>
+
+  <comment type="block">/* 'next_arg' points at the space for gpr3, and grows upwards as
+     we use GPR registers, then continues at rest.  */</comment>
+  <decl_stmt><decl><type><name>valp</name></type> <name>gpr_base</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>valp</name></type> <name>gpr_end</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>valp</name></type> <name>rest</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>valp</name></type> <name>next_arg</name></decl>;</decl_stmt>
+
+  <comment type="block">/* 'fpr_base' points at the space for fpr3, and grows upwards as
+     we use FPR registers.  */</comment>
+  <decl_stmt><decl><type><name>valp</name></type> <name>fpr_base</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>fparg_count</name></decl>;</decl_stmt>
+
+  <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>, <decl><type ref="prev"/><name>words</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>ffi_type</name> **</type><name>ptr</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>double</name></type> <name>double_tmp</name></decl>;</decl_stmt>
+  <union>union <block>{
+    <decl_stmt><decl><type><name>void</name> **</type><name>v</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name> **</type><name>c</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>signed</name> <name>char</name> **</type><name>sc</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>unsigned</name> <name>char</name> **</type><name>uc</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>signed</name> <name>short</name> **</type><name>ss</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>unsigned</name> <name>short</name> **</type><name>us</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>signed</name> <name>int</name> **</type><name>si</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>unsigned</name> <name>int</name> **</type><name>ui</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>unsigned</name> <name>long</name> **</type><name>ul</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>float</name> **</type><name>f</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>double</name> **</type><name>d</name></decl>;</decl_stmt>
+  }</block> <decl><name>p_argv</name></decl>;</union>
+  <decl_stmt><decl><type><name>unsigned</name> <name>long</name></type> <name>gprvalue</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name><name>stacktop</name>.<name>c</name></name> = (<name>char</name> *) <name>stack</name> + <name>bytes</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>gpr_base</name>.<name>ul</name></name> = <name><name>stacktop</name>.<name>ul</name></name> - <name>ASM_NEEDS_REGISTERS64</name> - <name>NUM_GPR_ARG_REGISTERS64</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>gpr_end</name>.<name>ul</name></name> = <name><name>gpr_base</name>.<name>ul</name></name> + <name>NUM_GPR_ARG_REGISTERS64</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>rest</name>.<name>ul</name></name> = <name>stack</name> + 6 + <name>NUM_GPR_ARG_REGISTERS64</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>fpr_base</name>.<name>d</name></name> = <name><name>gpr_base</name>.<name>d</name></name> - <name>NUM_FPR_ARG_REGISTERS64</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name>fparg_count</name> = 0</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>next_arg</name>.<name>ul</name></name> = <name><name>gpr_base</name>.<name>ul</name></name></expr>;</expr_stmt>
+
+  <comment type="block">/* Check that everything starts aligned properly.  */</comment>
+  <expr_stmt><expr><call><name>FFI_ASSERT</name> <argument_list>(<argument><expr>((<name>unsigned</name> <name>long</name>) (<name>char</name> *) <name>stack</name> &amp; 0xF) == 0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>FFI_ASSERT</name> <argument_list>(<argument><expr>((<name>unsigned</name> <name>long</name>) <name><name>stacktop</name>.<name>c</name></name> &amp; 0xF) == 0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>FFI_ASSERT</name> <argument_list>(<argument><expr>(<name>bytes</name> &amp; 0xF) == 0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Deal with return values that are actually pass-by-reference.  */</comment>
+  <if>if <condition>(<expr><name>flags</name> &amp; <name>FLAG_RETVAL_REFERENCE</name></expr>)</condition><then>
+    <expr_stmt><expr>*<name><name>next_arg</name>.<name>ul</name></name>++ = (<name>unsigned</name> <name>long</name>) (<name>char</name> *) <name><name>ecif</name>-&gt;<name>rvalue</name></name></expr>;</expr_stmt></then></if>
+
+  <comment type="block">/* Now for the arguments.  */</comment>
+  <expr_stmt><expr><name><name>p_argv</name>.<name>v</name></name> = <name><name>ecif</name>-&gt;<name>avalue</name></name></expr>;</expr_stmt>
+  <for>for (<init><expr><name>ptr</name> = <name><name>ecif</name>-&gt;<name>cif</name>-&gt;<name>arg_types</name></name></expr>, <expr><name>i</name> = <name><name>ecif</name>-&gt;<name>cif</name>-&gt;<name>nargs</name></name></expr>;</init>
+       <condition><expr><name>i</name> &gt; 0</expr>;</condition>
+       <incr><expr><name>i</name>--</expr>, <expr><name>ptr</name>++</expr>, <expr><name><name>p_argv</name>.<name>v</name></name>++</expr></incr>)
+    <block>{
+      <switch>switch <condition>(<expr><name>(*<name>ptr</name>)-&gt;<name>type</name></name></expr>)</condition>
+	<block>{
+	<case>case <expr><name>FFI_TYPE_FLOAT</name></expr>:
+	  <expr_stmt><expr><name>double_tmp</name> = **<name><name>p_argv</name>.<name>f</name></name></expr>;</expr_stmt>
+	  <expr_stmt><expr>*<name><name>next_arg</name>.<name>f</name></name> = (<name>float</name>) <name>double_tmp</name></expr>;</expr_stmt>
+	  <if>if <condition>(<expr>++<name><name>next_arg</name>.<name>ul</name></name> == <name><name>gpr_end</name>.<name>ul</name></name></expr>)</condition><then>
+	    <expr_stmt><expr><name><name>next_arg</name>.<name>ul</name></name> = <name><name>rest</name>.<name>ul</name></name></expr>;</expr_stmt></then></if>
+	  <if>if <condition>(<expr><name>fparg_count</name> &lt; <name>NUM_FPR_ARG_REGISTERS64</name></expr>)</condition><then>
+	    <expr_stmt><expr>*<name><name>fpr_base</name>.<name>d</name></name>++ = <name>double_tmp</name></expr>;</expr_stmt></then></if>
+	  <expr_stmt><expr><name>fparg_count</name>++</expr>;</expr_stmt>
+	  <expr_stmt><expr><call><name>FFI_ASSERT</name> <argument_list>(<argument><expr><name>flags</name> &amp; <name>FLAG_FP_ARGUMENTS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	  <break>break;</break>
+
+	</case><case>case <expr><name>FFI_TYPE_DOUBLE</name></expr>:
+	  <expr_stmt><expr><name>double_tmp</name> = **<name><name>p_argv</name>.<name>d</name></name></expr>;</expr_stmt>
+	  <expr_stmt><expr>*<name><name>next_arg</name>.<name>d</name></name> = <name>double_tmp</name></expr>;</expr_stmt>
+	  <if>if <condition>(<expr>++<name><name>next_arg</name>.<name>ul</name></name> == <name><name>gpr_end</name>.<name>ul</name></name></expr>)</condition><then>
+	    <expr_stmt><expr><name><name>next_arg</name>.<name>ul</name></name> = <name><name>rest</name>.<name>ul</name></name></expr>;</expr_stmt></then></if>
+	  <if>if <condition>(<expr><name>fparg_count</name> &lt; <name>NUM_FPR_ARG_REGISTERS64</name></expr>)</condition><then>
+	    <expr_stmt><expr>*<name><name>fpr_base</name>.<name>d</name></name>++ = <name>double_tmp</name></expr>;</expr_stmt></then></if>
+	  <expr_stmt><expr><name>fparg_count</name>++</expr>;</expr_stmt>
+	  <expr_stmt><expr><call><name>FFI_ASSERT</name> <argument_list>(<argument><expr><name>flags</name> &amp; <name>FLAG_FP_ARGUMENTS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	  <break>break;</break>
+
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>FFI_TYPE_LONGDOUBLE</name> != <name>FFI_TYPE_DOUBLE</name></expr></cpp:if>
+	</case><case>case <expr><name>FFI_TYPE_LONGDOUBLE</name></expr>:
+	  <expr_stmt><expr><name>double_tmp</name> = (*<name><name>p_argv</name>.<name>d</name></name>)<index>[<expr>0</expr>]</index></expr>;</expr_stmt>
+	  <expr_stmt><expr>*<name><name>next_arg</name>.<name>d</name></name> = <name>double_tmp</name></expr>;</expr_stmt>
+	  <if>if <condition>(<expr>++<name><name>next_arg</name>.<name>ul</name></name> == <name><name>gpr_end</name>.<name>ul</name></name></expr>)</condition><then>
+	    <expr_stmt><expr><name><name>next_arg</name>.<name>ul</name></name> = <name><name>rest</name>.<name>ul</name></name></expr>;</expr_stmt></then></if>
+	  <if>if <condition>(<expr><name>fparg_count</name> &lt; <name>NUM_FPR_ARG_REGISTERS64</name></expr>)</condition><then>
+	    <expr_stmt><expr>*<name><name>fpr_base</name>.<name>d</name></name>++ = <name>double_tmp</name></expr>;</expr_stmt></then></if>
+	  <expr_stmt><expr><name>fparg_count</name>++</expr>;</expr_stmt>
+	  <expr_stmt><expr><name>double_tmp</name> = (*<name><name>p_argv</name>.<name>d</name></name>)<index>[<expr>1</expr>]</index></expr>;</expr_stmt>
+	  <expr_stmt><expr>*<name><name>next_arg</name>.<name>d</name></name> = <name>double_tmp</name></expr>;</expr_stmt>
+	  <if>if <condition>(<expr>++<name><name>next_arg</name>.<name>ul</name></name> == <name><name>gpr_end</name>.<name>ul</name></name></expr>)</condition><then>
+	    <expr_stmt><expr><name><name>next_arg</name>.<name>ul</name></name> = <name><name>rest</name>.<name>ul</name></name></expr>;</expr_stmt></then></if>
+	  <if>if <condition>(<expr><name>fparg_count</name> &lt; <name>NUM_FPR_ARG_REGISTERS64</name></expr>)</condition><then>
+	    <expr_stmt><expr>*<name><name>fpr_base</name>.<name>d</name></name>++ = <name>double_tmp</name></expr>;</expr_stmt></then></if>
+	  <expr_stmt><expr><name>fparg_count</name>++</expr>;</expr_stmt>
+	  <expr_stmt><expr><call><name>FFI_ASSERT</name> <argument_list>(<argument><expr><name>__LDBL_MANT_DIG__</name> == 106</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	  <expr_stmt><expr><call><name>FFI_ASSERT</name> <argument_list>(<argument><expr><name>flags</name> &amp; <name>FLAG_FP_ARGUMENTS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	  <break>break;</break>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+	</case><case>case <expr><name>FFI_TYPE_STRUCT</name></expr>:
+	  <expr_stmt><expr><name>words</name> = (<name>(*<name>ptr</name>)-&gt;<name>size</name></name> + 7) / 8</expr>;</expr_stmt>
+	  <if>if <condition>(<expr><name><name>next_arg</name>.<name>ul</name></name> &gt;= <name><name>gpr_base</name>.<name>ul</name></name> &amp;&amp; <name><name>next_arg</name>.<name>ul</name></name> + <name>words</name> &gt; <name><name>gpr_end</name>.<name>ul</name></name></expr>)</condition><then>
+	    <block>{
+	      <decl_stmt><decl><type><name>size_t</name></type> <name>first</name> <init>= <expr><name><name>gpr_end</name>.<name>c</name></name> - <name><name>next_arg</name>.<name>c</name></name></expr></init></decl>;</decl_stmt>
+	      <expr_stmt><expr><call><name>memcpy</name> <argument_list>(<argument><expr><name><name>next_arg</name>.<name>c</name></name></expr></argument>, <argument><expr>*<name><name>p_argv</name>.<name>c</name></name></expr></argument>, <argument><expr><name>first</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	      <expr_stmt><expr><call><name>memcpy</name> <argument_list>(<argument><expr><name><name>rest</name>.<name>c</name></name></expr></argument>, <argument><expr>*<name><name>p_argv</name>.<name>c</name></name> + <name>first</name></expr></argument>, <argument><expr><name>(*<name>ptr</name>)-&gt;<name>size</name></name> - <name>first</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	      <expr_stmt><expr><name><name>next_arg</name>.<name>c</name></name> = <name><name>rest</name>.<name>c</name></name> + <name>words</name> * 8 - <name>first</name></expr>;</expr_stmt>
+	    }</block></then>
+	  <else>else
+	    <block>{
+	      <decl_stmt><decl><type><name>char</name> *</type><name>where</name> <init>= <expr><name><name>next_arg</name>.<name>c</name></name></expr></init></decl>;</decl_stmt>
+
+	      <comment type="block">/* Structures with size less than eight bytes are passed
+		 left-padded.  */</comment>
+	      <if>if <condition>(<expr><name>(*<name>ptr</name>)-&gt;<name>size</name></name> &lt; 8</expr>)</condition><then>
+		<expr_stmt><expr><name>where</name> += 8 - <name>(*<name>ptr</name>)-&gt;<name>size</name></name></expr>;</expr_stmt></then></if>
+
+	      <expr_stmt><expr><call><name>memcpy</name> <argument_list>(<argument><expr><name>where</name></expr></argument>, <argument><expr>*<name><name>p_argv</name>.<name>c</name></name></expr></argument>, <argument><expr><name>(*<name>ptr</name>)-&gt;<name>size</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	      <expr_stmt><expr><name><name>next_arg</name>.<name>ul</name></name> += <name>words</name></expr>;</expr_stmt>
+	      <if>if <condition>(<expr><name><name>next_arg</name>.<name>ul</name></name> == <name><name>gpr_end</name>.<name>ul</name></name></expr>)</condition><then>
+		<expr_stmt><expr><name><name>next_arg</name>.<name>ul</name></name> = <name><name>rest</name>.<name>ul</name></name></expr>;</expr_stmt></then></if>
+	    }</block></else></if>
+	  <break>break;</break>
+
+	</case><case>case <expr><name>FFI_TYPE_UINT8</name></expr>:
+	  <expr_stmt><expr><name>gprvalue</name> = **<name><name>p_argv</name>.<name>uc</name></name></expr>;</expr_stmt>
+	  <goto>goto <name>putgpr</name>;</goto>
+	</case><case>case <expr><name>FFI_TYPE_SINT8</name></expr>:
+	  <expr_stmt><expr><name>gprvalue</name> = **<name><name>p_argv</name>.<name>sc</name></name></expr>;</expr_stmt>
+	  <goto>goto <name>putgpr</name>;</goto>
+	</case><case>case <expr><name>FFI_TYPE_UINT16</name></expr>:
+	  <expr_stmt><expr><name>gprvalue</name> = **<name><name>p_argv</name>.<name>us</name></name></expr>;</expr_stmt>
+	  <goto>goto <name>putgpr</name>;</goto>
+	</case><case>case <expr><name>FFI_TYPE_SINT16</name></expr>:
+	  <expr_stmt><expr><name>gprvalue</name> = **<name><name>p_argv</name>.<name>ss</name></name></expr>;</expr_stmt>
+	  <goto>goto <name>putgpr</name>;</goto>
+	</case><case>case <expr><name>FFI_TYPE_UINT32</name></expr>:
+	  <expr_stmt><expr><name>gprvalue</name> = **<name><name>p_argv</name>.<name>ui</name></name></expr>;</expr_stmt>
+	  <goto>goto <name>putgpr</name>;</goto>
+	</case><case>case <expr><name>FFI_TYPE_INT</name></expr>:
+	</case><case>case <expr><name>FFI_TYPE_SINT32</name></expr>:
+	  <expr_stmt><expr><name>gprvalue</name> = **<name><name>p_argv</name>.<name>si</name></name></expr>;</expr_stmt>
+	  <goto>goto <name>putgpr</name>;</goto>
+
+	</case><case>case <expr><name>FFI_TYPE_UINT64</name></expr>:
+	</case><case>case <expr><name>FFI_TYPE_SINT64</name></expr>:
+	</case><case>case <expr><name>FFI_TYPE_POINTER</name></expr>:
+	  <expr_stmt><expr><name>gprvalue</name> = **<name><name>p_argv</name>.<name>ul</name></name></expr>;</expr_stmt>
+	<label><name>putgpr</name>:</label>
+	  <expr_stmt><expr>*<name><name>next_arg</name>.<name>ul</name></name>++ = <name>gprvalue</name></expr>;</expr_stmt>
+	  <if>if <condition>(<expr><name><name>next_arg</name>.<name>ul</name></name> == <name><name>gpr_end</name>.<name>ul</name></name></expr>)</condition><then>
+	    <expr_stmt><expr><name><name>next_arg</name>.<name>ul</name></name> = <name><name>rest</name>.<name>ul</name></name></expr>;</expr_stmt></then></if>
+	  <break>break;</break>
+	</case>}</block></switch>
+    }</block></for>
+
+  <expr_stmt><expr><call><name>FFI_ASSERT</name> <argument_list>(<argument><expr><name>flags</name> &amp; <name>FLAG_4_GPR_ARGUMENTS</name>
+	      || (<name><name>next_arg</name>.<name>ul</name></name> &gt;= <name><name>gpr_base</name>.<name>ul</name></name>
+		  &amp;&amp; <name><name>next_arg</name>.<name>ul</name></name> &lt;= <name><name>gpr_base</name>.<name>ul</name></name> + 4)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+
+
+<comment type="block">/* Perform machine dependent cif processing */</comment>
+<function><type><name>ffi_status</name></type>
+<name>ffi_prep_cif_machdep</name> <parameter_list>(<param><decl><type><name>ffi_cif</name> *</type><name>cif</name></decl></param>)</parameter_list>
+<block>{
+  <comment type="block">/* All this is for the SYSV and LINUX64 ABI.  */</comment>
+  <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>ffi_type</name> **</type><name>ptr</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>unsigned</name></type> <name>bytes</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>fparg_count</name> <init>= <expr>0</expr></init>, <name>intarg_count</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>unsigned</name></type> <name>flags</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>unsigned</name></type> <name>struct_copy_size</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>unsigned</name></type> <name>type</name> <init>= <expr><name><name>cif</name>-&gt;<name>rtype</name>-&gt;<name>type</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>unsigned</name></type> <name>size</name> <init>= <expr><name><name>cif</name>-&gt;<name>rtype</name>-&gt;<name>size</name></name></expr></init></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr><name><name>cif</name>-&gt;<name>abi</name></name> == <name>FFI_LINUX_SOFT_FLOAT</name></expr>)</condition><then>
+    <expr_stmt><expr><name>NUM_FPR_ARG_REGISTERS</name> = 0</expr>;</expr_stmt></then></if>
+
+  <if>if <condition>(<expr><name><name>cif</name>-&gt;<name>abi</name></name> != <name>FFI_LINUX64</name></expr>)</condition><then>
+    <block>{
+      <comment type="block">/* All the machine-independent calculation of cif-&gt;bytes will be wrong.
+	 Redo the calculation for SYSV.  */</comment>
+
+      <comment type="block">/* Space for the frame pointer, callee's LR, and the asm's temp regs.  */</comment>
+      <expr_stmt><expr><name>bytes</name> = (2 + <name>ASM_NEEDS_REGISTERS</name>) * <sizeof>sizeof <argument_list>(<argument><expr><name>int</name></expr></argument>)</argument_list></sizeof></expr>;</expr_stmt>
+
+      <comment type="block">/* Space for the GPR registers.  */</comment>
+      <expr_stmt><expr><name>bytes</name> += <name>NUM_GPR_ARG_REGISTERS</name> * <sizeof>sizeof <argument_list>(<argument><expr><name>int</name></expr></argument>)</argument_list></sizeof></expr>;</expr_stmt>
+    }</block></then>
+  <else>else
+    <block>{
+      <comment type="block">/* 64-bit ABI.  */</comment>
+
+      <comment type="block">/* Space for backchain, CR, LR, cc/ld doubleword, TOC and the asm's temp
+	 regs.  */</comment>
+      <expr_stmt><expr><name>bytes</name> = (6 + <name>ASM_NEEDS_REGISTERS64</name>) * <sizeof>sizeof <argument_list>(<argument><expr><name>long</name></expr></argument>)</argument_list></sizeof></expr>;</expr_stmt>
+
+      <comment type="block">/* Space for the mandatory parm save area and general registers.  */</comment>
+      <expr_stmt><expr><name>bytes</name> += 2 * <name>NUM_GPR_ARG_REGISTERS64</name> * <sizeof>sizeof <argument_list>(<argument><expr><name>long</name></expr></argument>)</argument_list></sizeof></expr>;</expr_stmt>
+    }</block></else></if>
+
+  <comment type="block">/* Return value handling.  The rules for SYSV are as follows:
+     - 32-bit (or less) integer values are returned in gpr3;
+     - Structures of size &lt;= 4 bytes also returned in gpr3;
+     - 64-bit integer values and structures between 5 and 8 bytes are returned
+     in gpr3 and gpr4;
+     - Single/double FP values are returned in fpr1;
+     - Larger structures are allocated space and a pointer is passed as
+     the first argument.
+     - long doubles (if not equivalent to double) are returned in
+     fpr1,fpr2 for Linux and as for large structs for SysV.
+     For LINUX64:
+     - integer values in gpr3;
+     - Structures/Unions by reference;
+     - Single/double FP values in fpr1, long double in fpr1,fpr2.
+     - soft-float float/doubles are treated as UINT32/UINT64 respectivley.
+     - soft-float long doubles are returned in gpr3-gpr6.  */</comment>
+  <switch>switch <condition>(<expr><name>type</name></expr>)</condition>
+    <block>{
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>FFI_TYPE_LONGDOUBLE</name> != <name>FFI_TYPE_DOUBLE</name></expr></cpp:if>
+    <case>case <expr><name>FFI_TYPE_LONGDOUBLE</name></expr>:
+      <if>if <condition>(<expr><name><name>cif</name>-&gt;<name>abi</name></name> != <name>FFI_LINUX</name> &amp;&amp; <name><name>cif</name>-&gt;<name>abi</name></name> != <name>FFI_LINUX64</name>
+	&amp;&amp; <name><name>cif</name>-&gt;<name>abi</name></name> != <name>FFI_LINUX_SOFT_FLOAT</name></expr>)</condition><then>
+	<goto>goto <name>byref</name>;</goto></then></if>
+      <expr_stmt><expr><name>flags</name> |= <name>FLAG_RETURNS_128BITS</name></expr>;</expr_stmt>
+      <comment type="block">/* Fall through.  */</comment>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+    </case><case>case <expr><name>FFI_TYPE_DOUBLE</name></expr>:
+      <expr_stmt><expr><name>flags</name> |= <name>FLAG_RETURNS_64BITS</name></expr>;</expr_stmt>
+      <comment type="block">/* Fall through.  */</comment>
+    </case><case>case <expr><name>FFI_TYPE_FLOAT</name></expr>:
+      <comment type="block">/* With FFI_LINUX_SOFT_FLOAT no fp registers are used.  */</comment>
+      <if>if <condition>(<expr><name><name>cif</name>-&gt;<name>abi</name></name> != <name>FFI_LINUX_SOFT_FLOAT</name></expr>)</condition><then>
+	<expr_stmt><expr><name>flags</name> |= <name>FLAG_RETURNS_FP</name></expr>;</expr_stmt></then></if>
+      <break>break;</break>
+
+    </case><case>case <expr><name>FFI_TYPE_UINT64</name></expr>:
+    </case><case>case <expr><name>FFI_TYPE_SINT64</name></expr>:
+      <expr_stmt><expr><name>flags</name> |= <name>FLAG_RETURNS_64BITS</name></expr>;</expr_stmt>
+      <break>break;</break>
+
+    </case><case>case <expr><name>FFI_TYPE_STRUCT</name></expr>:
+      <if>if <condition>(<expr><name><name>cif</name>-&gt;<name>abi</name></name> == <name>FFI_SYSV</name></expr>)</condition><then>
+	<block>{
+	  <comment type="block">/* The final SYSV ABI says that structures smaller or equal 8 bytes
+	     are returned in r3/r4. The FFI_GCC_SYSV ABI instead returns them
+	     in memory.  */</comment>
+
+	  <comment type="block">/* Treat structs with size &lt;= 8 bytes.  */</comment>
+	  <if>if <condition>(<expr><name>size</name> &lt;= 8</expr>)</condition><then>
+	    <block>{
+	      <expr_stmt><expr><name>flags</name> |= <name>FLAG_RETURNS_SMST</name></expr>;</expr_stmt>
+	      <comment type="block">/* These structs are returned in r3. We pack the type and the
+		 precalculated shift value (needed in the sysv.S) into flags.
+		 The same applies for the structs returned in r3/r4.  */</comment>
+	      <if>if <condition>(<expr><name>size</name> &lt;= 4</expr>)</condition><then>
+		<block>{
+		  <expr_stmt><expr><name>flags</name> |= 1 &lt;&lt; (31 - <name>FFI_SYSV_TYPE_SMALL_STRUCT</name> - 1)</expr>;</expr_stmt>
+		  <expr_stmt><expr><name>flags</name> |= 8 * (4 - <name>size</name>) &lt;&lt; 4</expr>;</expr_stmt>
+		  <break>break;</break>
+		}</block></then></if>
+	      <comment type="block">/* These structs are returned in r3 and r4. See above.   */</comment>
+	      <if>if  <condition>(<expr><name>size</name> &lt;= 8</expr>)</condition><then>
+		<block>{
+		  <expr_stmt><expr><name>flags</name> |= 1 &lt;&lt; (31 - <name>FFI_SYSV_TYPE_SMALL_STRUCT</name> - 2)</expr>;</expr_stmt>
+		  <expr_stmt><expr><name>flags</name> |= 8 * (8 - <name>size</name>) &lt;&lt; 4</expr>;</expr_stmt>
+		  <break>break;</break>
+		}</block></then></if>
+	    }</block></then></if>
+	}</block></then></if>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>FFI_TYPE_LONGDOUBLE</name> != <name>FFI_TYPE_DOUBLE</name></expr></cpp:if>
+    <label><name>byref</name>:</label>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+      <expr_stmt><expr><name>intarg_count</name>++</expr>;</expr_stmt>
+      <expr_stmt><expr><name>flags</name> |= <name>FLAG_RETVAL_REFERENCE</name></expr>;</expr_stmt>
+      <comment type="block">/* Fall through.  */</comment>
+    </case><case>case <expr><name>FFI_TYPE_VOID</name></expr>:
+      <expr_stmt><expr><name>flags</name> |= <name>FLAG_RETURNS_NOTHING</name></expr>;</expr_stmt>
+      <break>break;</break>
+
+    </case><default>default:
+      <comment type="block">/* Returns 32-bit integer, or similar.  Nothing to do here.  */</comment>
+      <break>break;</break>
+    </default>}</block></switch>
+
+  <if>if <condition>(<expr><name><name>cif</name>-&gt;<name>abi</name></name> != <name>FFI_LINUX64</name></expr>)</condition><then>
+    <comment type="block">/* The first NUM_GPR_ARG_REGISTERS words of integer arguments, and the
+       first NUM_FPR_ARG_REGISTERS fp arguments, go in registers; the rest
+       goes on the stack.  Structures and long doubles (if not equivalent
+       to double) are passed as a pointer to a copy of the structure.
+       Stuff on the stack needs to keep proper alignment.  */</comment>
+    <for>for (<init><expr><name>ptr</name> = <name><name>cif</name>-&gt;<name>arg_types</name></name></expr>, <expr><name>i</name> = <name><name>cif</name>-&gt;<name>nargs</name></name></expr>;</init> <condition><expr><name>i</name> &gt; 0</expr>;</condition> <incr><expr><name>i</name>--</expr>, <expr><name>ptr</name>++</expr></incr>)
+      <block>{
+	<switch>switch <condition>(<expr><name>(*<name>ptr</name>)-&gt;<name>type</name></name></expr>)</condition>
+	  <block>{
+	  <case>case <expr><name>FFI_TYPE_FLOAT</name></expr>:
+	    <comment type="block">/* With FFI_LINUX_SOFT_FLOAT floats are handled like UINT32.  */</comment>
+	    <if>if <condition>(<expr><name><name>cif</name>-&gt;<name>abi</name></name> == <name>FFI_LINUX_SOFT_FLOAT</name></expr>)</condition><then>
+	      <goto>goto <name>soft_float_cif</name>;</goto></then></if>
+	    <expr_stmt><expr><name>fparg_count</name>++</expr>;</expr_stmt>
+	    <comment type="block">/* floating singles are not 8-aligned on stack */</comment>
+	    <break>break;</break>
+
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>FFI_TYPE_LONGDOUBLE</name> != <name>FFI_TYPE_DOUBLE</name></expr></cpp:if>
+	  </case><case>case <expr><name>FFI_TYPE_LONGDOUBLE</name></expr>:
+	    <if>if <condition>(<expr><name><name>cif</name>-&gt;<name>abi</name></name> != <name>FFI_LINUX</name> &amp;&amp; <name><name>cif</name>-&gt;<name>abi</name></name> != <name>FFI_LINUX_SOFT_FLOAT</name></expr>)</condition><then>
+	      <goto>goto <name>do_struct</name>;</goto></then></if>
+	    <if>if <condition>(<expr><name><name>cif</name>-&gt;<name>abi</name></name> == <name>FFI_LINUX_SOFT_FLOAT</name></expr>)</condition><then>
+	      <block>{
+		<if>if <condition>(<expr><name>intarg_count</name> &gt;= <name>NUM_GPR_ARG_REGISTERS</name> - 3
+		  || <name>intarg_count</name> &lt; <name>NUM_GPR_ARG_REGISTERS</name></expr>)</condition><then>
+		  <comment type="block">/* A long double in FFI_LINUX_SOFT_FLOAT can use only
+		     a set of four consecutive gprs. If we have not enough,
+		     we have to adjust the intarg_count value.  */</comment>
+		  <expr_stmt><expr><name>intarg_count</name> += <name>NUM_GPR_ARG_REGISTERS</name> - <name>intarg_count</name></expr>;</expr_stmt></then></if>
+		<expr_stmt><expr><name>intarg_count</name> += 4</expr>;</expr_stmt>
+		<break>break;</break>
+	      }</block></then>
+	    <else>else
+	      <expr_stmt><expr><name>fparg_count</name>++</expr>;</expr_stmt></else></if>
+	    <comment type="block">/* Fall thru */</comment>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	  </case><case>case <expr><name>FFI_TYPE_DOUBLE</name></expr>:
+	    <comment type="block">/* With FFI_LINUX_SOFT_FLOAT doubles are handled like UINT64.  */</comment>
+	    <if>if <condition>(<expr><name><name>cif</name>-&gt;<name>abi</name></name> == <name>FFI_LINUX_SOFT_FLOAT</name></expr>)</condition><then>
+	      <goto>goto <name>soft_double_cif</name>;</goto></then></if>
+	    <expr_stmt><expr><name>fparg_count</name>++</expr>;</expr_stmt>
+	    <comment type="block">/* If this FP arg is going on the stack, it must be
+	       8-byte-aligned.  */</comment>
+	    <if>if <condition>(<expr><name>fparg_count</name> &gt; <name>NUM_FPR_ARG_REGISTERS</name>
+		&amp;&amp; <name>intarg_count</name> &gt;= <name>NUM_GPR_ARG_REGISTERS</name>
+		&amp;&amp; <name>intarg_count</name> % 2 != 0</expr>)</condition><then>
+	      <expr_stmt><expr><name>intarg_count</name>++</expr>;</expr_stmt></then></if>
+	    <break>break;</break>
+
+	  </case><case>case <expr><name>FFI_TYPE_UINT64</name></expr>:
+	  </case><case>case <expr><name>FFI_TYPE_SINT64</name></expr>:
+	  <label><name>soft_double_cif</name>:</label>
+	    <comment type="block">/* 'long long' arguments are passed as two words, but
+	       either both words must fit in registers or both go
+	       on the stack.  If they go on the stack, they must
+	       be 8-byte-aligned.
+
+	       Also, only certain register pairs can be used for
+	       passing long long int -- specifically (r3,r4), (r5,r6),
+	       (r7,r8), (r9,r10).
+	    */</comment>
+	    <if>if <condition>(<expr><name>intarg_count</name> == <name>NUM_GPR_ARG_REGISTERS</name>-1
+		|| <name>intarg_count</name> % 2 != 0</expr>)</condition><then>
+	      <expr_stmt><expr><name>intarg_count</name>++</expr>;</expr_stmt></then></if>
+	    <expr_stmt><expr><name>intarg_count</name> += 2</expr>;</expr_stmt>
+	    <break>break;</break>
+
+	  </case><case>case <expr><name>FFI_TYPE_STRUCT</name></expr>:
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>FFI_TYPE_LONGDOUBLE</name> != <name>FFI_TYPE_DOUBLE</name></expr></cpp:if>
+	  <label><name>do_struct</name>:</label>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	    <comment type="block">/* We must allocate space for a copy of these to enforce
+	       pass-by-value.  Pad the space up to a multiple of 16
+	       bytes (the maximum alignment required for anything under
+	       the SYSV ABI).  */</comment>
+	    <expr_stmt><expr><name>struct_copy_size</name> += (<name>(*<name>ptr</name>)-&gt;<name>size</name></name> + 15) &amp; ~0xF</expr>;</expr_stmt>
+	    <comment type="block">/* Fall through (allocate space for the pointer).  */</comment>
+
+	  </case><default>default:
+	  <label><name>soft_float_cif</name>:</label>
+	    <comment type="block">/* Everything else is passed as a 4-byte word in a GPR, either
+	       the object itself or a pointer to it.  */</comment>
+	    <expr_stmt><expr><name>intarg_count</name>++</expr>;</expr_stmt>
+	    <break>break;</break>
+	  </default>}</block></switch>
+      }</block></for></then>
+  <else>else
+    <for>for (<init><expr><name>ptr</name> = <name><name>cif</name>-&gt;<name>arg_types</name></name></expr>, <expr><name>i</name> = <name><name>cif</name>-&gt;<name>nargs</name></name></expr>;</init> <condition><expr><name>i</name> &gt; 0</expr>;</condition> <incr><expr><name>i</name>--</expr>, <expr><name>ptr</name>++</expr></incr>)
+      <block>{
+	<switch>switch <condition>(<expr><name>(*<name>ptr</name>)-&gt;<name>type</name></name></expr>)</condition>
+	  <block>{
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>FFI_TYPE_LONGDOUBLE</name> != <name>FFI_TYPE_DOUBLE</name></expr></cpp:if>
+	  <case>case <expr><name>FFI_TYPE_LONGDOUBLE</name></expr>:
+	    <if>if <condition>(<expr><name><name>cif</name>-&gt;<name>abi</name></name> == <name>FFI_LINUX_SOFT_FLOAT</name></expr>)</condition><then>
+	      <expr_stmt><expr><name>intarg_count</name> += 4</expr>;</expr_stmt></then>
+	    <else>else
+	      <block>{
+		<expr_stmt><expr><name>fparg_count</name> += 2</expr>;</expr_stmt>
+		<expr_stmt><expr><name>intarg_count</name> += 2</expr>;</expr_stmt>
+	      }</block></else></if>
+	    <break>break;</break>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	  </case><case>case <expr><name>FFI_TYPE_FLOAT</name></expr>:
+	  </case><case>case <expr><name>FFI_TYPE_DOUBLE</name></expr>:
+	    <expr_stmt><expr><name>fparg_count</name>++</expr>;</expr_stmt>
+	    <expr_stmt><expr><name>intarg_count</name>++</expr>;</expr_stmt>
+	    <break>break;</break>
+
+	  </case><case>case <expr><name>FFI_TYPE_STRUCT</name></expr>:
+	    <expr_stmt><expr><name>intarg_count</name> += (<name>(*<name>ptr</name>)-&gt;<name>size</name></name> + 7) / 8</expr>;</expr_stmt>
+	    <break>break;</break>
+
+	  </case><default>default:
+	    <comment type="block">/* Everything else is passed as a 8-byte word in a GPR, either
+	       the object itself or a pointer to it.  */</comment>
+	    <expr_stmt><expr><name>intarg_count</name>++</expr>;</expr_stmt>
+	    <break>break;</break>
+	  </default>}</block></switch>
+      }</block></for></else></if>
+
+  <if>if <condition>(<expr><name>fparg_count</name> != 0</expr>)</condition><then>
+    <expr_stmt><expr><name>flags</name> |= <name>FLAG_FP_ARGUMENTS</name></expr>;</expr_stmt></then></if>
+  <if>if <condition>(<expr><name>intarg_count</name> &gt; 4</expr>)</condition><then>
+    <expr_stmt><expr><name>flags</name> |= <name>FLAG_4_GPR_ARGUMENTS</name></expr>;</expr_stmt></then></if>
+  <if>if <condition>(<expr><name>struct_copy_size</name> != 0</expr>)</condition><then>
+    <expr_stmt><expr><name>flags</name> |= <name>FLAG_ARG_NEEDS_COPY</name></expr>;</expr_stmt></then></if>
+
+  <if>if <condition>(<expr><name><name>cif</name>-&gt;<name>abi</name></name> != <name>FFI_LINUX64</name></expr>)</condition><then>
+    <block>{
+      <comment type="block">/* Space for the FPR registers, if needed.  */</comment>
+      <if>if <condition>(<expr><name>fparg_count</name> != 0</expr>)</condition><then>
+	<expr_stmt><expr><name>bytes</name> += <name>NUM_FPR_ARG_REGISTERS</name> * <sizeof>sizeof <argument_list>(<argument><expr><name>double</name></expr></argument>)</argument_list></sizeof></expr>;</expr_stmt></then></if>
+
+      <comment type="block">/* Stack space.  */</comment>
+      <if>if <condition>(<expr><name>intarg_count</name> &gt; <name>NUM_GPR_ARG_REGISTERS</name></expr>)</condition><then>
+	<expr_stmt><expr><name>bytes</name> += (<name>intarg_count</name> - <name>NUM_GPR_ARG_REGISTERS</name>) * <sizeof>sizeof <argument_list>(<argument><expr><name>int</name></expr></argument>)</argument_list></sizeof></expr>;</expr_stmt></then></if>
+      <if>if <condition>(<expr><name>fparg_count</name> &gt; <name>NUM_FPR_ARG_REGISTERS</name></expr>)</condition><then>
+	<expr_stmt><expr><name>bytes</name> += (<name>fparg_count</name> - <name>NUM_FPR_ARG_REGISTERS</name>) * <sizeof>sizeof <argument_list>(<argument><expr><name>double</name></expr></argument>)</argument_list></sizeof></expr>;</expr_stmt></then></if>
+    }</block></then>
+  <else>else
+    <block>{
+      <comment type="block">/* Space for the FPR registers, if needed.  */</comment>
+      <if>if <condition>(<expr><name>fparg_count</name> != 0</expr>)</condition><then>
+	<expr_stmt><expr><name>bytes</name> += <name>NUM_FPR_ARG_REGISTERS64</name> * <sizeof>sizeof <argument_list>(<argument><expr><name>double</name></expr></argument>)</argument_list></sizeof></expr>;</expr_stmt></then></if>
+
+      <comment type="block">/* Stack space.  */</comment>
+      <if>if <condition>(<expr><name>intarg_count</name> &gt; <name>NUM_GPR_ARG_REGISTERS64</name></expr>)</condition><then>
+	<expr_stmt><expr><name>bytes</name> += (<name>intarg_count</name> - <name>NUM_GPR_ARG_REGISTERS64</name>) * <sizeof>sizeof <argument_list>(<argument><expr><name>long</name></expr></argument>)</argument_list></sizeof></expr>;</expr_stmt></then></if>
+    }</block></else></if>
+
+  <comment type="block">/* The stack space allocated needs to be a multiple of 16 bytes.  */</comment>
+  <expr_stmt><expr><name>bytes</name> = (<name>bytes</name> + 15) &amp; ~0xF</expr>;</expr_stmt>
+
+  <comment type="block">/* Add in the space for the copied structures.  */</comment>
+  <expr_stmt><expr><name>bytes</name> += <name>struct_copy_size</name></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name><name>cif</name>-&gt;<name>flags</name></name> = <name>flags</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>cif</name>-&gt;<name>bytes</name></name> = <name>bytes</name></expr>;</expr_stmt>
+
+  <return>return <expr><name>FFI_OK</name></expr>;</return>
+}</block></function>
+
+<function_decl><type><specifier>extern</specifier> <name>void</name></type> <name>ffi_call_SYSV</name><parameter_list>(<param><decl><type><name>extended_cif</name> *</type></decl></param>, <param><decl><type><name>unsigned</name></type></decl></param>, <param><decl><type><name>unsigned</name></type></decl></param>, <param><decl><type><name>unsigned</name> *</type></decl></param>,
+			  <param><function_decl><type><name>void</name></type> (*<name>fn</name>)<parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list></function_decl></param>)</parameter_list>;</function_decl>
+<function_decl><type><specifier>extern</specifier> <name>void</name> <name>FFI_HIDDEN</name></type> <name>ffi_call_LINUX64</name><parameter_list>(<param><decl><type><name>extended_cif</name> *</type></decl></param>, <param><decl><type><name>unsigned</name></type> <name>long</name></decl></param>,
+					<param><decl><type><name>unsigned</name></type> <name>long</name></decl></param>, <param><decl><type><name>unsigned</name></type> <name>long</name> *</decl></param>,
+					<param><function_decl><type><name>void</name></type> (*<name>fn</name>)<parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list></function_decl></param>)</parameter_list>;</function_decl>
+
+<function><type><name>void</name></type>
+<name>ffi_call</name><parameter_list>(<param><decl><type><name>ffi_cif</name> *</type><name>cif</name></decl></param>, <param><function_decl><type><name>void</name></type> (*<name>fn</name>)<parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list></function_decl></param>, <param><decl><type><name>void</name> *</type><name>rvalue</name></decl></param>, <param><decl><type><name>void</name> **</type><name>avalue</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>extended_cif</name></type> <name>ecif</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name><name>ecif</name>.<name>cif</name></name> = <name>cif</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>ecif</name>.<name>avalue</name></name> = <name>avalue</name></expr>;</expr_stmt>
+
+  <comment type="block">/* If the return value is a struct and we don't have a return	*/</comment>
+  <comment type="block">/* value address then we need to make one		        */</comment>
+
+  <if>if <condition>(<expr>(<name>rvalue</name> == <name>NULL</name>) &amp;&amp; (<name><name>cif</name>-&gt;<name>rtype</name>-&gt;<name>type</name></name> == <name>FFI_TYPE_STRUCT</name>)</expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><name><name>ecif</name>.<name>rvalue</name></name> = <call><name>alloca</name><argument_list>(<argument><expr><name><name>cif</name>-&gt;<name>rtype</name>-&gt;<name>size</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else
+    <expr_stmt><expr><name><name>ecif</name>.<name>rvalue</name></name> = <name>rvalue</name></expr>;</expr_stmt></else></if>
+
+
+  <switch>switch <condition>(<expr><name><name>cif</name>-&gt;<name>abi</name></name></expr>)</condition>
+    <block>{
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>POWERPC64</name></cpp:ifndef>
+    <case>case <expr><name>FFI_SYSV</name></expr>:
+    </case><case>case <expr><name>FFI_GCC_SYSV</name></expr>:
+    </case><case>case <expr><name>FFI_LINUX</name></expr>:
+    </case><case>case <expr><name>FFI_LINUX_SOFT_FLOAT</name></expr>:
+      <expr_stmt><expr><call><name>ffi_call_SYSV</name> <argument_list>(<argument><expr>&amp;<name>ecif</name></expr></argument>, <argument><expr>-<name><name>cif</name>-&gt;<name>bytes</name></name></expr></argument>, <argument><expr><name><name>cif</name>-&gt;<name>flags</name></name></expr></argument>, <argument><expr><name><name>ecif</name>.<name>rvalue</name></name></expr></argument>, <argument><expr><name>fn</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <break>break;</break>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+    </case><case>case <expr><name>FFI_LINUX64</name></expr>:
+      <expr_stmt><expr><call><name>ffi_call_LINUX64</name> <argument_list>(<argument><expr>&amp;<name>ecif</name></expr></argument>, <argument><expr>-(<name>long</name>) <name><name>cif</name>-&gt;<name>bytes</name></name></expr></argument>, <argument><expr><name><name>cif</name>-&gt;<name>flags</name></name></expr></argument>, <argument><expr><name><name>ecif</name>.<name>rvalue</name></name></expr></argument>, <argument><expr><name>fn</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <break>break;</break>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+    </case><default>default:
+      <expr_stmt><expr><call><name>FFI_ASSERT</name> <argument_list>(<argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <break>break;</break>
+    </default>}</block></switch>
+}</block></function>
+
+
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>POWERPC64</name></cpp:ifndef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>MIN_CACHE_LINE_SIZE</name></cpp:macro> <cpp:value>8</cpp:value></cpp:define>
+
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>flush_icache</name> <parameter_list>(<param><decl><type><name>char</name> *</type><name>wraddr</name></decl></param>, <param><decl><type><name>char</name> *</type><name>xaddr</name></decl></param>, <param><decl><type><name>int</name></type> <name>size</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+  <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name>size</name></expr>;</condition> <incr><expr><name>i</name> += <name>MIN_CACHE_LINE_SIZE</name></expr></incr>)
+    <asm>__asm__ <specifier>volatile</specifier> ("icbi 0,%0;" "dcbf 0,%1;"
+		      : : "r" (xaddr + i), "r" (wraddr + i) : "memory");</asm></for>
+  <asm>__asm__ <specifier>volatile</specifier> ("icbi 0,%0;" "dcbf 0,%1;" "sync;" "isync;"
+		    : : "r"(xaddr + size - 1), "r"(wraddr + size - 1)
+		    : "memory");</asm>
+}</block></function>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<function><type><name>ffi_status</name></type>
+<name>ffi_prep_closure_loc</name> <parameter_list>(<param><decl><type><name>ffi_closure</name> *</type><name>closure</name></decl></param>,
+		      <param><decl><type><name>ffi_cif</name> *</type><name>cif</name></decl></param>,
+		      <param><function_decl><type><name>void</name></type> (*<name>fun</name>) <parameter_list>(<param><decl><type><name>ffi_cif</name> *</type></decl></param>, <param><decl><type><name>void</name> *</type></decl></param>, <param><decl><type><name>void</name> **</type></decl></param>, <param><decl><type><name>void</name> *</type></decl></param>)</parameter_list></function_decl></param>,
+		      <param><decl><type><name>void</name> *</type><name>user_data</name></decl></param>,
+		      <param><decl><type><name>void</name> *</type><name>codeloc</name></decl></param>)</parameter_list>
+<block>{
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>POWERPC64</name></cpp:ifdef>
+  <decl_stmt><decl><type><name>void</name> **</type><name>tramp</name> <init>= <expr>(<name>void</name> **) &amp;<name><name>closure</name>-&gt;<name>tramp</name><index>[<expr>0</expr>]</index></name></expr></init></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>FFI_ASSERT</name> <argument_list>(<argument><expr><name><name>cif</name>-&gt;<name>abi</name></name> == <name>FFI_LINUX64</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <comment type="block">/* Copy function address and TOC from ffi_closure_LINUX64.  */</comment>
+  <expr_stmt><expr><call><name>memcpy</name> <argument_list>(<argument><expr><name>tramp</name></expr></argument>, <argument><expr>(<name>char</name> *) <name>ffi_closure_LINUX64</name></expr></argument>, <argument><expr>16</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>tramp</name><index>[<expr>2</expr>]</index></name> = <name>codeloc</name></expr>;</expr_stmt>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+  <decl_stmt><decl><type><name>unsigned</name> <name>int</name> *</type><name>tramp</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>FFI_ASSERT</name> <argument_list>(<argument><expr><name><name>cif</name>-&gt;<name>abi</name></name> == <name>FFI_GCC_SYSV</name> || <name><name>cif</name>-&gt;<name>abi</name></name> == <name>FFI_SYSV</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name>tramp</name> = (<name>unsigned</name> <name>int</name> *) &amp;<name><name>closure</name>-&gt;<name>tramp</name><index>[<expr>0</expr>]</index></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>tramp</name><index>[<expr>0</expr>]</index></name> = 0x7c0802a6</expr>;</expr_stmt>  <comment type="block">/*   mflr    r0 */</comment>
+  <expr_stmt><expr><name><name>tramp</name><index>[<expr>1</expr>]</index></name> = 0x4800000d</expr>;</expr_stmt>  <comment type="block">/*   bl      10 &lt;trampoline_initial+0x10&gt; */</comment>
+  <expr_stmt><expr><name><name>tramp</name><index>[<expr>4</expr>]</index></name> = 0x7d6802a6</expr>;</expr_stmt>  <comment type="block">/*   mflr    r11 */</comment>
+  <expr_stmt><expr><name><name>tramp</name><index>[<expr>5</expr>]</index></name> = 0x7c0803a6</expr>;</expr_stmt>  <comment type="block">/*   mtlr    r0 */</comment>
+  <expr_stmt><expr><name><name>tramp</name><index>[<expr>6</expr>]</index></name> = 0x800b0000</expr>;</expr_stmt>  <comment type="block">/*   lwz     r0,0(r11) */</comment>
+  <expr_stmt><expr><name><name>tramp</name><index>[<expr>7</expr>]</index></name> = 0x816b0004</expr>;</expr_stmt>  <comment type="block">/*   lwz     r11,4(r11) */</comment>
+  <expr_stmt><expr><name><name>tramp</name><index>[<expr>8</expr>]</index></name> = 0x7c0903a6</expr>;</expr_stmt>  <comment type="block">/*   mtctr   r0 */</comment>
+  <expr_stmt><expr><name><name>tramp</name><index>[<expr>9</expr>]</index></name> = 0x4e800420</expr>;</expr_stmt>  <comment type="block">/*   bctr */</comment>
+  <expr_stmt><expr>*(<name>void</name> **) &amp;<name><name>tramp</name><index>[<expr>2</expr>]</index></name> = (<name>void</name> *) <name>ffi_closure_SYSV</name></expr>;</expr_stmt> <comment type="block">/* function */</comment>
+  <expr_stmt><expr>*(<name>void</name> **) &amp;<name><name>tramp</name><index>[<expr>3</expr>]</index></name> = <name>codeloc</name></expr>;</expr_stmt>                   <comment type="block">/* context */</comment>
+
+  <comment type="block">/* Flush the icache.  */</comment>
+  <expr_stmt><expr><call><name>flush_icache</name> <argument_list>(<argument><expr>(<name>char</name> *)<name>tramp</name></expr></argument>, <argument><expr>(<name>char</name> *)<name>codeloc</name></expr></argument>, <argument><expr><name>FFI_TRAMPOLINE_SIZE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+  <expr_stmt><expr><name><name>closure</name>-&gt;<name>cif</name></name> = <name>cif</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>closure</name>-&gt;<name>fun</name></name> = <name>fun</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>closure</name>-&gt;<name>user_data</name></name> = <name>user_data</name></expr>;</expr_stmt>
+
+  <return>return <expr><name>FFI_OK</name></expr>;</return>
+}</block></function>
+
+<typedef>typedef <type><union>union
+<block>{
+  <decl_stmt><decl><type><name>float</name></type> <name>f</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>double</name></type> <name>d</name></decl>;</decl_stmt>
+}</block></union></type> <name>ffi_dblfl</name>;</typedef>
+
+<function_decl><type><name>int</name></type> <name>ffi_closure_helper_SYSV</name> <parameter_list>(<param><decl><type><name>ffi_closure</name> *</type></decl></param>, <param><decl><type><name>void</name> *</type></decl></param>, <param><decl><type><name>unsigned</name></type> <name>long</name> *</decl></param>,
+			     <param><decl><type><name>ffi_dblfl</name> *</type></decl></param>, <param><decl><type><name>unsigned</name></type> <name>long</name> *</decl></param>)</parameter_list>;</function_decl>
+
+<comment type="block">/* Basically the trampoline invokes ffi_closure_SYSV, and on
+ * entry, r11 holds the address of the closure.
+ * After storing the registers that could possibly contain
+ * parameters to be passed into the stack frame and setting
+ * up space for a return value, ffi_closure_SYSV invokes the
+ * following helper function to do most of the work
+ */</comment>
+
+<function><type><name>int</name></type>
+<name>ffi_closure_helper_SYSV</name> <parameter_list>(<param><decl><type><name>ffi_closure</name> *</type><name>closure</name></decl></param>, <param><decl><type><name>void</name> *</type><name>rvalue</name></decl></param>,
+			 <param><decl><type><name>unsigned</name> <name>long</name> *</type><name>pgr</name></decl></param>, <param><decl><type><name>ffi_dblfl</name> *</type><name>pfr</name></decl></param>,
+			 <param><decl><type><name>unsigned</name> <name>long</name> *</type><name>pst</name></decl></param>)</parameter_list>
+<block>{
+  <comment type="block">/* rvalue is the pointer to space for return value in closure assembly */</comment>
+  <comment type="block">/* pgr is the pointer to where r3-r10 are stored in ffi_closure_SYSV */</comment>
+  <comment type="block">/* pfr is the pointer to where f1-f8 are stored in ffi_closure_SYSV  */</comment>
+  <comment type="block">/* pst is the pointer to outgoing parameter stack in original caller */</comment>
+
+  <decl_stmt><decl><type><name>void</name> **</type>          <name>avalue</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>ffi_type</name> **</type>      <name>arg_types</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>long</name></type>             <name>i</name></decl>, <decl><type ref="prev"/><name>avn</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>long</name></type>             <name>nf</name></decl>;</decl_stmt>   <comment type="block">/* number of floating registers already used */</comment>
+  <decl_stmt><decl><type><name>long</name></type>             <name>ng</name></decl>;</decl_stmt>   <comment type="block">/* number of general registers already used */</comment>
+  <decl_stmt><decl><type><name>ffi_cif</name> *</type>        <name>cif</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>double</name></type>           <name>temp</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>unsigned</name></type>         <name>size</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name>cif</name> = <name><name>closure</name>-&gt;<name>cif</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name>avalue</name> = <call><name>alloca</name> <argument_list>(<argument><expr><name><name>cif</name>-&gt;<name>nargs</name></name> * <sizeof>sizeof <argument_list>(<argument><expr><name>void</name> *</expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>size</name> = <name><name>cif</name>-&gt;<name>rtype</name>-&gt;<name>size</name></name></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name>nf</name> = 0</expr>;</expr_stmt>
+  <expr_stmt><expr><name>ng</name> = 0</expr>;</expr_stmt>
+
+  <comment type="block">/* Copy the caller's structure return value address so that the closure
+     returns the data directly to the caller.
+     For FFI_SYSV the result is passed in r3/r4 if the struct size is less
+     or equal 8 bytes.  */</comment>
+
+  <if>if <condition>(<expr>(<name><name>cif</name>-&gt;<name>rtype</name>-&gt;<name>type</name></name> == <name>FFI_TYPE_STRUCT</name>
+       &amp;&amp; !((<name><name>cif</name>-&gt;<name>abi</name></name> == <name>FFI_SYSV</name>) &amp;&amp; (<name>size</name> &lt;= 8)))
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>FFI_TYPE_LONGDOUBLE</name> != <name>FFI_TYPE_DOUBLE</name></expr></cpp:if>
+      || (<name><name>cif</name>-&gt;<name>rtype</name>-&gt;<name>type</name></name> == <name>FFI_TYPE_LONGDOUBLE</name>
+	  &amp;&amp; <name><name>cif</name>-&gt;<name>abi</name></name> != <name>FFI_LINUX</name> &amp;&amp; <name><name>cif</name>-&gt;<name>abi</name></name> != <name>FFI_LINUX_SOFT_FLOAT</name>)</expr>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+      )</condition><then>
+    <block>{
+      <expr_stmt><expr><name>rvalue</name> = (<name>void</name> *) *<name>pgr</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name>ng</name>++</expr>;</expr_stmt>
+      <expr_stmt><expr><name>pgr</name>++</expr>;</expr_stmt>
+    }</block></then></if>
+
+  <expr_stmt><expr><name>i</name> = 0</expr>;</expr_stmt>
+  <expr_stmt><expr><name>avn</name> = <name><name>cif</name>-&gt;<name>nargs</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name>arg_types</name> = <name><name>cif</name>-&gt;<name>arg_types</name></name></expr>;</expr_stmt>
+
+  <comment type="block">/* Grab the addresses of the arguments from the stack frame.  */</comment>
+  <while>while <condition>(<expr><name>i</name> &lt; <name>avn</name></expr>)</condition>
+    <block>{
+      <switch>switch <condition>(<expr><name><name>arg_types</name><index>[<expr><name>i</name></expr>]</index></name>-&gt;<name>type</name></expr>)</condition>
+	<block>{
+	<case>case <expr><name>FFI_TYPE_SINT8</name></expr>:
+	</case><case>case <expr><name>FFI_TYPE_UINT8</name></expr>:
+	  <comment type="block">/* there are 8 gpr registers used to pass values */</comment>
+	  <if>if <condition>(<expr><name>ng</name> &lt; 8</expr>)</condition><then>
+	    <block>{
+	      <expr_stmt><expr><name><name>avalue</name><index>[<expr><name>i</name></expr>]</index></name> = (<name>char</name> *) <name>pgr</name> + 3</expr>;</expr_stmt>
+	      <expr_stmt><expr><name>ng</name>++</expr>;</expr_stmt>
+	      <expr_stmt><expr><name>pgr</name>++</expr>;</expr_stmt>
+	    }</block></then>
+	  <else>else
+	    <block>{
+	      <expr_stmt><expr><name><name>avalue</name><index>[<expr><name>i</name></expr>]</index></name> = (<name>char</name> *) <name>pst</name> + 3</expr>;</expr_stmt>
+	      <expr_stmt><expr><name>pst</name>++</expr>;</expr_stmt>
+	    }</block></else></if>
+	  <break>break;</break>
+
+	</case><case>case <expr><name>FFI_TYPE_SINT16</name></expr>:
+	</case><case>case <expr><name>FFI_TYPE_UINT16</name></expr>:
+	  <comment type="block">/* there are 8 gpr registers used to pass values */</comment>
+	  <if>if <condition>(<expr><name>ng</name> &lt; 8</expr>)</condition><then>
+	    <block>{
+	      <expr_stmt><expr><name><name>avalue</name><index>[<expr><name>i</name></expr>]</index></name> = (<name>char</name> *) <name>pgr</name> + 2</expr>;</expr_stmt>
+	      <expr_stmt><expr><name>ng</name>++</expr>;</expr_stmt>
+	      <expr_stmt><expr><name>pgr</name>++</expr>;</expr_stmt>
+	    }</block></then>
+	  <else>else
+	    <block>{
+	      <expr_stmt><expr><name><name>avalue</name><index>[<expr><name>i</name></expr>]</index></name> = (<name>char</name> *) <name>pst</name> + 2</expr>;</expr_stmt>
+	      <expr_stmt><expr><name>pst</name>++</expr>;</expr_stmt>
+	    }</block></else></if>
+	  <break>break;</break>
+
+	</case><case>case <expr><name>FFI_TYPE_SINT32</name></expr>:
+	</case><case>case <expr><name>FFI_TYPE_UINT32</name></expr>:
+	</case><case>case <expr><name>FFI_TYPE_POINTER</name></expr>:
+	<label><name>soft_float_closure</name>:</label>
+	  <comment type="block">/* there are 8 gpr registers used to pass values */</comment>
+	  <if>if <condition>(<expr><name>ng</name> &lt; 8</expr>)</condition><then>
+	    <block>{
+	      <expr_stmt><expr><name><name>avalue</name><index>[<expr><name>i</name></expr>]</index></name> = <name>pgr</name></expr>;</expr_stmt>
+	      <expr_stmt><expr><name>ng</name>++</expr>;</expr_stmt>
+	      <expr_stmt><expr><name>pgr</name>++</expr>;</expr_stmt>
+	    }</block></then>
+	  <else>else
+	    <block>{
+	      <expr_stmt><expr><name><name>avalue</name><index>[<expr><name>i</name></expr>]</index></name> = <name>pst</name></expr>;</expr_stmt>
+	      <expr_stmt><expr><name>pst</name>++</expr>;</expr_stmt>
+	    }</block></else></if>
+	  <break>break;</break>
+
+	</case><case>case <expr><name>FFI_TYPE_STRUCT</name></expr>:
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>FFI_TYPE_LONGDOUBLE</name> != <name>FFI_TYPE_DOUBLE</name></expr></cpp:if>
+	<label><name>do_struct</name>:</label>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	  <comment type="block">/* Structs are passed by reference. The address will appear in a
+	     gpr if it is one of the first 8 arguments.  */</comment>
+	  <if>if <condition>(<expr><name>ng</name> &lt; 8</expr>)</condition><then>
+	    <block>{
+	      <expr_stmt><expr><name><name>avalue</name><index>[<expr><name>i</name></expr>]</index></name> = (<name>void</name> *) *<name>pgr</name></expr>;</expr_stmt>
+	      <expr_stmt><expr><name>ng</name>++</expr>;</expr_stmt>
+	      <expr_stmt><expr><name>pgr</name>++</expr>;</expr_stmt>
+	    }</block></then>
+	  <else>else
+	    <block>{
+	      <expr_stmt><expr><name><name>avalue</name><index>[<expr><name>i</name></expr>]</index></name> = (<name>void</name> *) *<name>pst</name></expr>;</expr_stmt>
+	      <expr_stmt><expr><name>pst</name>++</expr>;</expr_stmt>
+	    }</block></else></if>
+	  <break>break;</break>
+
+	</case><case>case <expr><name>FFI_TYPE_SINT64</name></expr>:
+	</case><case>case <expr><name>FFI_TYPE_UINT64</name></expr>:
+	<label><name>soft_double_closure</name>:</label>
+	  <comment type="block">/* passing long long ints are complex, they must
+	   * be passed in suitable register pairs such as
+	   * (r3,r4) or (r5,r6) or (r6,r7), or (r7,r8) or (r9,r10)
+	   * and if the entire pair aren't available then the outgoing
+	   * parameter stack is used for both but an alignment of 8
+	   * must will be kept.  So we must either look in pgr
+	   * or pst to find the correct address for this type
+	   * of parameter.
+	   */</comment>
+	  <if>if <condition>(<expr><name>ng</name> &lt; 7</expr>)</condition><then>
+	    <block>{
+	      <if>if <condition>(<expr><name>ng</name> &amp; 0x01</expr>)</condition><then>
+		<block>{
+		  <comment type="block">/* skip r4, r6, r8 as starting points */</comment>
+		  <expr_stmt><expr><name>ng</name>++</expr>;</expr_stmt>
+		  <expr_stmt><expr><name>pgr</name>++</expr>;</expr_stmt>
+		}</block></then></if>
+	      <expr_stmt><expr><name><name>avalue</name><index>[<expr><name>i</name></expr>]</index></name> = <name>pgr</name></expr>;</expr_stmt>
+	      <expr_stmt><expr><name>ng</name> += 2</expr>;</expr_stmt>
+	      <expr_stmt><expr><name>pgr</name> += 2</expr>;</expr_stmt>
+	    }</block></then>
+	  <else>else
+	    <block>{
+	      <if>if <condition>(<expr>((<name>long</name>) <name>pst</name>) &amp; 4</expr>)</condition><then>
+		<expr_stmt><expr><name>pst</name>++</expr>;</expr_stmt></then></if>
+	      <expr_stmt><expr><name><name>avalue</name><index>[<expr><name>i</name></expr>]</index></name> = <name>pst</name></expr>;</expr_stmt>
+	      <expr_stmt><expr><name>pst</name> += 2</expr>;</expr_stmt>
+	    }</block></else></if>
+	  <break>break;</break>
+
+	</case><case>case <expr><name>FFI_TYPE_FLOAT</name></expr>:
+	  <comment type="block">/* With FFI_LINUX_SOFT_FLOAT floats are handled like UINT32.  */</comment>
+	  <if>if <condition>(<expr><name><name>cif</name>-&gt;<name>abi</name></name> == <name>FFI_LINUX_SOFT_FLOAT</name></expr>)</condition><then>
+	    <goto>goto <name>soft_float_closure</name>;</goto></then></if>
+	  <comment type="block">/* unfortunately float values are stored as doubles
+	   * in the ffi_closure_SYSV code (since we don't check
+	   * the type in that routine).
+	   */</comment>
+
+	  <comment type="block">/* there are 8 64bit floating point registers */</comment>
+
+	  <if>if <condition>(<expr><name>nf</name> &lt; 8</expr>)</condition><then>
+	    <block>{
+	      <expr_stmt><expr><name>temp</name> = <name><name>pfr</name>-&gt;<name>d</name></name></expr>;</expr_stmt>
+	      <expr_stmt><expr><name><name>pfr</name>-&gt;<name>f</name></name> = (<name>float</name>) <name>temp</name></expr>;</expr_stmt>
+	      <expr_stmt><expr><name><name>avalue</name><index>[<expr><name>i</name></expr>]</index></name> = <name>pfr</name></expr>;</expr_stmt>
+	      <expr_stmt><expr><name>nf</name>++</expr>;</expr_stmt>
+	      <expr_stmt><expr><name>pfr</name>++</expr>;</expr_stmt>
+	    }</block></then>
+	  <else>else
+	    <block>{
+	      <comment type="block">/* FIXME? here we are really changing the values
+	       * stored in the original calling routines outgoing
+	       * parameter stack.  This is probably a really
+	       * naughty thing to do but...
+	       */</comment>
+	      <expr_stmt><expr><name><name>avalue</name><index>[<expr><name>i</name></expr>]</index></name> = <name>pst</name></expr>;</expr_stmt>
+	      <expr_stmt><expr><name>pst</name> += 1</expr>;</expr_stmt>
+	    }</block></else></if>
+	  <break>break;</break>
+
+	</case><case>case <expr><name>FFI_TYPE_DOUBLE</name></expr>:
+	  <comment type="block">/* With FFI_LINUX_SOFT_FLOAT doubles are handled like UINT64.  */</comment>
+	  <if>if <condition>(<expr><name><name>cif</name>-&gt;<name>abi</name></name> == <name>FFI_LINUX_SOFT_FLOAT</name></expr>)</condition><then>
+	    <goto>goto <name>soft_double_closure</name>;</goto></then></if>
+	  <comment type="block">/* On the outgoing stack all values are aligned to 8 */</comment>
+	  <comment type="block">/* there are 8 64bit floating point registers */</comment>
+
+	  <if>if <condition>(<expr><name>nf</name> &lt; 8</expr>)</condition><then>
+	    <block>{
+	      <expr_stmt><expr><name><name>avalue</name><index>[<expr><name>i</name></expr>]</index></name> = <name>pfr</name></expr>;</expr_stmt>
+	      <expr_stmt><expr><name>nf</name>++</expr>;</expr_stmt>
+	      <expr_stmt><expr><name>pfr</name>++</expr>;</expr_stmt>
+	    }</block></then>
+	  <else>else
+	    <block>{
+	      <if>if <condition>(<expr>((<name>long</name>) <name>pst</name>) &amp; 4</expr>)</condition><then>
+		<expr_stmt><expr><name>pst</name>++</expr>;</expr_stmt></then></if>
+	      <expr_stmt><expr><name><name>avalue</name><index>[<expr><name>i</name></expr>]</index></name> = <name>pst</name></expr>;</expr_stmt>
+	      <expr_stmt><expr><name>pst</name> += 2</expr>;</expr_stmt>
+	    }</block></else></if>
+	  <break>break;</break>
+
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>FFI_TYPE_LONGDOUBLE</name> != <name>FFI_TYPE_DOUBLE</name></expr></cpp:if>
+	</case><case>case <expr><name>FFI_TYPE_LONGDOUBLE</name></expr>:
+	  <if>if <condition>(<expr><name><name>cif</name>-&gt;<name>abi</name></name> != <name>FFI_LINUX</name> &amp;&amp; <name><name>cif</name>-&gt;<name>abi</name></name> != <name>FFI_LINUX_SOFT_FLOAT</name></expr>)</condition><then>
+	    <goto>goto <name>do_struct</name>;</goto></then></if>
+	  <if>if <condition>(<expr><name><name>cif</name>-&gt;<name>abi</name></name> == <name>FFI_LINUX_SOFT_FLOAT</name></expr>)</condition><then>
+	    <block>{ <comment type="block">/* Test if for the whole long double, 4 gprs are available.
+		 otherwise the stuff ends up on the stack.  */</comment>
+	      <if>if <condition>(<expr><name>ng</name> &lt; 5</expr>)</condition><then>
+		<block>{
+		  <expr_stmt><expr><name><name>avalue</name><index>[<expr><name>i</name></expr>]</index></name> = <name>pgr</name></expr>;</expr_stmt>
+		  <expr_stmt><expr><name>pgr</name> += 4</expr>;</expr_stmt>
+		  <expr_stmt><expr><name>ng</name> += 4</expr>;</expr_stmt>
+		}</block></then>
+	      <else>else
+		<block>{
+		  <expr_stmt><expr><name><name>avalue</name><index>[<expr><name>i</name></expr>]</index></name> = <name>pst</name></expr>;</expr_stmt>
+		  <expr_stmt><expr><name>pst</name> += 4</expr>;</expr_stmt>
+		}</block></else></if>
+	      <break>break;</break>
+	    }</block></then></if>
+	  <if>if <condition>(<expr><name>nf</name> &lt; 7</expr>)</condition><then>
+	    <block>{
+	      <expr_stmt><expr><name><name>avalue</name><index>[<expr><name>i</name></expr>]</index></name> = <name>pfr</name></expr>;</expr_stmt>
+	      <expr_stmt><expr><name>pfr</name> += 2</expr>;</expr_stmt>
+	      <expr_stmt><expr><name>nf</name> += 2</expr>;</expr_stmt>
+	    }</block></then>
+	  <else>else
+	    <block>{
+	      <if>if <condition>(<expr>((<name>long</name>) <name>pst</name>) &amp; 4</expr>)</condition><then>
+		<expr_stmt><expr><name>pst</name>++</expr>;</expr_stmt></then></if>
+	      <expr_stmt><expr><name><name>avalue</name><index>[<expr><name>i</name></expr>]</index></name> = <name>pst</name></expr>;</expr_stmt>
+	      <expr_stmt><expr><name>pst</name> += 4</expr>;</expr_stmt>
+	      <expr_stmt><expr><name>nf</name> = 8</expr>;</expr_stmt>
+	    }</block></else></if>
+	  <break>break;</break>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+	</case><default>default:
+	  <expr_stmt><expr><call><name>FFI_ASSERT</name> <argument_list>(<argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	</default>}</block></switch>
+
+      <expr_stmt><expr><name>i</name>++</expr>;</expr_stmt>
+    }</block></while>
+
+
+  <expr_stmt><expr><call>(<name><name>closure</name>-&gt;<name>fun</name></name>) <argument_list>(<argument><expr><name>cif</name></expr></argument>, <argument><expr><name>rvalue</name></expr></argument>, <argument><expr><name>avalue</name></expr></argument>, <argument><expr><name><name>closure</name>-&gt;<name>user_data</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Tell ffi_closure_SYSV how to perform return type promotions.
+     Because the FFI_SYSV ABI returns the structures &lt;= 8 bytes in r3/r4
+     we have to tell ffi_closure_SYSV how to treat them.  */</comment>
+  <if>if <condition>(<expr><name><name>cif</name>-&gt;<name>abi</name></name> == <name>FFI_SYSV</name> &amp;&amp; <name><name>cif</name>-&gt;<name>rtype</name>-&gt;<name>type</name></name> == <name>FFI_TYPE_STRUCT</name>
+      &amp;&amp; <name>size</name> &lt;= 8</expr>)</condition><then>
+    <return>return <expr><name>FFI_SYSV_TYPE_SMALL_STRUCT</name> + <name>size</name></expr>;</return></then>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>FFI_TYPE_LONGDOUBLE</name> != <name>FFI_TYPE_DOUBLE</name></expr></cpp:if>
+  <else>else <if>if <condition>(<expr><name><name>cif</name>-&gt;<name>rtype</name>-&gt;<name>type</name></name> == <name>FFI_TYPE_LONGDOUBLE</name>
+	   &amp;&amp; <name><name>cif</name>-&gt;<name>abi</name></name> != <name>FFI_LINUX</name> &amp;&amp; <name><name>cif</name>-&gt;<name>abi</name></name> != <name>FFI_LINUX_SOFT_FLOAT</name></expr>)</condition><then>
+    <return>return <expr><name>FFI_TYPE_STRUCT</name></expr>;</return></then></if></else></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+  <comment type="block">/* With FFI_LINUX_SOFT_FLOAT floats and doubles are handled like UINT32
+     respectivley UINT64.  */</comment>
+  <if>if <condition>(<expr><name><name>cif</name>-&gt;<name>abi</name></name> == <name>FFI_LINUX_SOFT_FLOAT</name></expr>)</condition><then>
+    <block>{
+      <switch>switch <condition>(<expr><name><name>cif</name>-&gt;<name>rtype</name>-&gt;<name>type</name></name></expr>)</condition>
+	<block>{
+	<case>case <expr><name>FFI_TYPE_FLOAT</name></expr>:
+	  <return>return <expr><name>FFI_TYPE_UINT32</name></expr>;</return>
+	  <break>break;</break>
+	</case><case>case <expr><name>FFI_TYPE_DOUBLE</name></expr>:
+	  <return>return <expr><name>FFI_TYPE_UINT64</name></expr>;</return>
+	  <break>break;</break>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>FFI_TYPE_LONGDOUBLE</name> != <name>FFI_TYPE_DOUBLE</name></expr></cpp:if>
+	</case><case>case <expr><name>FFI_TYPE_LONGDOUBLE</name></expr>:
+	  <return>return <expr><name>FFI_TYPE_UINT128</name></expr>;</return>
+	  <break>break;</break>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	</case><default>default:
+	  <return>return <expr><name><name>cif</name>-&gt;<name>rtype</name>-&gt;<name>type</name></name></expr>;</return>
+	</default>}</block></switch>
+    }</block></then>
+  <else>else
+    <block>{
+      <return>return <expr><name><name>cif</name>-&gt;<name>rtype</name>-&gt;<name>type</name></name></expr>;</return>
+    }</block></else></if>
+}</block></function>
+
+<function_decl><type><name>int</name> <name>FFI_HIDDEN</name></type> <name>ffi_closure_helper_LINUX64</name> <parameter_list>(<param><decl><type><name>ffi_closure</name> *</type></decl></param>, <param><decl><type><name>void</name> *</type></decl></param>,
+					   <param><decl><type><name>unsigned</name></type> <name>long</name> *</decl></param>, <param><decl><type><name>ffi_dblfl</name> *</type></decl></param>)</parameter_list>;</function_decl>
+
+<function><type><name>int</name> <name>FFI_HIDDEN</name></type>
+<name>ffi_closure_helper_LINUX64</name> <parameter_list>(<param><decl><type><name>ffi_closure</name> *</type><name>closure</name></decl></param>, <param><decl><type><name>void</name> *</type><name>rvalue</name></decl></param>,
+			    <param><decl><type><name>unsigned</name> <name>long</name> *</type><name>pst</name></decl></param>, <param><decl><type><name>ffi_dblfl</name> *</type><name>pfr</name></decl></param>)</parameter_list>
+<block>{
+  <comment type="block">/* rvalue is the pointer to space for return value in closure assembly */</comment>
+  <comment type="block">/* pst is the pointer to parameter save area
+     (r3-r10 are stored into its first 8 slots by ffi_closure_LINUX64) */</comment>
+  <comment type="block">/* pfr is the pointer to where f1-f13 are stored in ffi_closure_LINUX64 */</comment>
+
+  <decl_stmt><decl><type><name>void</name> **</type><name>avalue</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>ffi_type</name> **</type><name>arg_types</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>long</name></type> <name>i</name></decl>, <decl><type ref="prev"/><name>avn</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>ffi_cif</name> *</type><name>cif</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>ffi_dblfl</name> *</type><name>end_pfr</name> <init>= <expr><name>pfr</name> + <name>NUM_FPR_ARG_REGISTERS64</name></expr></init></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name>cif</name> = <name><name>closure</name>-&gt;<name>cif</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name>avalue</name> = <call><name>alloca</name> <argument_list>(<argument><expr><name><name>cif</name>-&gt;<name>nargs</name></name> * <sizeof>sizeof <argument_list>(<argument><expr><name>void</name> *</expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Copy the caller's structure return value address so that the closure
+     returns the data directly to the caller.  */</comment>
+  <if>if <condition>(<expr><name><name>cif</name>-&gt;<name>rtype</name>-&gt;<name>type</name></name> == <name>FFI_TYPE_STRUCT</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><name>rvalue</name> = (<name>void</name> *) *<name>pst</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name>pst</name>++</expr>;</expr_stmt>
+    }</block></then></if>
+
+  <expr_stmt><expr><name>i</name> = 0</expr>;</expr_stmt>
+  <expr_stmt><expr><name>avn</name> = <name><name>cif</name>-&gt;<name>nargs</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name>arg_types</name> = <name><name>cif</name>-&gt;<name>arg_types</name></name></expr>;</expr_stmt>
+
+  <comment type="block">/* Grab the addresses of the arguments from the stack frame.  */</comment>
+  <while>while <condition>(<expr><name>i</name> &lt; <name>avn</name></expr>)</condition>
+    <block>{
+      <switch>switch <condition>(<expr><name><name>arg_types</name><index>[<expr><name>i</name></expr>]</index></name>-&gt;<name>type</name></expr>)</condition>
+	<block>{
+	<case>case <expr><name>FFI_TYPE_SINT8</name></expr>:
+	</case><case>case <expr><name>FFI_TYPE_UINT8</name></expr>:
+	  <expr_stmt><expr><name><name>avalue</name><index>[<expr><name>i</name></expr>]</index></name> = (<name>char</name> *) <name>pst</name> + 7</expr>;</expr_stmt>
+	  <expr_stmt><expr><name>pst</name>++</expr>;</expr_stmt>
+	  <break>break;</break>
+
+	</case><case>case <expr><name>FFI_TYPE_SINT16</name></expr>:
+	</case><case>case <expr><name>FFI_TYPE_UINT16</name></expr>:
+	  <expr_stmt><expr><name><name>avalue</name><index>[<expr><name>i</name></expr>]</index></name> = (<name>char</name> *) <name>pst</name> + 6</expr>;</expr_stmt>
+	  <expr_stmt><expr><name>pst</name>++</expr>;</expr_stmt>
+	  <break>break;</break>
+
+	</case><case>case <expr><name>FFI_TYPE_SINT32</name></expr>:
+	</case><case>case <expr><name>FFI_TYPE_UINT32</name></expr>:
+	  <expr_stmt><expr><name><name>avalue</name><index>[<expr><name>i</name></expr>]</index></name> = (<name>char</name> *) <name>pst</name> + 4</expr>;</expr_stmt>
+	  <expr_stmt><expr><name>pst</name>++</expr>;</expr_stmt>
+	  <break>break;</break>
+
+	</case><case>case <expr><name>FFI_TYPE_SINT64</name></expr>:
+	</case><case>case <expr><name>FFI_TYPE_UINT64</name></expr>:
+	</case><case>case <expr><name>FFI_TYPE_POINTER</name></expr>:
+	  <expr_stmt><expr><name><name>avalue</name><index>[<expr><name>i</name></expr>]</index></name> = <name>pst</name></expr>;</expr_stmt>
+	  <expr_stmt><expr><name>pst</name>++</expr>;</expr_stmt>
+	  <break>break;</break>
+
+	</case><case>case <expr><name>FFI_TYPE_STRUCT</name></expr>:
+	  <comment type="block">/* Structures with size less than eight bytes are passed
+	     left-padded.  */</comment>
+	  <if>if <condition>(<expr><name><name>arg_types</name><index>[<expr><name>i</name></expr>]</index></name>-&gt;<name>size</name> &lt; 8</expr>)</condition><then>
+	    <expr_stmt><expr><name><name>avalue</name><index>[<expr><name>i</name></expr>]</index></name> = (<name>char</name> *) <name>pst</name> + 8 - <name><name>arg_types</name><index>[<expr><name>i</name></expr>]</index></name>-&gt;<name>size</name></expr>;</expr_stmt></then>
+	  <else>else
+	    <expr_stmt><expr><name><name>avalue</name><index>[<expr><name>i</name></expr>]</index></name> = <name>pst</name></expr>;</expr_stmt></else></if>
+	  <expr_stmt><expr><name>pst</name> += (<name><name>arg_types</name><index>[<expr><name>i</name></expr>]</index></name>-&gt;<name>size</name> + 7) / 8</expr>;</expr_stmt>
+	  <break>break;</break>
+
+	</case><case>case <expr><name>FFI_TYPE_FLOAT</name></expr>:
+	  <comment type="block">/* unfortunately float values are stored as doubles
+	   * in the ffi_closure_LINUX64 code (since we don't check
+	   * the type in that routine).
+	   */</comment>
+
+	  <comment type="block">/* there are 13 64bit floating point registers */</comment>
+
+	  <if>if <condition>(<expr><name>pfr</name> &lt; <name>end_pfr</name></expr>)</condition><then>
+	    <block>{
+	      <decl_stmt><decl><type><name>double</name></type> <name>temp</name> <init>= <expr><name><name>pfr</name>-&gt;<name>d</name></name></expr></init></decl>;</decl_stmt>
+	      <expr_stmt><expr><name><name>pfr</name>-&gt;<name>f</name></name> = (<name>float</name>) <name>temp</name></expr>;</expr_stmt>
+	      <expr_stmt><expr><name><name>avalue</name><index>[<expr><name>i</name></expr>]</index></name> = <name>pfr</name></expr>;</expr_stmt>
+	      <expr_stmt><expr><name>pfr</name>++</expr>;</expr_stmt>
+	    }</block></then>
+	  <else>else
+	    <expr_stmt><expr><name><name>avalue</name><index>[<expr><name>i</name></expr>]</index></name> = <name>pst</name></expr>;</expr_stmt></else></if>
+	  <expr_stmt><expr><name>pst</name>++</expr>;</expr_stmt>
+	  <break>break;</break>
+
+	</case><case>case <expr><name>FFI_TYPE_DOUBLE</name></expr>:
+	  <comment type="block">/* On the outgoing stack all values are aligned to 8 */</comment>
+	  <comment type="block">/* there are 13 64bit floating point registers */</comment>
+
+	  <if>if <condition>(<expr><name>pfr</name> &lt; <name>end_pfr</name></expr>)</condition><then>
+	    <block>{
+	      <expr_stmt><expr><name><name>avalue</name><index>[<expr><name>i</name></expr>]</index></name> = <name>pfr</name></expr>;</expr_stmt>
+	      <expr_stmt><expr><name>pfr</name>++</expr>;</expr_stmt>
+	    }</block></then>
+	  <else>else
+	    <expr_stmt><expr><name><name>avalue</name><index>[<expr><name>i</name></expr>]</index></name> = <name>pst</name></expr>;</expr_stmt></else></if>
+	  <expr_stmt><expr><name>pst</name>++</expr>;</expr_stmt>
+	  <break>break;</break>
+
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>FFI_TYPE_LONGDOUBLE</name> != <name>FFI_TYPE_DOUBLE</name></expr></cpp:if>
+	</case><case>case <expr><name>FFI_TYPE_LONGDOUBLE</name></expr>:
+	  <if>if <condition>(<expr><name>pfr</name> + 1 &lt; <name>end_pfr</name></expr>)</condition><then>
+	    <block>{
+	      <expr_stmt><expr><name><name>avalue</name><index>[<expr><name>i</name></expr>]</index></name> = <name>pfr</name></expr>;</expr_stmt>
+	      <expr_stmt><expr><name>pfr</name> += 2</expr>;</expr_stmt>
+	    }</block></then>
+	  <else>else
+	    <block>{
+	      <if>if <condition>(<expr><name>pfr</name> &lt; <name>end_pfr</name></expr>)</condition><then>
+		<block>{
+		  <comment type="block">/* Passed partly in f13 and partly on the stack.
+		     Move it all to the stack.  */</comment>
+		  <expr_stmt><expr>*<name>pst</name> = *(<name>unsigned</name> <name>long</name> *) <name>pfr</name></expr>;</expr_stmt>
+		  <expr_stmt><expr><name>pfr</name>++</expr>;</expr_stmt>
+		}</block></then></if>
+	      <expr_stmt><expr><name><name>avalue</name><index>[<expr><name>i</name></expr>]</index></name> = <name>pst</name></expr>;</expr_stmt>
+	    }</block></else></if>
+	  <expr_stmt><expr><name>pst</name> += 2</expr>;</expr_stmt>
+	  <break>break;</break>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+	</case><default>default:
+	  <expr_stmt><expr><call><name>FFI_ASSERT</name> <argument_list>(<argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	</default>}</block></switch>
+
+      <expr_stmt><expr><name>i</name>++</expr>;</expr_stmt>
+    }</block></while>
+
+
+  <expr_stmt><expr><call>(<name><name>closure</name>-&gt;<name>fun</name></name>) <argument_list>(<argument><expr><name>cif</name></expr></argument>, <argument><expr><name>rvalue</name></expr></argument>, <argument><expr><name>avalue</name></expr></argument>, <argument><expr><name><name>closure</name>-&gt;<name>user_data</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Tell ffi_closure_LINUX64 how to perform return type promotions.  */</comment>
+  <return>return <expr><name><name>cif</name>-&gt;<name>rtype</name>-&gt;<name>type</name></name></expr>;</return>
+}</block></function>
+</unit>

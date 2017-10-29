@@ -1,0 +1,253 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/subversion-1.5.1/source/subversion/libsvn_ra_svn/streams.c"><comment type="block">/*
+ * streams.c :  stream encapsulation routines for the ra_svn protocol
+ *
+ * ====================================================================
+ * Copyright (c) 2000-2006 CollabNet.  All rights reserved.
+ *
+ * This software is licensed as described in the file COPYING, which
+ * you should have received as part of this distribution.  The terms
+ * are also available at http://subversion.tigris.org/license-1.html.
+ * If newer versions of this license are posted there, you may use a
+ * newer version instead, at your option.
+ *
+ * This software consists of voluntary contributions made by many
+ * individuals.  For exact contribution history, see the revision
+ * history and logs, available at http://subversion.tigris.org/.
+ * ====================================================================
+ */</comment>
+
+
+<escape char="0xc"/>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_general.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_network_io.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_poll.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_types.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_error.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_pools.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_io.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_private_config.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"ra_svn.h"</cpp:file></cpp:include>
+
+<struct>struct <name>svn_ra_svn__stream_st</name> <block>{
+  <decl_stmt><decl><type><name>svn_stream_t</name> *</type><name>stream</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>void</name> *</type><name>baton</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>ra_svn_pending_fn_t</name></type> <name>pending_fn</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>ra_svn_timeout_fn_t</name></type> <name>timeout_fn</name></decl>;</decl_stmt>
+}</block>;</struct>
+
+<typedef>typedef <type><struct>struct <block>{
+  <decl_stmt><decl><type><name>apr_socket_t</name> *</type><name>sock</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl>;</decl_stmt>
+}</block></struct></type> <name>sock_baton_t</name>;</typedef>
+
+<typedef>typedef <type><struct>struct <block>{
+  <decl_stmt><decl><type><name>apr_file_t</name> *</type><name>in_file</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_file_t</name> *</type><name>out_file</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl>;</decl_stmt>
+}</block></struct></type> <name>file_baton_t</name>;</typedef>
+
+<comment type="block">/* Returns TRUE if PFD has pending data, FALSE otherwise. */</comment>
+<function><type><specifier>static</specifier> <name>svn_boolean_t</name></type> <name>pending</name><parameter_list>(<param><decl><type><name>apr_pollfd_t</name> *</type><name>pfd</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>apr_status_t</name></type> <name>status</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>n</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name><name>pfd</name>-&gt;<name>p</name></name> = <name>pool</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>pfd</name>-&gt;<name>reqevents</name></name> = <name>APR_POLLIN</name></expr>;</expr_stmt>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>AS400</name></cpp:ifdef>
+  <expr_stmt><expr><name>status</name> = <call><name>apr_poll</name><argument_list>(<argument><expr><name>pfd</name></expr></argument>, <argument><expr>1</expr></argument>, <argument><expr>&amp;<name>n</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+  <expr_stmt><expr><name>status</name> = <call><name>apr_poll</name><argument_list>(<argument><expr><name>pfd</name></expr></argument>, <argument><expr>1</expr></argument>, <argument><expr>&amp;<name>n</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+  <return>return <expr>(<name>status</name> == <name>APR_SUCCESS</name> &amp;&amp; <name>n</name>)</expr>;</return>
+}</block></function>
+
+<comment type="block">/* Functions to implement a file backed svn_ra_svn__stream_t. */</comment>
+
+<comment type="block">/* Implements svn_read_fn_t */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>file_read_cb</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>, <param><decl><type><name>char</name> *</type><name>buffer</name></decl></param>, <param><decl><type><name>apr_size_t</name> *</type><name>len</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>file_baton_t</name> *</type><name>b</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_status_t</name></type> <name>status</name> <init>= <expr><call><name>apr_file_read</name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>in_file</name></name></expr></argument>, <argument><expr><name>buffer</name></expr></argument>, <argument><expr><name>len</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr><name>status</name> &amp;&amp; !<call><name>APR_STATUS_IS_EOF</name><argument_list>(<argument><expr><name>status</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_wrap_apr</name><argument_list>(<argument><expr><name>status</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Can't read from connection"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+  <if>if <condition>(<expr>*<name>len</name> == 0</expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_SVN_CONNECTION_CLOSED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                            <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Connection closed unexpectedly"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* Implements svn_write_fn_t */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>file_write_cb</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>buffer</name></decl></param>, <param><decl><type><name>apr_size_t</name> *</type><name>len</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>file_baton_t</name> *</type><name>b</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_status_t</name></type> <name>status</name> <init>= <expr><call><name>apr_file_write</name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>out_file</name></name></expr></argument>, <argument><expr><name>buffer</name></expr></argument>, <argument><expr><name>len</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <if>if <condition>(<expr><name>status</name></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_wrap_apr</name><argument_list>(<argument><expr><name>status</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Can't write to connection"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* Implements ra_svn_timeout_fn_t */</comment>
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>file_timeout_cb</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>, <param><decl><type><name>apr_interval_time_t</name></type> <name>interval</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>file_baton_t</name> *</type><name>b</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+  <expr_stmt><expr><call><name>apr_file_pipe_timeout_set</name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>out_file</name></name></expr></argument>, <argument><expr><name>interval</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<comment type="block">/* Implements ra_svn_pending_fn_t */</comment>
+<function><type><specifier>static</specifier> <name>svn_boolean_t</name></type>
+<name>file_pending_cb</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>file_baton_t</name> *</type><name>b</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_pollfd_t</name></type> <name>pfd</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name><name>pfd</name>.<name>desc_type</name></name> = <name>APR_POLL_FILE</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>pfd</name>.<name>desc</name>.<name>f</name></name> = <name><name>b</name>-&gt;<name>in_file</name></name></expr>;</expr_stmt>
+
+  <return>return <expr><call><name>pending</name><argument_list>(<argument><expr>&amp;<name>pfd</name></expr></argument>, <argument><expr><name><name>b</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_ra_svn__stream_t</name> *</type>
+<name>svn_ra_svn__stream_from_files</name><parameter_list>(<param><decl><type><name>apr_file_t</name> *</type><name>in_file</name></decl></param>,
+                              <param><decl><type><name>apr_file_t</name> *</type><name>out_file</name></decl></param>,
+                              <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>file_baton_t</name> *</type><name>b</name> <init>= <expr><call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>b</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>in_file</name></name> = <name>in_file</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>out_file</name></name> = <name>out_file</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>pool</name></name> = <name>pool</name></expr>;</expr_stmt>
+
+  <return>return <expr><call><name>svn_ra_svn__stream_create</name><argument_list>(<argument><expr><name>b</name></expr></argument>, <argument><expr><name>file_read_cb</name></expr></argument>, <argument><expr><name>file_write_cb</name></expr></argument>,
+                                   <argument><expr><name>file_timeout_cb</name></expr></argument>, <argument><expr><name>file_pending_cb</name></expr></argument>,
+                                   <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<comment type="block">/* Functions to implement a socket backed svn_ra_svn__stream_t. */</comment>
+
+<comment type="block">/* Implements svn_read_fn_t */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>sock_read_cb</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>, <param><decl><type><name>char</name> *</type><name>buffer</name></decl></param>, <param><decl><type><name>apr_size_t</name> *</type><name>len</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>sock_baton_t</name> *</type><name>b</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_status_t</name></type> <name>status</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_interval_time_t</name></type> <name>interval</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name>status</name> = <call><name>apr_socket_timeout_get</name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>sock</name></name></expr></argument>, <argument><expr>&amp;<name>interval</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>status</name></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_wrap_apr</name><argument_list>(<argument><expr><name>status</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Can't get socket timeout"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <comment type="block">/* Always block on read. */</comment>
+  <expr_stmt><expr><call><name>apr_socket_timeout_set</name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>sock</name></name></expr></argument>, <argument><expr>-1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>status</name> = <call><name>apr_socket_recv</name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>sock</name></name></expr></argument>, <argument><expr><name>buffer</name></expr></argument>, <argument><expr><name>len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>apr_socket_timeout_set</name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>sock</name></name></expr></argument>, <argument><expr><name>interval</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name>status</name> &amp;&amp; !<call><name>APR_STATUS_IS_EOF</name><argument_list>(<argument><expr><name>status</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_wrap_apr</name><argument_list>(<argument><expr><name>status</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Can't read from connection"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+  <if>if <condition>(<expr>*<name>len</name> == 0</expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_SVN_CONNECTION_CLOSED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                            <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Connection closed unexpectedly"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* Implements svn_write_fn_t */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>sock_write_cb</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>buffer</name></decl></param>, <param><decl><type><name>apr_size_t</name> *</type><name>len</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>sock_baton_t</name> *</type><name>b</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_status_t</name></type> <name>status</name> <init>= <expr><call><name>apr_socket_send</name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>sock</name></name></expr></argument>, <argument><expr><name>buffer</name></expr></argument>, <argument><expr><name>len</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <if>if <condition>(<expr><name>status</name></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_wrap_apr</name><argument_list>(<argument><expr><name>status</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Can't write to connection"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* Implements ra_svn_timeout_fn_t */</comment>
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>sock_timeout_cb</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>, <param><decl><type><name>apr_interval_time_t</name></type> <name>interval</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>sock_baton_t</name> *</type><name>b</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+  <expr_stmt><expr><call><name>apr_socket_timeout_set</name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>sock</name></name></expr></argument>, <argument><expr><name>interval</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<comment type="block">/* Implements ra_svn_pending_fn_t */</comment>
+<function><type><specifier>static</specifier> <name>svn_boolean_t</name></type>
+<name>sock_pending_cb</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>sock_baton_t</name> *</type><name>b</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_pollfd_t</name></type> <name>pfd</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name><name>pfd</name>.<name>desc_type</name></name> = <name>APR_POLL_SOCKET</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>pfd</name>.<name>desc</name>.<name>s</name></name> = <name><name>b</name>-&gt;<name>sock</name></name></expr>;</expr_stmt>
+
+  <return>return <expr><call><name>pending</name><argument_list>(<argument><expr>&amp;<name>pfd</name></expr></argument>, <argument><expr><name><name>b</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_ra_svn__stream_t</name> *</type>
+<name>svn_ra_svn__stream_from_sock</name><parameter_list>(<param><decl><type><name>apr_socket_t</name> *</type><name>sock</name></decl></param>,
+                             <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>sock_baton_t</name> *</type><name>b</name> <init>= <expr><call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>b</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>sock</name></name> = <name>sock</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>pool</name></name> = <name>pool</name></expr>;</expr_stmt>
+
+  <return>return <expr><call><name>svn_ra_svn__stream_create</name><argument_list>(<argument><expr><name>b</name></expr></argument>, <argument><expr><name>sock_read_cb</name></expr></argument>, <argument><expr><name>sock_write_cb</name></expr></argument>,
+                                   <argument><expr><name>sock_timeout_cb</name></expr></argument>, <argument><expr><name>sock_pending_cb</name></expr></argument>,
+                                   <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_ra_svn__stream_t</name> *</type>
+<name>svn_ra_svn__stream_create</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>,
+                          <param><decl><type><name>svn_read_fn_t</name></type> <name>read_cb</name></decl></param>,
+                          <param><decl><type><name>svn_write_fn_t</name></type> <name>write_cb</name></decl></param>,
+                          <param><decl><type><name>ra_svn_timeout_fn_t</name></type> <name>timeout_cb</name></decl></param>,
+                          <param><decl><type><name>ra_svn_pending_fn_t</name></type> <name>pending_cb</name></decl></param>,
+                          <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_svn__stream_t</name> *</type><name>s</name> <init>= <expr><call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>s</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <expr_stmt><expr><name><name>s</name>-&gt;<name>stream</name></name> = <call><name>svn_stream_empty</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>svn_stream_set_baton</name><argument_list>(<argument><expr><name><name>s</name>-&gt;<name>stream</name></name></expr></argument>, <argument><expr><name>baton</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>read_cb</name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>svn_stream_set_read</name><argument_list>(<argument><expr><name><name>s</name>-&gt;<name>stream</name></name></expr></argument>, <argument><expr><name>read_cb</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+  <if>if <condition>(<expr><name>write_cb</name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>svn_stream_set_write</name><argument_list>(<argument><expr><name><name>s</name>-&gt;<name>stream</name></name></expr></argument>, <argument><expr><name>write_cb</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+  <expr_stmt><expr><name><name>s</name>-&gt;<name>baton</name></name> = <name>baton</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>s</name>-&gt;<name>timeout_fn</name></name> = <name>timeout_cb</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>s</name>-&gt;<name>pending_fn</name></name> = <name>pending_cb</name></expr>;</expr_stmt>
+  <return>return <expr><name>s</name></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_ra_svn__stream_write</name><parameter_list>(<param><decl><type><name>svn_ra_svn__stream_t</name> *</type><name>stream</name></decl></param>,
+                         <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>data</name></decl></param>, <param><decl><type><name>apr_size_t</name> *</type><name>len</name></decl></param>)</parameter_list>
+<block>{
+  <return>return <expr><call><name>svn_stream_write</name><argument_list>(<argument><expr><name><name>stream</name>-&gt;<name>stream</name></name></expr></argument>, <argument><expr><name>data</name></expr></argument>, <argument><expr><name>len</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_ra_svn__stream_read</name><parameter_list>(<param><decl><type><name>svn_ra_svn__stream_t</name> *</type><name>stream</name></decl></param>, <param><decl><type><name>char</name> *</type><name>data</name></decl></param>,
+                        <param><decl><type><name>apr_size_t</name> *</type><name>len</name></decl></param>)</parameter_list>
+<block>{
+  <return>return <expr><call><name>svn_stream_read</name><argument_list>(<argument><expr><name><name>stream</name>-&gt;<name>stream</name></name></expr></argument>, <argument><expr><name>data</name></expr></argument>, <argument><expr><name>len</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><name>void</name></type>
+<name>svn_ra_svn__stream_timeout</name><parameter_list>(<param><decl><type><name>svn_ra_svn__stream_t</name> *</type><name>stream</name></decl></param>,
+                           <param><decl><type><name>apr_interval_time_t</name></type> <name>interval</name></decl></param>)</parameter_list>
+<block>{
+  <expr_stmt><expr><call><name><name>stream</name>-&gt;<name>timeout_fn</name></name><argument_list>(<argument><expr><name><name>stream</name>-&gt;<name>baton</name></name></expr></argument>, <argument><expr><name>interval</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<function><type><name>svn_boolean_t</name></type>
+<name>svn_ra_svn__stream_pending</name><parameter_list>(<param><decl><type><name>svn_ra_svn__stream_t</name> *</type><name>stream</name></decl></param>)</parameter_list>
+<block>{
+  <return>return <expr><call><name><name>stream</name>-&gt;<name>pending_fn</name></name><argument_list>(<argument><expr><name><name>stream</name>-&gt;<name>baton</name></name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+</unit>

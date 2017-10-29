@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/cpython-2.6.1/source/PC/w9xpopen.c"><comment type="block">/*
+ * w9xpopen.c
+ *
+ * Serves as an intermediate stub Win32 console application to
+ * avoid a hanging pipe when redirecting 16-bit console based
+ * programs (including MS-DOS console based programs and batch
+ * files) on Window 95 and Windows 98.
+ *
+ * This program is to be launched with redirected standard
+ * handles. It will launch the command line specified 16-bit
+ * console based application in the same console, forwarding
+ * its own redirected standard handles to the 16-bit child.
+
+ * AKA solution to the problem described in KB: Q150956.
+ */</comment>    
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>WIN32_LEAN_AND_MEAN</name></cpp:macro></cpp:define>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;windows.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;stdio.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;stdlib.h&gt;</cpp:file></cpp:include>  <comment type="block">/* for malloc and its friends */</comment>
+
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>usage</name> <init>=
+<expr>"This program is used by Python's os.popen function\n"
+"to work around a limitation in Windows 95/98.  It is\n"
+"not designed to be used as a stand-alone program."</expr></init></decl>;</decl_stmt>
+
+<function><type><name>int</name></type> <name>main</name><parameter_list>(<param><decl><type><name>int</name></type> <name>argc</name></decl></param>, <param><decl><type><name>char</name> *</type><name><name>argv</name><index>[]</index></name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>BOOL</name></type> <name>bRet</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>STARTUPINFO</name></type> <name>si</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PROCESS_INFORMATION</name></type> <name>pi</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>DWORD</name></type> <name>exit_code</name><init>=<expr>0</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>size_t</name></type> <name>cmdlen</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name> *</type><name>cmdline</name></decl>, *<decl><type ref="prev"/><name>cmdlinefill</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr><name>argc</name> &lt; 2</expr>)</condition><then> <block>{
+        <if>if <condition>(<expr><call><name>GetFileType</name><argument_list>(<argument><expr><call><name>GetStdHandle</name><argument_list>(<argument><expr><name>STD_INPUT_HANDLE</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call>==<name>FILE_TYPE_CHAR</name></expr>)</condition><then>
+            <comment type="block">/* Attached to a console, and therefore not executed by Python
+               Display a message box for the inquisitive user
+            */</comment>
+            <expr_stmt><expr><call><name>MessageBox</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>usage</name></expr></argument>, <argument><expr><name><name>argv</name><index>[<expr>0</expr>]</index></name></expr></argument>, <argument><expr><name>MB_OK</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+        <else>else <block>{
+            <comment type="block">/* Eeek - executed by Python, but args are screwed!
+               Write an error message to stdout so there is at
+               least some clue for the end user when it appears
+               in their output.
+               A message box would be hidden and blocks the app.
+             */</comment>
+            <expr_stmt><expr><call><name>fprintf</name><argument_list>(<argument><expr><name>stdout</name></expr></argument>, <argument><expr>"Internal popen error - no args specified\n%s\n"</expr></argument>, <argument><expr><name>usage</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></else></if>
+        <return>return <expr>1</expr>;</return>
+    }</block></then></if>
+    <comment type="block">/* Build up the command-line from the args.
+       Args with a space are quoted, existing quotes are escaped.
+       To keep things simple calculating the buffer size, we assume
+       every character is a quote - ie, we allocate double what we need
+       in the worst case.  As this is only double the command line passed
+       to us, there is a good chance this is reasonably small, so the total 
+       allocation will almost always be &lt; 512 bytes.
+    */</comment>
+    <for>for (<init><expr><name>i</name>=1</expr>;</init><condition><expr><name>i</name>&lt;<name>argc</name></expr>;</condition><incr><expr><name>i</name>++</expr></incr>)
+        <expr_stmt><expr><name>cmdlen</name> += <call><name>strlen</name><argument_list>(<argument><expr><name><name>argv</name><index>[<expr><name>i</name></expr>]</index></name></expr></argument>)</argument_list></call>*2 + 3</expr>;</expr_stmt></for> <comment type="block">/* one space, maybe 2 quotes */</comment>
+    <expr_stmt><expr><name>cmdline</name> = <name>cmdlinefill</name> = (<name>char</name> *)<call><name>malloc</name><argument_list>(<argument><expr><name>cmdlen</name>+1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>cmdline</name> == <name>NULL</name></expr>)</condition><then>
+        <return>return <expr>-1</expr>;</return></then></if>
+    <for>for (<init><expr><name>i</name>=1</expr>;</init><condition><expr><name>i</name>&lt;<name>argc</name></expr>;</condition><incr><expr><name>i</name>++</expr></incr>) <block>{
+        <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>arglook</name></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>int</name></type> <name>bQuote</name> <init>= <expr><call><name>strchr</name><argument_list>(<argument><expr><name><name>argv</name><index>[<expr><name>i</name></expr>]</index></name></expr></argument>, <argument><expr>' '</expr></argument>)</argument_list></call> != <name>NULL</name></expr></init></decl>;</decl_stmt>
+        <if>if <condition>(<expr><name>bQuote</name></expr>)</condition><then>
+            <expr_stmt><expr>*<name>cmdlinefill</name>++ = '"'</expr>;</expr_stmt></then></if>
+        <comment type="block">/* escape quotes */</comment>
+        <for>for (<init><expr><name>arglook</name>=<name><name>argv</name><index>[<expr><name>i</name></expr>]</index></name></expr>;</init><condition><expr>*<name>arglook</name></expr>;</condition><incr><expr><name>arglook</name>++</expr></incr>) <block>{
+            <if>if <condition>(<expr>*<name>arglook</name>=='"'</expr>)</condition><then>
+                <expr_stmt><expr>*<name>cmdlinefill</name>++ = '\\'</expr>;</expr_stmt></then></if>
+            <expr_stmt><expr>*<name>cmdlinefill</name>++ = *<name>arglook</name></expr>;</expr_stmt>
+        }</block></for>
+        <if>if <condition>(<expr><name>bQuote</name></expr>)</condition><then>
+            <expr_stmt><expr>*<name>cmdlinefill</name>++ = '"'</expr>;</expr_stmt></then></if>
+        <expr_stmt><expr>*<name>cmdlinefill</name>++ = ' '</expr>;</expr_stmt>
+    }</block></for>
+    <expr_stmt><expr>*<name>cmdlinefill</name> = '\0'</expr>;</expr_stmt>
+
+    <comment type="block">/* Make child process use this app's standard files. */</comment>
+    <expr_stmt><expr><call><name>ZeroMemory</name><argument_list>(<argument><expr>&amp;<name>si</name></expr></argument>, <argument><expr>sizeof <name>si</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>si</name>.<name>cb</name></name> = sizeof <name>si</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>si</name>.<name>dwFlags</name></name> = <name>STARTF_USESTDHANDLES</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>si</name>.<name>hStdInput</name></name> = <call><name>GetStdHandle</name><argument_list>(<argument><expr><name>STD_INPUT_HANDLE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>si</name>.<name>hStdOutput</name></name> = <call><name>GetStdHandle</name><argument_list>(<argument><expr><name>STD_OUTPUT_HANDLE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>si</name>.<name>hStdError</name></name> = <call><name>GetStdHandle</name><argument_list>(<argument><expr><name>STD_ERROR_HANDLE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>bRet</name> = <call><name>CreateProcess</name><argument_list>(
+        <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>cmdline</name></expr></argument>,
+        <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+        <argument><expr><name>TRUE</name></expr></argument>, <argument><expr>0</expr></argument>,
+        <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+        <argument><expr>&amp;<name>si</name></expr></argument>, <argument><expr>&amp;<name>pi</name></expr></argument>
+        )</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>free</name><argument_list>(<argument><expr><name>cmdline</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr><name>bRet</name></expr>)</condition><then> <block>{
+        <if>if <condition>(<expr><call><name>WaitForSingleObject</name><argument_list>(<argument><expr><name><name>pi</name>.<name>hProcess</name></name></expr></argument>, <argument><expr><name>INFINITE</name></expr></argument>)</argument_list></call> != <name>WAIT_FAILED</name></expr>)</condition><then> <block>{
+	    <expr_stmt><expr><call><name>GetExitCodeProcess</name><argument_list>(<argument><expr><name><name>pi</name>.<name>hProcess</name></name></expr></argument>, <argument><expr>&amp;<name>exit_code</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	}</block></then></if>
+        <expr_stmt><expr><call><name>CloseHandle</name><argument_list>(<argument><expr><name><name>pi</name>.<name>hProcess</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>CloseHandle</name><argument_list>(<argument><expr><name><name>pi</name>.<name>hThread</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>exit_code</name></expr>;</return>
+    }</block></then></if>
+
+    <return>return <expr>1</expr>;</return>
+}</block></function>
+</unit>

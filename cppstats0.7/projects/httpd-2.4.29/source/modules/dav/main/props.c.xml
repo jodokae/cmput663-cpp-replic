@@ -1,0 +1,1127 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/httpd-2.4.29/modules/dav/main/props.c"><comment type="block">/* Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */</comment>
+
+<comment type="block">/*
+** DAV extension module for Apache 2.0.*
+**  - Property database handling (repository-independent)
+**
+** NOTES:
+**
+**   PROPERTY DATABASE
+**
+**   This version assumes that there is a per-resource database provider
+**   to record properties. The database provider decides how and where to
+**   store these databases.
+**
+**   The DBM keys for the properties have the following form:
+**
+**     namespace ":" propname
+**
+**   For example: 5:author
+**
+**   The namespace provides an integer index into the namespace table
+**   (see below). propname is simply the property name, without a namespace
+**   prefix.
+**
+**   A special case exists for properties that had a prefix starting with
+**   "xml". The XML Specification reserves these for future use. mod_dav
+**   stores and retrieves them unchanged. The keys for these properties
+**   have the form:
+**
+**     ":" propname
+**
+**   The propname will contain the prefix and the property name. For
+**   example, a key might be ":xmlfoo:name"
+**
+**   The ":name" style will also be used for properties that do not
+**   exist within a namespace.
+**
+**   The DBM values consist of two null-terminated strings, appended
+**   together (the null-terms are retained and stored in the database).
+**   The first string is the xml:lang value for the property. An empty
+**   string signifies that a lang value was not in context for the value.
+**   The second string is the property value itself.
+**
+**
+**   NAMESPACE TABLE
+**
+**   The namespace table is an array that lists each of the namespaces
+**   that are in use by the properties in the given propdb. Each entry
+**   in the array is a simple URI.
+**
+**   For example: http://www.foo.bar/standards/props/
+**
+**   The prefix used for the property is stripped and the URI for it
+**   is entered into the namespace table. Also, any namespaces used
+**   within the property value will be entered into the table (and
+**   stripped from the child elements).
+**
+**   The namespaces are stored in the DBM database under the "METADATA" key.
+**
+**
+**   STRIPPING NAMESPACES
+**
+**   Within the property values, the namespace declarations (xmlns...)
+**   are stripped. Each element and attribute will have its prefix removed
+**   and a new prefix inserted.
+**
+**   This must be done so that we can return multiple properties in a
+**   PROPFIND which may have (originally) used conflicting prefixes. For
+**   that case, we must bind all property value elements to new namespace
+**   values.
+**
+**   This implies that clients must NOT be sensitive to the namespace
+**   prefix used for their properties. It WILL change when the properties
+**   are returned (we return them as "ns&lt;index&gt;", e.g. "ns5"). Also, the
+**   property value can contain ONLY XML elements and CDATA. PI and comment
+**   elements will be stripped. CDATA whitespace will be preserved, but
+**   whitespace within element tags will be altered. Attribute ordering
+**   may be altered. Element and CDATA ordering will be preserved.
+**
+**
+**   ATTRIBUTES ON PROPERTY NAME ELEMENTS
+**
+**   When getting/setting properties, the XML used looks like:
+**
+**     &lt;prop&gt;
+**       &lt;propname1&gt;value&lt;/propname1&gt;
+**       &lt;propname2&gt;value&lt;/propname1&gt;
+**     &lt;/prop&gt;
+**
+**   This implementation (mod_dav) DOES NOT save any attributes that are
+**   associated with the &lt;propname1&gt; element. The property value is deemed
+**   to be only the contents ("value" in the above example).
+**
+**   We do store the xml:lang value (if any) that applies to the context
+**   of the &lt;propname1&gt; element. Whether the xml:lang attribute is on
+**   &lt;propname1&gt; itself, or from a higher level element, we will store it
+**   with the property value.
+**
+**
+**   VERSIONING
+**
+**   The DBM db contains a key named "METADATA" that holds database-level
+**   information, such as the namespace table. The record also contains the
+**   db's version number as the very first 16-bit value. This first number
+**   is actually stored as two single bytes: the first byte is a "major"
+**   version number. The second byte is a "minor" number.
+**
+**   If the major number is not what mod_dav expects, then the db is closed
+**   immediately and an error is returned. A minor number change is
+**   acceptable -- it is presumed that old/new dav_props.c can deal with
+**   the database format. For example, a newer dav_props might update the
+**   minor value and append information to the end of the metadata record
+**   (which would be ignored by previous versions).
+**
+**
+** ISSUES:
+**
+**   At the moment, for the dav_get_allprops() and dav_get_props() functions,
+**   we must return a set of xmlns: declarations for ALL known namespaces
+**   in the file. There isn't a way to filter this because we don't know
+**   which are going to be used or not. Examining property names is not
+**   sufficient because the property values could use entirely different
+**   namespaces.
+**
+**   ==&gt; we must devise a scheme where we can "garbage collect" the namespace
+**       entries from the property database.
+*/</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_strings.h"</cpp:file></cpp:include>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>APR_WANT_STDIO</name></cpp:macro></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>APR_WANT_BYTEFUNC</name></cpp:macro></cpp:define>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_want.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"mod_dav.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_log.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_request.h"</cpp:file></cpp:include>
+
+<comment type="block">/*
+** There is some rough support for writable DAV:getcontenttype and
+** DAV:getcontentlanguage properties. If this #define is (1), then
+** this support is disabled.
+**
+** We are disabling it because of a lack of support in GET and PUT
+** operations. For GET, it would be "expensive" to look for a propdb,
+** open it, and attempt to extract the Content-Type and Content-Language
+** values for the response.
+** (Handling the PUT would not be difficult, though)
+*/</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>DAV_DISABLE_WRITABLE_PROPS</name></cpp:macro>     <cpp:value>1</cpp:value></cpp:define>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>DAV_EMPTY_VALUE</name></cpp:macro>                <cpp:value>"\0"</cpp:value></cpp:define>    <comment type="block">/* TWO null terms */</comment>
+
+<struct>struct <name>dav_propdb</name> <block>{
+    <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl>;</decl_stmt>                <comment type="block">/* the pool we should use */</comment>
+    <decl_stmt><decl><type><name>request_rec</name> *</type><name>r</name></decl>;</decl_stmt>               <comment type="block">/* the request record */</comment>
+
+    <decl_stmt><decl><type><specifier>const</specifier> <name>dav_resource</name> *</type><name>resource</name></decl>;</decl_stmt> <comment type="block">/* the target resource */</comment>
+
+    <decl_stmt><decl><type><name>int</name></type> <name>deferred</name></decl>;</decl_stmt>                 <comment type="block">/* open of db has been deferred */</comment>
+    <decl_stmt><decl><type><name>dav_db</name> *</type><name>db</name></decl>;</decl_stmt>                   <comment type="block">/* underlying database containing props */</comment>
+
+    <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>ns_xlate</name></decl>;</decl_stmt> <comment type="block">/* translation of an elem-&gt;ns to URI */</comment>
+    <decl_stmt><decl><type><name>dav_namespace_map</name> *</type><name>mapping</name></decl>;</decl_stmt>   <comment type="block">/* namespace mapping */</comment>
+
+    <decl_stmt><decl><type><name>dav_lockdb</name> *</type><name>lockdb</name></decl>;</decl_stmt>           <comment type="block">/* the lock database */</comment>
+
+    <decl_stmt><decl><type><name>dav_buffer</name></type> <name>wb_lock</name></decl>;</decl_stmt>           <comment type="block">/* work buffer for lockdiscovery property */</comment>
+
+    <comment type="block">/* if we ever run a GET subreq, it will be stored here */</comment>
+    <decl_stmt><decl><type><name>request_rec</name> *</type><name>subreq</name></decl>;</decl_stmt>
+
+    <comment type="block">/* hooks we should use for processing (based on the target resource) */</comment>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>dav_hooks_db</name> *</type><name>db_hooks</name></decl>;</decl_stmt>
+}</block>;</struct>
+
+<comment type="block">/* NOTE: dav_core_props[] and the following enum must stay in sync. */</comment>
+<comment type="block">/* ### move these into a "core" liveprop provider? */</comment>
+<decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> * <specifier>const</specifier></type> <name><name>dav_core_props</name><index>[]</index></name> <init>=
+<expr><block>{
+    <expr>"getcontenttype"</expr>,
+    <expr>"getcontentlanguage"</expr>,
+    <expr>"lockdiscovery"</expr>,
+    <expr>"supportedlock"</expr>,
+
+    <expr><name>NULL</name></expr>        <comment type="block">/* sentinel */</comment>
+}</block></expr></init></decl>;</decl_stmt>
+<enum>enum <block>{
+    <decl><name>DAV_PROPID_CORE_getcontenttype</name> <init>= <expr><name>DAV_PROPID_CORE</name></expr></init></decl>,
+    <decl><name>DAV_PROPID_CORE_getcontentlanguage</name></decl>,
+    <decl><name>DAV_PROPID_CORE_lockdiscovery</name></decl>,
+    <decl><name>DAV_PROPID_CORE_supportedlock</name></decl>,
+
+    <decl><name>DAV_PROPID_CORE_UNKNOWN</name></decl>
+}</block>;</enum>
+
+<comment type="block">/*
+** This structure is used to track information needed for a rollback.
+*/</comment>
+<typedef>typedef <type><struct>struct <name>dav_rollback_item</name> <block>{
+    <comment type="block">/* select one of the two rollback context structures based on the
+       value of dav_prop_ctx.is_liveprop */</comment>
+    <decl_stmt><decl><type><name>dav_deadprop_rollback</name> *</type><name>deadprop</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_liveprop_rollback</name> *</type><name>liveprop</name></decl>;</decl_stmt>
+
+}</block></struct></type> <name>dav_rollback_item</name>;</typedef>
+
+
+<function><type><specifier>static</specifier> <name>int</name></type> <name>dav_find_liveprop_provider</name><parameter_list>(<param><decl><type><name>dav_propdb</name> *</type><name>propdb</name></decl></param>,
+                                      <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>ns_uri</name></decl></param>,
+                                      <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>propname</name></decl></param>,
+                                      <param><decl><type><specifier>const</specifier> <name>dav_hooks_liveprop</name> **</type><name>provider</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>propid</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr>*<name>provider</name> = <name>NULL</name></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr><name>ns_uri</name> == <name>NULL</name></expr>)</condition><then> <block>{
+        <comment type="block">/* policy: liveprop providers cannot define no-namespace properties */</comment>
+        <return>return <expr><name>DAV_PROPID_CORE_UNKNOWN</name></expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/* check liveprop providers first, so they can define core properties */</comment>
+    <expr_stmt><expr><name>propid</name> = <call><name>dav_run_find_liveprop</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>resource</name></name></expr></argument>, <argument><expr><name>ns_uri</name></expr></argument>, <argument><expr><name>propname</name></expr></argument>,
+                                   <argument><expr><name>provider</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>propid</name> != 0</expr>)</condition><then> <block>{
+        <return>return <expr><name>propid</name></expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/* check for core property */</comment>
+    <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>ns_uri</name></expr></argument>, <argument><expr>"DAV:"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then> <block>{
+        <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> * <specifier>const</specifier> *</type><name>p</name> <init>= <expr><name>dav_core_props</name></expr></init></decl>;</decl_stmt>
+
+        <for>for (<init><expr><name>propid</name> = <name>DAV_PROPID_CORE</name></expr>;</init> <condition><expr>*<name>p</name> != <name>NULL</name></expr>;</condition> <incr><expr>++<name>p</name></expr>, <expr>++<name>propid</name></expr></incr>)
+            <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>propname</name></expr></argument>, <argument><expr>*<name>p</name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then> <block>{
+                <return>return <expr><name>propid</name></expr>;</return>
+            }</block></then></if></for>
+    }</block></then></if>
+
+    <comment type="block">/* no provider for this property */</comment>
+    <return>return <expr><name>DAV_PROPID_CORE_UNKNOWN</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>void</name></type> <name>dav_find_liveprop</name><parameter_list>(<param><decl><type><name>dav_propdb</name> *</type><name>propdb</name></decl></param>, <param><decl><type><name>apr_xml_elem</name> *</type><name>elem</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>ns_uri</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_elem_private</name> *</type><name>priv</name> <init>= <expr><name><name>elem</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>dav_hooks_liveprop</name> *</type><name>hooks</name></decl>;</decl_stmt>
+
+
+    <if>if <condition>(<expr><name><name>elem</name>-&gt;<name>ns</name></name> == <name>APR_XML_NS_NONE</name></expr>)</condition><then>
+        <expr_stmt><expr><name>ns_uri</name> = <name>NULL</name></expr>;</expr_stmt></then>
+    <else>else <if>if <condition>(<expr><name><name>elem</name>-&gt;<name>ns</name></name> == <name>APR_XML_NS_DAV_ID</name></expr>)</condition><then>
+        <expr_stmt><expr><name>ns_uri</name> = "DAV:"</expr>;</expr_stmt></then>
+    <else>else
+        <expr_stmt><expr><name>ns_uri</name> = <call><name>APR_XML_GET_URI_ITEM</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>ns_xlate</name></name></expr></argument>, <argument><expr><name><name>elem</name>-&gt;<name>ns</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if></else></if>
+
+    <expr_stmt><expr><name><name>priv</name>-&gt;<name>propid</name></name> = <call><name>dav_find_liveprop_provider</name><argument_list>(<argument><expr><name>propdb</name></expr></argument>, <argument><expr><name>ns_uri</name></expr></argument>, <argument><expr><name><name>elem</name>-&gt;<name>name</name></name></expr></argument>,
+                                              <argument><expr>&amp;<name>hooks</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* ### this test seems redundant... */</comment>
+    <if>if <condition>(<expr><name><name>priv</name>-&gt;<name>propid</name></name> != <name>DAV_PROPID_CORE_UNKNOWN</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name><name>priv</name>-&gt;<name>provider</name></name> = <name>hooks</name></expr>;</expr_stmt>
+    }</block></then></if>
+}</block></function>
+
+<comment type="block">/* is the live property read/write? */</comment>
+<function><type><specifier>static</specifier> <name>int</name></type> <name>dav_rw_liveprop</name><parameter_list>(<param><decl><type><name>dav_propdb</name> *</type><name>propdb</name></decl></param>, <param><decl><type><name>dav_elem_private</name> *</type><name>priv</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>propid</name> <init>= <expr><name><name>priv</name>-&gt;<name>propid</name></name></expr></init></decl>;</decl_stmt>
+
+    <comment type="block">/*
+    ** Check the liveprop provider (if this is a provider-defined prop)
+    */</comment>
+    <if>if <condition>(<expr><name><name>priv</name>-&gt;<name>provider</name></name> != <name>NULL</name></expr>)</condition><then> <block>{
+        <return>return <expr><call>(*<name><name>priv</name>-&gt;<name>provider</name>-&gt;<name>is_writable</name></name>)<argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>resource</name></name></expr></argument>, <argument><expr><name>propid</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/* these are defined as read-only */</comment>
+    <if>if <condition>(<expr><name>propid</name> == <name>DAV_PROPID_CORE_lockdiscovery</name>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>DAV_DISABLE_WRITABLE_PROPS</name></expr></cpp:if>
+        || <name>propid</name> == <name>DAV_PROPID_CORE_getcontenttype</name>
+        || <name>propid</name> == <name>DAV_PROPID_CORE_getcontentlanguage</name>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+        || <name>propid</name> == <name>DAV_PROPID_CORE_supportedlock</name></expr>
+        )</condition><then> <block>{
+
+        <return>return <expr>0</expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/* these are defined as read/write */</comment>
+    <if>if <condition>(<expr><name>propid</name> == <name>DAV_PROPID_CORE_getcontenttype</name>
+        || <name>propid</name> == <name>DAV_PROPID_CORE_getcontentlanguage</name>
+        || <name>propid</name> == <name>DAV_PROPID_CORE_UNKNOWN</name></expr>)</condition><then> <block>{
+
+        <return>return <expr>1</expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/*
+    ** We don't recognize the property, so it must be dead (and writable)
+    */</comment>
+    <return>return <expr>1</expr>;</return>
+}</block></function>
+
+<comment type="block">/* do a sub-request to fetch properties for the target resource's URI. */</comment>
+<function><type><specifier>static</specifier> <name>void</name></type> <name>dav_do_prop_subreq</name><parameter_list>(<param><decl><type><name>dav_propdb</name> *</type><name>propdb</name></decl></param>)</parameter_list>
+<block>{
+    <comment type="block">/* need to escape the uri that's in the resource struct because during
+     * the property walker it's not encoded. */</comment>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>e_uri</name> <init>= <expr><call><name>ap_escape_uri</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>resource</name>-&gt;<name>pool</name></name></expr></argument>,
+                                      <argument><expr><name><name>propdb</name>-&gt;<name>resource</name>-&gt;<name>uri</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+    <comment type="block">/* perform a "GET" on the resource's URI (note that the resource
+       may not correspond to the current request!). */</comment>
+    <expr_stmt><expr><name><name>propdb</name>-&gt;<name>subreq</name></name> = <call><name>ap_sub_req_lookup_uri</name><argument_list>(<argument><expr><name>e_uri</name></expr></argument>, <argument><expr><name><name>propdb</name>-&gt;<name>r</name></name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>dav_error</name> *</type> <name>dav_insert_coreprop</name><parameter_list>(<param><decl><type><name>dav_propdb</name> *</type><name>propdb</name></decl></param>,
+                                       <param><decl><type><name>int</name></type> <name>propid</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>name</name></decl></param>,
+                                       <param><decl><type><name>dav_prop_insert</name></type> <name>what</name></decl></param>,
+                                       <param><decl><type><name>apr_text_header</name> *</type><name>phdr</name></decl></param>,
+                                       <param><decl><type><name>dav_prop_insert</name> *</type><name>inserted</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>value</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_error</name> *</type><name>err</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr>*<name>inserted</name> = <name>DAV_PROP_INSERT_NOTDEF</name></expr>;</expr_stmt>
+
+    <comment type="block">/* fast-path the common case */</comment>
+    <if>if <condition>(<expr><name>propid</name> == <name>DAV_PROPID_CORE_UNKNOWN</name></expr>)</condition><then>
+        <return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+    <switch>switch <condition>(<expr><name>propid</name></expr>)</condition> <block>{
+
+    <case>case <expr><name>DAV_PROPID_CORE_lockdiscovery</name></expr>:
+        <if>if <condition>(<expr><name><name>propdb</name>-&gt;<name>lockdb</name></name> != <name>NULL</name></expr>)</condition><then> <block>{
+            <decl_stmt><decl><type><name>dav_lock</name> *</type><name>locks</name></decl>;</decl_stmt>
+
+            <if>if <condition>(<expr>(<name>err</name> = <call><name>dav_lock_query</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>lockdb</name></name></expr></argument>, <argument><expr><name><name>propdb</name>-&gt;<name>resource</name></name></expr></argument>,
+                                      <argument><expr>&amp;<name>locks</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then> <block>{
+                <return>return <expr><call><name>dav_push_error</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>p</name></name></expr></argument>, <argument><expr><name><name>err</name>-&gt;<name>status</name></name></expr></argument>, <argument><expr>0</expr></argument>,
+                                      <argument><expr>"DAV:lockdiscovery could not be "
+                                      "determined due to a problem fetching "
+                                      "the locks for this resource."</expr></argument>,
+                                      <argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</return>
+            }</block></then></if>
+
+            <comment type="block">/* fast-path the no-locks case */</comment>
+            <if>if <condition>(<expr><name>locks</name> == <name>NULL</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><name>value</name> = ""</expr>;</expr_stmt>
+            }</block></then>
+            <else>else <block>{
+                <comment type="block">/*
+                ** This may modify the buffer. value may point to
+                ** wb_lock.pbuf or a string constant.
+                */</comment>
+                <expr_stmt><expr><name>value</name> = <call><name>dav_lock_get_activelock</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>r</name></name></expr></argument>, <argument><expr><name>locks</name></expr></argument>,
+                                                <argument><expr>&amp;<name><name>propdb</name>-&gt;<name>wb_lock</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+                <comment type="block">/* make a copy to isolate it from changes to wb_lock */</comment>
+                <expr_stmt><expr><name>value</name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>p</name></name></expr></argument>, <argument><expr><name><name>propdb</name>-&gt;<name>wb_lock</name>.<name>buf</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></else></if>
+        }</block></then></if>
+        <break>break;</break>
+
+    </case><case>case <expr><name>DAV_PROPID_CORE_supportedlock</name></expr>:
+        <if>if <condition>(<expr><name><name>propdb</name>-&gt;<name>lockdb</name></name> != <name>NULL</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>value</name> = <call>(*<name><name>propdb</name>-&gt;<name>lockdb</name>-&gt;<name>hooks</name>-&gt;<name>get_supportedlock</name></name>)<argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>resource</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+        <break>break;</break>
+
+    </case><case>case <expr><name>DAV_PROPID_CORE_getcontenttype</name></expr>:
+        <if>if <condition>(<expr><name><name>propdb</name>-&gt;<name>subreq</name></name> == <name>NULL</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>dav_do_prop_subreq</name><argument_list>(<argument><expr><name>propdb</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+        <if>if <condition>(<expr><name><name>propdb</name>-&gt;<name>subreq</name>-&gt;<name>content_type</name></name> != <name>NULL</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>value</name> = <name><name>propdb</name>-&gt;<name>subreq</name>-&gt;<name>content_type</name></name></expr>;</expr_stmt>
+        }</block></then></if>
+        <break>break;</break>
+
+    </case><case>case <expr><name>DAV_PROPID_CORE_getcontentlanguage</name></expr>:
+    <block>{
+        <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>lang</name></decl>;</decl_stmt>
+
+        <if>if <condition>(<expr><name><name>propdb</name>-&gt;<name>subreq</name></name> == <name>NULL</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>dav_do_prop_subreq</name><argument_list>(<argument><expr><name>propdb</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+        <if>if <condition>(<expr>(<name>lang</name> = <call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>subreq</name>-&gt;<name>headers_out</name></name></expr></argument>,
+                                 <argument><expr>"Content-Language"</expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>value</name> = <name>lang</name></expr>;</expr_stmt>
+        }</block></then></if>
+        <break>break;</break>
+    }</block>
+
+    </case><default>default:
+        <comment type="block">/* fall through to interpret as a dead property */</comment>
+        <break>break;</break>
+    </default>}</block></switch>
+
+    <comment type="block">/* if something was supplied, then insert it */</comment>
+    <if>if <condition>(<expr><name>value</name> != <name>NULL</name></expr>)</condition><then> <block>{
+        <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>s</name></decl>;</decl_stmt>
+
+        <if>if <condition>(<expr><name>what</name> == <name>DAV_PROP_INSERT_SUPPORTED</name></expr>)</condition><then> <block>{
+            <comment type="block">/* use D: prefix to refer to the DAV: namespace URI,
+             * and let the namespace attribute default to "DAV:"
+             */</comment>
+            <expr_stmt><expr><name>s</name> = <call><name>apr_psprintf</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>p</name></name></expr></argument>,
+                            <argument><expr>"&lt;D:supported-live-property D:name=\"%s\"/&gt;" <name>DEBUG_CR</name></expr></argument>,
+                            <argument><expr><name>name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+        <else>else <if>if <condition>(<expr><name>what</name> == <name>DAV_PROP_INSERT_VALUE</name> &amp;&amp; *<name>value</name> != '\0'</expr>)</condition><then> <block>{
+            <comment type="block">/* use D: prefix to refer to the DAV: namespace URI */</comment>
+            <expr_stmt><expr><name>s</name> = <call><name>apr_psprintf</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>p</name></name></expr></argument>, <argument><expr>"&lt;D:%s&gt;%s&lt;/D:%s&gt;" <name>DEBUG_CR</name></expr></argument>,
+                            <argument><expr><name>name</name></expr></argument>, <argument><expr><name>value</name></expr></argument>, <argument><expr><name>name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+        <else>else <block>{
+            <comment type="block">/* use D: prefix to refer to the DAV: namespace URI */</comment>
+            <expr_stmt><expr><name>s</name> = <call><name>apr_psprintf</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>p</name></name></expr></argument>, <argument><expr>"&lt;D:%s/&gt;" <name>DEBUG_CR</name></expr></argument>, <argument><expr><name>name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></else></if></else></if>
+        <expr_stmt><expr><call><name>apr_text_append</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>p</name></name></expr></argument>, <argument><expr><name>phdr</name></expr></argument>, <argument><expr><name>s</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <expr_stmt><expr>*<name>inserted</name> = <name>what</name></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>dav_error</name> *</type> <name>dav_insert_liveprop</name><parameter_list>(<param><decl><type><name>dav_propdb</name> *</type><name>propdb</name></decl></param>,
+                                       <param><decl><type><specifier>const</specifier> <name>apr_xml_elem</name> *</type><name>elem</name></decl></param>,
+                                       <param><decl><type><name>dav_prop_insert</name></type> <name>what</name></decl></param>,
+                                       <param><decl><type><name>apr_text_header</name> *</type><name>phdr</name></decl></param>,
+                                       <param><decl><type><name>dav_prop_insert</name> *</type><name>inserted</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>dav_elem_private</name> *</type><name>priv</name> <init>= <expr><name><name>elem</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+
+    <expr_stmt><expr>*<name>inserted</name> = <name>DAV_PROP_INSERT_NOTDEF</name></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr><name><name>priv</name>-&gt;<name>provider</name></name> == <name>NULL</name></expr>)</condition><then> <block>{
+        <comment type="block">/* this is a "core" property that we define */</comment>
+        <return>return <expr><call><name>dav_insert_coreprop</name><argument_list>(<argument><expr><name>propdb</name></expr></argument>, <argument><expr><name><name>priv</name>-&gt;<name>propid</name></name></expr></argument>, <argument><expr><name><name>elem</name>-&gt;<name>name</name></name></expr></argument>,
+                                   <argument><expr><name>what</name></expr></argument>, <argument><expr><name>phdr</name></expr></argument>, <argument><expr><name>inserted</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/* ask the provider (that defined this prop) to insert the prop */</comment>
+    <expr_stmt><expr>*<name>inserted</name> = <call>(*<name><name>priv</name>-&gt;<name>provider</name>-&gt;<name>insert_prop</name></name>)<argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>resource</name></name></expr></argument>, <argument><expr><name><name>priv</name>-&gt;<name>propid</name></name></expr></argument>,
+                                               <argument><expr><name>what</name></expr></argument>, <argument><expr><name>phdr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>void</name></type> <name>dav_output_prop_name</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>,
+                                 <param><decl><type><specifier>const</specifier> <name>dav_prop_name</name> *</type><name>name</name></decl></param>,
+                                 <param><decl><type><name>dav_xmlns_info</name> *</type><name>xi</name></decl></param>,
+                                 <param><decl><type><name>apr_text_header</name> *</type><name>phdr</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>s</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>*<name><name>name</name>-&gt;<name>ns</name></name> == '\0'</expr>)</condition><then>
+        <expr_stmt><expr><name>s</name> = <call><name>apr_psprintf</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>"&lt;%s/&gt;" <name>DEBUG_CR</name></expr></argument>, <argument><expr><name><name>name</name>-&gt;<name>name</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+    <else>else <block>{
+        <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>prefix</name> <init>= <expr><call><name>dav_xmlns_add_uri</name><argument_list>(<argument><expr><name>xi</name></expr></argument>, <argument><expr><name><name>name</name>-&gt;<name>ns</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+        <expr_stmt><expr><name>s</name> = <call><name>apr_psprintf</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>"&lt;%s:%s/&gt;" <name>DEBUG_CR</name></expr></argument>, <argument><expr><name>prefix</name></expr></argument>, <argument><expr><name><name>name</name>-&gt;<name>name</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if>
+
+    <expr_stmt><expr><call><name>apr_text_append</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>phdr</name></expr></argument>, <argument><expr><name>s</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>void</name></type> <name>dav_insert_xmlns</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>pre_prefix</name></decl></param>, <param><decl><type><name>long</name></type> <name>ns</name></decl></param>,
+                             <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>ns_uri</name></decl></param>, <param><decl><type><name>apr_text_header</name> *</type><name>phdr</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>s</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>s</name> = <call><name>apr_psprintf</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>" xmlns:%s%ld=\"%s\""</expr></argument>, <argument><expr><name>pre_prefix</name></expr></argument>, <argument><expr><name>ns</name></expr></argument>, <argument><expr><name>ns_uri</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>apr_text_append</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>phdr</name></expr></argument>, <argument><expr><name>s</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>dav_error</name> *</type><name>dav_really_open_db</name><parameter_list>(<param><decl><type><name>dav_propdb</name> *</type><name>propdb</name></decl></param>, <param><decl><type><name>int</name></type> <name>ro</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>dav_error</name> *</type><name>err</name></decl>;</decl_stmt>
+
+    <comment type="block">/* we're trying to open the db; turn off the 'deferred' flag */</comment>
+    <expr_stmt><expr><name><name>propdb</name>-&gt;<name>deferred</name></name> = 0</expr>;</expr_stmt>
+
+    <comment type="block">/* ask the DB provider to open the thing */</comment>
+    <expr_stmt><expr><name>err</name> = <call>(*<name><name>propdb</name>-&gt;<name>db_hooks</name>-&gt;<name>open</name></name>)<argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>p</name></name></expr></argument>, <argument><expr><name><name>propdb</name>-&gt;<name>resource</name></name></expr></argument>, <argument><expr><name>ro</name></expr></argument>,
+                                    <argument><expr>&amp;<name><name>propdb</name>-&gt;<name>db</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>err</name> != <name>NULL</name></expr>)</condition><then> <block>{
+        <return>return <expr><call><name>dav_push_error</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>p</name></name></expr></argument>, <argument><expr><name>HTTP_INTERNAL_SERVER_ERROR</name></expr></argument>,
+                              <argument><expr><name>DAV_ERR_PROP_OPENING</name></expr></argument>,
+                              <argument><expr>"Could not open the property database."</expr></argument>,
+                              <argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/*
+    ** NOTE: propdb-&gt;db could be NULL if we attempted to open a readonly
+    **       database that doesn't exist. If we require read/write
+    **       access, then a database was created and opened.
+    */</comment>
+
+    <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<macro><name>DAV_DECLARE</name><argument_list>(<argument>dav_error *</argument>)</argument_list></macro><macro><name>dav_open_propdb</name><argument_list>(<argument>request_rec *r</argument>, <argument>dav_lockdb *lockdb</argument>,
+                                        <argument>const dav_resource *resource</argument>,
+                                        <argument>int ro</argument>,
+                                        <argument>apr_array_header_t * ns_xlate</argument>,
+                                        <argument>dav_propdb **p_propdb</argument>)</argument_list></macro>
+<block>{
+    <decl_stmt><decl><type><name>dav_propdb</name> *</type><name>propdb</name> <init>= <expr><call><name>apr_pcalloc</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>propdb</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+    <expr_stmt><expr>*<name>p_propdb</name> = <name>NULL</name></expr>;</expr_stmt>
+
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>DAV_DEBUG</name></expr></cpp:if>
+    <if>if <condition>(<expr><name><name>resource</name>-&gt;<name>uri</name></name> == <name>NULL</name></expr>)</condition><then> <block>{
+        <return>return <expr><call><name>dav_new_error</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>HTTP_INTERNAL_SERVER_ERROR</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr>0</expr></argument>,
+                             <argument><expr>"INTERNAL DESIGN ERROR: resource must define "
+                             "its URI."</expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+    <expr_stmt><expr><name><name>propdb</name>-&gt;<name>r</name></name> = <name>r</name></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>apr_pool_create</name><argument_list>(<argument><expr>&amp;<name><name>propdb</name>-&gt;<name>p</name></name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>propdb</name>-&gt;<name>resource</name></name> = <name>resource</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>propdb</name>-&gt;<name>ns_xlate</name></name> = <name>ns_xlate</name></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name><name>propdb</name>-&gt;<name>db_hooks</name></name> = <call><name>DAV_GET_HOOKS_PROPDB</name><argument_list>(<argument><expr><name>r</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name><name>propdb</name>-&gt;<name>lockdb</name></name> = <name>lockdb</name></expr>;</expr_stmt>
+
+    <comment type="block">/* always defer actual open, to avoid expense of accessing db
+     * when only live properties are involved
+     */</comment>
+    <expr_stmt><expr><name><name>propdb</name>-&gt;<name>deferred</name></name> = 1</expr>;</expr_stmt>
+
+    <comment type="block">/* ### what to do about closing the propdb on server failure? */</comment>
+
+    <expr_stmt><expr>*<name>p_propdb</name> = <name>propdb</name></expr>;</expr_stmt>
+    <return>return <expr><name>NULL</name></expr>;</return>
+}</block>
+
+<macro><name>DAV_DECLARE</name><argument_list>(<argument>void</argument>)</argument_list></macro> <macro><name>dav_close_propdb</name><argument_list>(<argument>dav_propdb *propdb</argument>)</argument_list></macro>
+<block>{
+    <if>if <condition>(<expr><name><name>propdb</name>-&gt;<name>db</name></name> != <name>NULL</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call>(*<name><name>propdb</name>-&gt;<name>db_hooks</name>-&gt;<name>close</name></name>)<argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>db</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <comment type="block">/* Currently, mod_dav's pool usage doesn't allow clearing this pool. */</comment>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr>0</expr></cpp:if>
+    apr_pool_destroy(propdb-&gt;p);
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+}</block>
+
+<macro><name>DAV_DECLARE</name><argument_list>(<argument>dav_get_props_result</argument>)</argument_list></macro> <macro><name>dav_get_allprops</name><argument_list>(<argument>dav_propdb *propdb</argument>,
+                                                   <argument>dav_prop_insert what</argument>)</argument_list></macro>
+<block>{
+    <decl_stmt><decl><type><specifier>const</specifier> <name>dav_hooks_db</name> *</type><name>db_hooks</name> <init>= <expr><name><name>propdb</name>-&gt;<name>db_hooks</name></name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_text_header</name></type> <name>hdr</name> <init>= <expr><block>{ <expr>0</expr> }</block></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_text_header</name></type> <name>hdr_ns</name> <init>= <expr><block>{ <expr>0</expr> }</block></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_get_props_result</name></type> <name>result</name> <init>= <expr><block>{ <expr>0</expr> }</block></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>found_contenttype</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>found_contentlang</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_prop_insert</name></type> <name>unused_inserted</name></decl>;</decl_stmt>
+
+    <comment type="block">/* if not just getting supported live properties,
+     * scan all properties in the dead prop database
+     */</comment>
+    <if>if <condition>(<expr><name>what</name> != <name>DAV_PROP_INSERT_SUPPORTED</name></expr>)</condition><then> <block>{
+        <if>if <condition>(<expr><name><name>propdb</name>-&gt;<name>deferred</name></name></expr>)</condition><then> <block>{
+            <comment type="block">/* ### what to do with db open error? */</comment>
+            <expr_stmt><expr>(<name>void</name>) <call><name>dav_really_open_db</name><argument_list>(<argument><expr><name>propdb</name></expr></argument>, <argument><expr>1</expr></argument> <comment type="block">/*ro*/</comment>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+
+        <comment type="block">/* initialize the result with some start tags... */</comment>
+        <expr_stmt><expr><call><name>apr_text_append</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>p</name></name></expr></argument>, <argument><expr>&amp;<name>hdr</name></expr></argument>,
+                        <argument><expr>"&lt;D:propstat&gt;" <name>DEBUG_CR</name>
+                        "&lt;D:prop&gt;" <name>DEBUG_CR</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <comment type="block">/* if there ARE properties, then scan them */</comment>
+        <if>if <condition>(<expr><name><name>propdb</name>-&gt;<name>db</name></name> != <name>NULL</name></expr>)</condition><then> <block>{
+            <decl_stmt><decl><type><name>dav_xmlns_info</name> *</type><name>xi</name> <init>= <expr><call><name>dav_xmlns_create</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>p</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+            <decl_stmt><decl><type><name>dav_prop_name</name></type> <name>name</name></decl>;</decl_stmt>
+            <decl_stmt><decl><type><name>dav_error</name> *</type><name>err</name></decl>;</decl_stmt>
+
+            <comment type="block">/* define (up front) any namespaces the db might need */</comment>
+            <expr_stmt><expr><call><call>(<name>void</name>) <argument_list>(<argument><expr>*<name><name>db_hooks</name>-&gt;<name>define_namespaces</name></name></expr></argument>)</argument_list></call><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>db</name></name></expr></argument>, <argument><expr><name>xi</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+            <comment type="block">/* get the first property name, beginning the scan */</comment>
+            <expr_stmt><expr><name>err</name> = <call>(*<name><name>db_hooks</name>-&gt;<name>first_name</name></name>)<argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>db</name></name></expr></argument>, <argument><expr>&amp;<name>name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <while>while <condition>(<expr>!<name>err</name> &amp;&amp; <name><name>name</name>.<name>ns</name></name></expr>)</condition> <block>{
+
+                <comment type="block">/*
+                ** We also look for &lt;DAV:getcontenttype&gt; and
+                ** &lt;DAV:getcontentlanguage&gt;. If they are not stored as dead
+                ** properties, then we need to perform a subrequest to get
+                ** their values (if any).
+                */</comment>
+                <if>if <condition>(<expr>*<name><name>name</name>.<name>ns</name></name> == 'D' &amp;&amp; <call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>ns</name></name></expr></argument>, <argument><expr>"DAV:"</expr></argument>)</argument_list></call> == 0
+                    &amp;&amp; *<name><name>name</name>.<name>name</name></name> == 'g'</expr>)</condition><then> <block>{
+                    <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"getcontenttype"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then> <block>{
+                        <expr_stmt><expr><name>found_contenttype</name> = 1</expr>;</expr_stmt>
+                    }</block></then>
+                    <else>else <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"getcontentlanguage"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then> <block>{
+                        <expr_stmt><expr><name>found_contentlang</name> = 1</expr>;</expr_stmt>
+                    }</block></then></if></else></if>
+                }</block></then></if>
+
+                <if>if <condition>(<expr><name>what</name> == <name>DAV_PROP_INSERT_VALUE</name></expr>)</condition><then> <block>{
+                    <decl_stmt><decl><type><name>int</name></type> <name>found</name></decl>;</decl_stmt>
+
+                    <if>if <condition>(<expr>(<name>err</name> = <call>(*<name><name>db_hooks</name>-&gt;<name>output_value</name></name>)<argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>db</name></name></expr></argument>, <argument><expr>&amp;<name>name</name></expr></argument>,
+                                                         <argument><expr><name>xi</name></expr></argument>, <argument><expr>&amp;<name>hdr</name></expr></argument>,
+                                                         <argument><expr>&amp;<name>found</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then> <block>{
+                        <comment type="block">/* ### anything better to do? */</comment>
+                        <comment type="block">/* ### probably should enter a 500 error */</comment>
+                        <goto>goto <name>next_key</name>;</goto>
+                    }</block></then></if>
+                    <comment type="block">/* assert: found == 1 */</comment>
+                }</block></then>
+                <else>else <block>{
+                    <comment type="block">/* the value was not requested, so just add an empty
+                       tag specifying the property name. */</comment>
+                    <expr_stmt><expr><call><name>dav_output_prop_name</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>p</name></name></expr></argument>, <argument><expr>&amp;<name>name</name></expr></argument>, <argument><expr><name>xi</name></expr></argument>, <argument><expr>&amp;<name>hdr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                }</block></else></if>
+
+              <label><name>next_key</name>:</label>
+                <expr_stmt><expr><name>err</name> = <call>(*<name><name>db_hooks</name>-&gt;<name>next_name</name></name>)<argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>db</name></name></expr></argument>, <argument><expr>&amp;<name>name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></while>
+
+            <comment type="block">/* all namespaces have been entered into xi. generate them into
+               the output now. */</comment>
+            <expr_stmt><expr><call><name>dav_xmlns_generate</name><argument_list>(<argument><expr><name>xi</name></expr></argument>, <argument><expr>&amp;<name>hdr_ns</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        }</block></then></if> <comment type="block">/* propdb-&gt;db != NULL */</comment>
+
+        <comment type="block">/* add namespaces for all the liveprop providers */</comment>
+        <expr_stmt><expr><call><name>dav_add_all_liveprop_xmlns</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>p</name></name></expr></argument>, <argument><expr>&amp;<name>hdr_ns</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <comment type="block">/* ask the liveprop providers to insert their properties */</comment>
+    <expr_stmt><expr><call><name>dav_run_insert_all_liveprops</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>r</name></name></expr></argument>, <argument><expr><name><name>propdb</name>-&gt;<name>resource</name></name></expr></argument>, <argument><expr><name>what</name></expr></argument>, <argument><expr>&amp;<name>hdr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* insert the standard properties */</comment>
+    <comment type="block">/* ### should be handling the return errors here */</comment>
+    <expr_stmt><expr>(<name>void</name>)<call><name>dav_insert_coreprop</name><argument_list>(<argument><expr><name>propdb</name></expr></argument>,
+                              <argument><expr><name>DAV_PROPID_CORE_supportedlock</name></expr></argument>, <argument><expr>"supportedlock"</expr></argument>,
+                              <argument><expr><name>what</name></expr></argument>, <argument><expr>&amp;<name>hdr</name></expr></argument>, <argument><expr>&amp;<name>unused_inserted</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr>(<name>void</name>)<call><name>dav_insert_coreprop</name><argument_list>(<argument><expr><name>propdb</name></expr></argument>,
+                              <argument><expr><name>DAV_PROPID_CORE_lockdiscovery</name></expr></argument>, <argument><expr>"lockdiscovery"</expr></argument>,
+                              <argument><expr><name>what</name></expr></argument>, <argument><expr>&amp;<name>hdr</name></expr></argument>, <argument><expr>&amp;<name>unused_inserted</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* if we didn't find these, then do the whole subreq thing. */</comment>
+    <if>if <condition>(<expr>!<name>found_contenttype</name></expr>)</condition><then> <block>{
+        <comment type="block">/* ### should be handling the return error here */</comment>
+        <expr_stmt><expr>(<name>void</name>)<call><name>dav_insert_coreprop</name><argument_list>(<argument><expr><name>propdb</name></expr></argument>,
+                                  <argument><expr><name>DAV_PROPID_CORE_getcontenttype</name></expr></argument>,
+                                  <argument><expr>"getcontenttype"</expr></argument>,
+                                  <argument><expr><name>what</name></expr></argument>, <argument><expr>&amp;<name>hdr</name></expr></argument>, <argument><expr>&amp;<name>unused_inserted</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+    <if>if <condition>(<expr>!<name>found_contentlang</name></expr>)</condition><then> <block>{
+        <comment type="block">/* ### should be handling the return error here */</comment>
+        <expr_stmt><expr>(<name>void</name>)<call><name>dav_insert_coreprop</name><argument_list>(<argument><expr><name>propdb</name></expr></argument>,
+                                  <argument><expr><name>DAV_PROPID_CORE_getcontentlanguage</name></expr></argument>,
+                                  <argument><expr>"getcontentlanguage"</expr></argument>,
+                                  <argument><expr><name>what</name></expr></argument>, <argument><expr>&amp;<name>hdr</name></expr></argument>, <argument><expr>&amp;<name>unused_inserted</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <comment type="block">/* if not just reporting on supported live props,
+     * terminate the result */</comment>
+    <if>if <condition>(<expr><name>what</name> != <name>DAV_PROP_INSERT_SUPPORTED</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>apr_text_append</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>p</name></name></expr></argument>, <argument><expr>&amp;<name>hdr</name></expr></argument>,
+                        <argument><expr>"&lt;/D:prop&gt;" <name>DEBUG_CR</name>
+                        "&lt;D:status&gt;HTTP/1.1 200 OK&lt;/D:status&gt;" <name>DEBUG_CR</name>
+                        "&lt;/D:propstat&gt;" <name>DEBUG_CR</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <expr_stmt><expr><name><name>result</name>.<name>propstats</name></name> = <name><name>hdr</name>.<name>first</name></name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>result</name>.<name>xmlns</name></name> = <name><name>hdr_ns</name>.<name>first</name></name></expr>;</expr_stmt>
+    <return>return <expr><name>result</name></expr>;</return>
+}</block>
+
+<macro><name>DAV_DECLARE</name><argument_list>(<argument>dav_get_props_result</argument>)</argument_list></macro> <macro><name>dav_get_props</name><argument_list>(<argument>dav_propdb *propdb</argument>,
+                                                <argument>apr_xml_doc *doc</argument>)</argument_list></macro>
+<block>{
+    <decl_stmt><decl><type><specifier>const</specifier> <name>dav_hooks_db</name> *</type><name>db_hooks</name> <init>= <expr><name><name>propdb</name>-&gt;<name>db_hooks</name></name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_xml_elem</name> *</type><name>elem</name> <init>= <expr><call><name>dav_find_child</name><argument_list>(<argument><expr><name><name>doc</name>-&gt;<name>root</name></name></expr></argument>, <argument><expr>"prop"</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_text_header</name></type> <name>hdr_good</name> <init>= <expr><block>{ <expr>0</expr> }</block></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_text_header</name></type> <name>hdr_bad</name> <init>= <expr><block>{ <expr>0</expr> }</block></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_text_header</name></type> <name>hdr_ns</name> <init>= <expr><block>{ <expr>0</expr> }</block></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>have_good</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_get_props_result</name></type> <name>result</name> <init>= <expr><block>{ <expr>0</expr> }</block></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name> *</type><name>marks_liveprop</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_xmlns_info</name> *</type><name>xi</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>xi_filled</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+
+    <comment type="block">/* ### NOTE: we should pass in TWO buffers -- one for keys, one for
+       the marks */</comment>
+
+    <comment type="block">/* we will ALWAYS provide a "good" result, even if it is EMPTY */</comment>
+    <expr_stmt><expr><call><name>apr_text_append</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>p</name></name></expr></argument>, <argument><expr>&amp;<name>hdr_good</name></expr></argument>,
+                   <argument><expr>"&lt;D:propstat&gt;" <name>DEBUG_CR</name>
+                   "&lt;D:prop&gt;" <name>DEBUG_CR</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* ### the marks should be in a buffer! */</comment>
+    <comment type="block">/* allocate zeroed-memory for the marks. These marks indicate which
+       liveprop namespaces we've generated into the output xmlns buffer */</comment>
+
+    <comment type="block">/* same for the liveprops */</comment>
+    <expr_stmt><expr><name>marks_liveprop</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>p</name></name></expr></argument>, <argument><expr><call><name>dav_get_liveprop_ns_count</name><argument_list>()</argument_list></call> + 1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>xi</name> = <call><name>dav_xmlns_create</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>p</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <for>for (<init><expr><name>elem</name> = <name><name>elem</name>-&gt;<name>first_child</name></name></expr>;</init> <condition><expr><name>elem</name></expr>;</condition> <incr><expr><name>elem</name> = <name><name>elem</name>-&gt;<name>next</name></name></expr></incr>) <block>{
+        <decl_stmt><decl><type><name>dav_elem_private</name> *</type><name>priv</name></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>dav_error</name> *</type><name>err</name></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>dav_prop_insert</name></type> <name>inserted</name></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>dav_prop_name</name></type> <name>name</name></decl>;</decl_stmt>
+
+        <comment type="block">/*
+        ** First try live property providers; if they don't handle
+        ** the property, then try looking it up in the propdb.
+        */</comment>
+
+        <if>if <condition>(<expr><name><name>elem</name>-&gt;<name>priv</name></name> == <name>NULL</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name><name>elem</name>-&gt;<name>priv</name></name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>p</name></name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>priv</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+        <expr_stmt><expr><name>priv</name> = <name><name>elem</name>-&gt;<name>priv</name></name></expr>;</expr_stmt>
+
+        <comment type="block">/* cache the propid; dav_get_props() could be called many times */</comment>
+        <if>if <condition>(<expr><name><name>priv</name>-&gt;<name>propid</name></name> == 0</expr>)</condition><then>
+            <expr_stmt><expr><call><name>dav_find_liveprop</name><argument_list>(<argument><expr><name>propdb</name></expr></argument>, <argument><expr><name>elem</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+        <if>if <condition>(<expr><name><name>priv</name>-&gt;<name>propid</name></name> != <name>DAV_PROPID_CORE_UNKNOWN</name></expr>)</condition><then> <block>{
+
+            <comment type="block">/* insert the property. returns 1 if an insertion was done. */</comment>
+            <if>if <condition>(<expr>(<name>err</name> = <call><name>dav_insert_liveprop</name><argument_list>(<argument><expr><name>propdb</name></expr></argument>, <argument><expr><name>elem</name></expr></argument>, <argument><expr><name>DAV_PROP_INSERT_VALUE</name></expr></argument>,
+                                           <argument><expr>&amp;<name>hdr_good</name></expr></argument>, <argument><expr>&amp;<name>inserted</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then> <block>{
+                <comment type="block">/* ### need to propagate the error to the caller... */</comment>
+                <comment type="block">/* ### skip it for now, as if nothing was inserted */</comment>
+            }</block></then></if>
+            <if>if <condition>(<expr><name>inserted</name> == <name>DAV_PROP_INSERT_VALUE</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><name>have_good</name> = 1</expr>;</expr_stmt>
+
+                <comment type="block">/*
+                ** Add the liveprop's namespace URIs. Note that provider==NULL
+                ** for core properties.
+                */</comment>
+                <if>if <condition>(<expr><name><name>priv</name>-&gt;<name>provider</name></name> != <name>NULL</name></expr>)</condition><then> <block>{
+                    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> * <specifier>const</specifier> *</type> <name>scan_ns_uri</name></decl>;</decl_stmt>
+
+                    <for>for (<init><expr><name>scan_ns_uri</name> = <name><name>priv</name>-&gt;<name>provider</name>-&gt;<name>namespace_uris</name></name></expr>;</init>
+                         <condition><expr>*<name>scan_ns_uri</name> != <name>NULL</name></expr>;</condition>
+                         <incr><expr>++<name>scan_ns_uri</name></expr></incr>) <block>{
+                        <decl_stmt><decl><type><name>long</name></type> <name>ns</name></decl>;</decl_stmt>
+
+                        <expr_stmt><expr><name>ns</name> = <call><name>dav_get_liveprop_ns_index</name><argument_list>(<argument><expr>*<name>scan_ns_uri</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                        <if>if <condition>(<expr><name><name>marks_liveprop</name><index>[<expr><name>ns</name></expr>]</index></name></expr>)</condition><then>
+                            <continue>continue;</continue></then></if>
+                        <expr_stmt><expr><name><name>marks_liveprop</name><index>[<expr><name>ns</name></expr>]</index></name> = 1</expr>;</expr_stmt>
+
+                        <expr_stmt><expr><call><name>dav_insert_xmlns</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>p</name></name></expr></argument>, <argument><expr>"lp"</expr></argument>, <argument><expr><name>ns</name></expr></argument>, <argument><expr>*<name>scan_ns_uri</name></expr></argument>,
+                                         <argument><expr>&amp;<name>hdr_ns</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                    }</block></for>
+                }</block></then></if>
+
+                <comment type="block">/* property added. move on to the next property. */</comment>
+                <continue>continue;</continue>
+            }</block></then>
+            <else>else <if>if <condition>(<expr><name>inserted</name> == <name>DAV_PROP_INSERT_NOTDEF</name></expr>)</condition><then> <block>{
+                <comment type="block">/* nothing to do. fall thru to allow property to be handled
+                   as a dead property */</comment>
+            }</block></then>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>DAV_DEBUG</name></expr></cpp:if>
+            <else>else <block>{
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr>0</expr></cpp:if>
+                <comment type="block">/* ### need to change signature to return an error */</comment>
+                return dav_new_error(propdb-&gt;p, HTTP_INTERNAL_SERVER_ERROR, 0,
+                                     0,
+                                     "INTERNAL DESIGN ERROR: insert_liveprop "
+                                     "did not insert what was asked for.");
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+            }</block></else></if></else></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+        }</block></then></if>
+
+        <comment type="block">/* The property wasn't a live property, so look in the dead property
+           database. */</comment>
+
+        <comment type="block">/* make sure propdb is really open */</comment>
+        <if>if <condition>(<expr><name><name>propdb</name>-&gt;<name>deferred</name></name></expr>)</condition><then> <block>{
+            <comment type="block">/* ### what to do with db open error? */</comment>
+            <expr_stmt><expr>(<name>void</name>) <call><name>dav_really_open_db</name><argument_list>(<argument><expr><name>propdb</name></expr></argument>, <argument><expr>1</expr></argument> <comment type="block">/*ro*/</comment>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+
+        <if>if <condition>(<expr><name><name>elem</name>-&gt;<name>ns</name></name> == <name>APR_XML_NS_NONE</name></expr>)</condition><then>
+            <expr_stmt><expr><name><name>name</name>.<name>ns</name></name> = ""</expr>;</expr_stmt></then>
+        <else>else
+            <expr_stmt><expr><name><name>name</name>.<name>ns</name></name> = <call><name>APR_XML_GET_URI_ITEM</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>ns_xlate</name></name></expr></argument>, <argument><expr><name><name>elem</name>-&gt;<name>ns</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+        <expr_stmt><expr><name><name>name</name>.<name>name</name></name> = <name><name>elem</name>-&gt;<name>name</name></name></expr>;</expr_stmt>
+
+        <comment type="block">/* only bother to look if a database exists */</comment>
+        <if>if <condition>(<expr><name><name>propdb</name>-&gt;<name>db</name></name> != <name>NULL</name></expr>)</condition><then> <block>{
+            <decl_stmt><decl><type><name>int</name></type> <name>found</name></decl>;</decl_stmt>
+
+            <if>if <condition>(<expr>(<name>err</name> = <call>(*<name><name>db_hooks</name>-&gt;<name>output_value</name></name>)<argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>db</name></name></expr></argument>, <argument><expr>&amp;<name>name</name></expr></argument>,
+                                                 <argument><expr><name>xi</name></expr></argument>, <argument><expr>&amp;<name>hdr_good</name></expr></argument>,
+                                                 <argument><expr>&amp;<name>found</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then> <block>{
+                <comment type="block">/* ### what to do? continue doesn't seem right... */</comment>
+                <continue>continue;</continue>
+            }</block></then></if>
+
+            <if>if <condition>(<expr><name>found</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><name>have_good</name> = 1</expr>;</expr_stmt>
+
+                <comment type="block">/* if we haven't added the db's namespaces, then do so... */</comment>
+                <if>if <condition>(<expr>!<name>xi_filled</name></expr>)</condition><then> <block>{
+                    <expr_stmt><expr><call><call>(<name>void</name>) <argument_list>(<argument><expr>*<name><name>db_hooks</name>-&gt;<name>define_namespaces</name></name></expr></argument>)</argument_list></call><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>db</name></name></expr></argument>, <argument><expr><name>xi</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                    <expr_stmt><expr><name>xi_filled</name> = 1</expr>;</expr_stmt>
+                }</block></then></if>
+                <continue>continue;</continue>
+            }</block></then></if>
+        }</block></then></if>
+
+        <comment type="block">/* not found as a live OR dead property. add a record to the "bad"
+           propstats */</comment>
+
+        <comment type="block">/* make sure we've started our "bad" propstat */</comment>
+        <if>if <condition>(<expr><name><name>hdr_bad</name>.<name>first</name></name> == <name>NULL</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>apr_text_append</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>p</name></name></expr></argument>, <argument><expr>&amp;<name>hdr_bad</name></expr></argument>,
+                            <argument><expr>"&lt;D:propstat&gt;" <name>DEBUG_CR</name>
+                            "&lt;D:prop&gt;" <name>DEBUG_CR</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+
+        <comment type="block">/* output this property's name (into the bad propstats) */</comment>
+        <expr_stmt><expr><call><name>dav_output_prop_name</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>p</name></name></expr></argument>, <argument><expr>&amp;<name>name</name></expr></argument>, <argument><expr><name>xi</name></expr></argument>, <argument><expr>&amp;<name>hdr_bad</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></for>
+
+    <expr_stmt><expr><call><name>apr_text_append</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>p</name></name></expr></argument>, <argument><expr>&amp;<name>hdr_good</name></expr></argument>,
+                    <argument><expr>"&lt;/D:prop&gt;" <name>DEBUG_CR</name>
+                    "&lt;D:status&gt;HTTP/1.1 200 OK&lt;/D:status&gt;" <name>DEBUG_CR</name>
+                    "&lt;/D:propstat&gt;" <name>DEBUG_CR</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* default to start with the good */</comment>
+    <expr_stmt><expr><name><name>result</name>.<name>propstats</name></name> = <name><name>hdr_good</name>.<name>first</name></name></expr>;</expr_stmt>
+
+    <comment type="block">/* we may not have any "bad" results */</comment>
+    <if>if <condition>(<expr><name><name>hdr_bad</name>.<name>first</name></name> != <name>NULL</name></expr>)</condition><then> <block>{
+        <comment type="block">/* "close" the bad propstat */</comment>
+        <expr_stmt><expr><call><name>apr_text_append</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>p</name></name></expr></argument>, <argument><expr>&amp;<name>hdr_bad</name></expr></argument>,
+                        <argument><expr>"&lt;/D:prop&gt;" <name>DEBUG_CR</name>
+                        "&lt;D:status&gt;HTTP/1.1 404 Not Found&lt;/D:status&gt;" <name>DEBUG_CR</name>
+                        "&lt;/D:propstat&gt;" <name>DEBUG_CR</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <comment type="block">/* if there are no good props, then just return the bad */</comment>
+        <if>if <condition>(<expr>!<name>have_good</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name><name>result</name>.<name>propstats</name></name> = <name><name>hdr_bad</name>.<name>first</name></name></expr>;</expr_stmt>
+        }</block></then>
+        <else>else <block>{
+            <comment type="block">/* hook the bad propstat to the end of the good one */</comment>
+            <expr_stmt><expr><name><name>hdr_good</name>.<name>last</name>-&gt;<name>next</name></name> = <name><name>hdr_bad</name>.<name>first</name></name></expr>;</expr_stmt>
+        }</block></else></if>
+    }</block></then></if>
+
+    <comment type="block">/* add in all the various namespaces, and return them */</comment>
+    <expr_stmt><expr><call><name>dav_xmlns_generate</name><argument_list>(<argument><expr><name>xi</name></expr></argument>, <argument><expr>&amp;<name>hdr_ns</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>result</name>.<name>xmlns</name></name> = <name><name>hdr_ns</name>.<name>first</name></name></expr>;</expr_stmt>
+
+    <return>return <expr><name>result</name></expr>;</return>
+}</block>
+
+<macro><name>DAV_DECLARE</name><argument_list>(<argument>void</argument>)</argument_list></macro> <macro><name>dav_get_liveprop_supported</name><argument_list>(<argument>dav_propdb *propdb</argument>,
+                                             <argument>const char *ns_uri</argument>,
+                                             <argument>const char *propname</argument>,
+                                             <argument>apr_text_header *body</argument>)</argument_list></macro>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>propid</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>dav_hooks_liveprop</name> *</type><name>hooks</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>propid</name> = <call><name>dav_find_liveprop_provider</name><argument_list>(<argument><expr><name>propdb</name></expr></argument>, <argument><expr><name>ns_uri</name></expr></argument>, <argument><expr><name>propname</name></expr></argument>, <argument><expr>&amp;<name>hooks</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr><name>propid</name> != <name>DAV_PROPID_CORE_UNKNOWN</name></expr>)</condition><then> <block>{
+        <if>if <condition>(<expr><name>hooks</name> == <name>NULL</name></expr>)</condition><then> <block>{
+            <comment type="block">/* this is a "core" property that we define */</comment>
+            <decl_stmt><decl><type><name>dav_prop_insert</name></type> <name>unused_inserted</name></decl>;</decl_stmt>
+            <expr_stmt><expr><call><name>dav_insert_coreprop</name><argument_list>(<argument><expr><name>propdb</name></expr></argument>, <argument><expr><name>propid</name></expr></argument>, <argument><expr><name>propname</name></expr></argument>,
+                                <argument><expr><name>DAV_PROP_INSERT_SUPPORTED</name></expr></argument>, <argument><expr><name>body</name></expr></argument>, <argument><expr>&amp;<name>unused_inserted</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+        <else>else <block>{
+            <expr_stmt><expr><call>(*<name><name>hooks</name>-&gt;<name>insert_prop</name></name>)<argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>resource</name></name></expr></argument>, <argument><expr><name>propid</name></expr></argument>,
+                                  <argument><expr><name>DAV_PROP_INSERT_SUPPORTED</name></expr></argument>, <argument><expr><name>body</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></else></if>
+    }</block></then></if>
+}</block>
+
+<macro><name>DAV_DECLARE_NONSTD</name><argument_list>(<argument>void</argument>)</argument_list></macro> <macro><name>dav_prop_validate</name><argument_list>(<argument>dav_prop_ctx *ctx</argument>)</argument_list></macro>
+<block>{
+    <decl_stmt><decl><type><name>dav_propdb</name> *</type><name>propdb</name> <init>= <expr><name><name>ctx</name>-&gt;<name>propdb</name></name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_xml_elem</name> *</type><name>prop</name> <init>= <expr><name><name>ctx</name>-&gt;<name>prop</name></name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_elem_private</name> *</type><name>priv</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>priv</name> = <name><name>ctx</name>-&gt;<name>prop</name>-&gt;<name>priv</name></name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>p</name></name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>priv</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/*
+    ** Check to see if this is a live property, and fill the fields
+    ** in the XML elem, as appropriate.
+    **
+    ** Verify that the property is read/write. If not, then it cannot
+    ** be SET or DELETEd.
+    */</comment>
+    <if>if <condition>(<expr><name><name>priv</name>-&gt;<name>propid</name></name> == 0</expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>dav_find_liveprop</name><argument_list>(<argument><expr><name>propdb</name></expr></argument>, <argument><expr><name>prop</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <comment type="block">/* it's a liveprop if a provider was found */</comment>
+        <comment type="block">/* ### actually the "core" props should really be liveprops, but
+           ### there is no "provider" for those and the r/w props are
+           ### treated as dead props anyhow */</comment>
+        <expr_stmt><expr><name><name>ctx</name>-&gt;<name>is_liveprop</name></name> = <name><name>priv</name>-&gt;<name>provider</name></name> != <name>NULL</name></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <if>if <condition>(<expr>!<call><name>dav_rw_liveprop</name><argument_list>(<argument><expr><name>propdb</name></expr></argument>, <argument><expr><name>priv</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name><name>ctx</name>-&gt;<name>err</name></name> = <call><name>dav_new_error</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>p</name></name></expr></argument>, <argument><expr><name>HTTP_CONFLICT</name></expr></argument>,
+                                 <argument><expr><name>DAV_ERR_PROP_READONLY</name></expr></argument>, <argument><expr>0</expr></argument>,
+                                 <argument><expr>"Property is read-only."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return;</return>
+    }</block></then></if>
+
+    <if>if <condition>(<expr><name><name>ctx</name>-&gt;<name>is_liveprop</name></name></expr>)</condition><then> <block>{
+        <decl_stmt><decl><type><name>int</name></type> <name>defer_to_dead</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+
+        <expr_stmt><expr><name><name>ctx</name>-&gt;<name>err</name></name> = <call>(*<name><name>priv</name>-&gt;<name>provider</name>-&gt;<name>patch_validate</name></name>)<argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>resource</name></name></expr></argument>,
+                                                     <argument><expr><name>prop</name></expr></argument>, <argument><expr><name><name>ctx</name>-&gt;<name>operation</name></name></expr></argument>,
+                                                     <argument><expr>&amp;<name><name>ctx</name>-&gt;<name>liveprop_ctx</name></name></expr></argument>,
+                                                     <argument><expr>&amp;<name>defer_to_dead</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name><name>ctx</name>-&gt;<name>err</name></name> != <name>NULL</name> || !<name>defer_to_dead</name></expr>)</condition><then>
+            <return>return;</return></then></if>
+
+        <comment type="block">/* clear is_liveprop -- act as a dead prop now */</comment>
+        <expr_stmt><expr><name><name>ctx</name>-&gt;<name>is_liveprop</name></name> = 0</expr>;</expr_stmt>
+    }</block></then></if>
+
+    <comment type="block">/*
+    ** The property is supposed to be stored into the dead-property
+    ** database. Make sure the thing is truly open (and writable).
+    */</comment>
+    <if>if <condition>(<expr><name><name>propdb</name>-&gt;<name>deferred</name></name>
+        &amp;&amp; (<name><name>ctx</name>-&gt;<name>err</name></name> = <call><name>dav_really_open_db</name><argument_list>(<argument><expr><name>propdb</name></expr></argument>, <argument><expr>0</expr></argument> <comment type="block">/* ro */</comment>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then> <block>{
+        <return>return;</return>
+    }</block></then></if>
+
+    <comment type="block">/*
+    ** There should be an open, writable database in here!
+    **
+    ** Note: the database would be NULL if it was opened readonly and it
+    **       did not exist.
+    */</comment>
+    <if>if <condition>(<expr><name><name>propdb</name>-&gt;<name>db</name></name> == <name>NULL</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name><name>ctx</name>-&gt;<name>err</name></name> = <call><name>dav_new_error</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>p</name></name></expr></argument>, <argument><expr><name>HTTP_INTERNAL_SERVER_ERROR</name></expr></argument>,
+                                 <argument><expr><name>DAV_ERR_PROP_NO_DATABASE</name></expr></argument>, <argument><expr>0</expr></argument>,
+                                 <argument><expr>"Attempted to set/remove a property "
+                                 "without a valid, open, read/write "
+                                 "property database."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return;</return>
+    }</block></then></if>
+
+    <if>if <condition>(<expr><name><name>ctx</name>-&gt;<name>operation</name></name> == <name>DAV_PROP_OP_SET</name></expr>)</condition><then> <block>{
+        <comment type="block">/*
+        ** Prep the element =&gt; propdb namespace index mapping, inserting
+        ** namespace URIs into the propdb that don't exist.
+        */</comment>
+        <expr_stmt><expr><call><call>(<name>void</name>) <argument_list>(<argument><expr>*<name><name>propdb</name>-&gt;<name>db_hooks</name>-&gt;<name>map_namespaces</name></name></expr></argument>)</argument_list></call><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>db</name></name></expr></argument>,
+                                                   <argument><expr><name><name>propdb</name>-&gt;<name>ns_xlate</name></name></expr></argument>,
+                                                   <argument><expr>&amp;<name><name>propdb</name>-&gt;<name>mapping</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+    <else>else <if>if <condition>(<expr><name><name>ctx</name>-&gt;<name>operation</name></name> == <name>DAV_PROP_OP_DELETE</name></expr>)</condition><then> <block>{
+        <comment type="block">/*
+        ** There are no checks to perform here. If a property exists, then
+        ** we will delete it. If it does not exist, then it does not matter
+        ** (see S12.13.1).
+        **
+        ** Note that if a property does not exist, that does not rule out
+        ** that a SET will occur during this PROPPATCH (thusly creating it).
+        */</comment>
+    }</block></then></if></else></if>
+}</block>
+
+<macro><name>DAV_DECLARE_NONSTD</name><argument_list>(<argument>void</argument>)</argument_list></macro> <macro><name>dav_prop_exec</name><argument_list>(<argument>dav_prop_ctx *ctx</argument>)</argument_list></macro>
+<block>{
+    <decl_stmt><decl><type><name>dav_propdb</name> *</type><name>propdb</name> <init>= <expr><name><name>ctx</name>-&gt;<name>propdb</name></name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_error</name> *</type><name>err</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_elem_private</name> *</type><name>priv</name> <init>= <expr><name><name>ctx</name>-&gt;<name>prop</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name><name>ctx</name>-&gt;<name>rollback</name></name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>p</name></name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name><name>ctx</name>-&gt;<name>rollback</name></name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr><name><name>ctx</name>-&gt;<name>is_liveprop</name></name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>err</name> = <call>(*<name><name>priv</name>-&gt;<name>provider</name>-&gt;<name>patch_exec</name></name>)<argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>resource</name></name></expr></argument>,
+                                            <argument><expr><name><name>ctx</name>-&gt;<name>prop</name></name></expr></argument>, <argument><expr><name><name>ctx</name>-&gt;<name>operation</name></name></expr></argument>,
+                                            <argument><expr><name><name>ctx</name>-&gt;<name>liveprop_ctx</name></name></expr></argument>,
+                                            <argument><expr>&amp;<name><name>ctx</name>-&gt;<name>rollback</name>-&gt;<name>liveprop</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+    <else>else <block>{
+        <decl_stmt><decl><type><name>dav_prop_name</name></type> <name>name</name></decl>;</decl_stmt>
+
+        <if>if <condition>(<expr><name><name>ctx</name>-&gt;<name>prop</name>-&gt;<name>ns</name></name> == <name>APR_XML_NS_NONE</name></expr>)</condition><then>
+            <expr_stmt><expr><name><name>name</name>.<name>ns</name></name> = ""</expr>;</expr_stmt></then>
+        <else>else
+            <expr_stmt><expr><name><name>name</name>.<name>ns</name></name> = <call><name>APR_XML_GET_URI_ITEM</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>ns_xlate</name></name></expr></argument>, <argument><expr><name><name>ctx</name>-&gt;<name>prop</name>-&gt;<name>ns</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+        <expr_stmt><expr><name><name>name</name>.<name>name</name></name> = <name><name>ctx</name>-&gt;<name>prop</name>-&gt;<name>name</name></name></expr>;</expr_stmt>
+
+        <comment type="block">/* save the old value so that we can do a rollback. */</comment>
+        <if>if <condition>(<expr>(<name>err</name> = <call>(*<name><name>propdb</name>-&gt;<name>db_hooks</name>
+                    -&gt;<name>get_rollback</name></name>)<argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>db</name></name></expr></argument>, <argument><expr>&amp;<name>name</name></expr></argument>,
+                                    <argument><expr>&amp;<name><name>ctx</name>-&gt;<name>rollback</name>-&gt;<name>deadprop</name></name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition><then>
+            <goto>goto <name>error</name>;</goto></then></if>
+
+        <if>if <condition>(<expr><name><name>ctx</name>-&gt;<name>operation</name></name> == <name>DAV_PROP_OP_SET</name></expr>)</condition><then> <block>{
+
+            <comment type="block">/* Note: propdb-&gt;mapping was set in dav_prop_validate() */</comment>
+            <expr_stmt><expr><name>err</name> = <call>(*<name><name>propdb</name>-&gt;<name>db_hooks</name>-&gt;<name>store</name></name>)<argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>db</name></name></expr></argument>, <argument><expr>&amp;<name>name</name></expr></argument>, <argument><expr><name><name>ctx</name>-&gt;<name>prop</name></name></expr></argument>,
+                                             <argument><expr><name><name>propdb</name>-&gt;<name>mapping</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+            <comment type="block">/*
+            ** If an error occurred, then assume that we didn't change the
+            ** value. Remove the rollback item so that we don't try to set
+            ** its value during the rollback.
+            */</comment>
+            <comment type="block">/* ### euh... where is the removal? */</comment>
+        }</block></then>
+        <else>else <if>if <condition>(<expr><name><name>ctx</name>-&gt;<name>operation</name></name> == <name>DAV_PROP_OP_DELETE</name></expr>)</condition><then> <block>{
+
+            <comment type="block">/*
+            ** Delete the property. Ignore errors -- the property is there, or
+            ** we are deleting it for a second time.
+            */</comment>
+            <comment type="block">/* ### but what about other errors? */</comment>
+            <expr_stmt><expr><call><call>(<name>void</name>) <argument_list>(<argument><expr>*<name><name>propdb</name>-&gt;<name>db_hooks</name>-&gt;<name>remove</name></name></expr></argument>)</argument_list></call><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>db</name></name></expr></argument>, <argument><expr>&amp;<name>name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if></else></if>
+    }</block></else></if>
+
+  <label><name>error</name>:</label>
+    <comment type="block">/* push a more specific error here */</comment>
+    <if>if <condition>(<expr><name>err</name> != <name>NULL</name></expr>)</condition><then> <block>{
+        <comment type="block">/*
+        ** Use HTTP_INTERNAL_SERVER_ERROR because we shouldn't have seen
+        ** any errors at this point.
+        */</comment>
+        <expr_stmt><expr><name><name>ctx</name>-&gt;<name>err</name></name> = <call><name>dav_push_error</name><argument_list>(<argument><expr><name><name>propdb</name>-&gt;<name>p</name></name></expr></argument>, <argument><expr><name>HTTP_INTERNAL_SERVER_ERROR</name></expr></argument>,
+                                  <argument><expr><name>DAV_ERR_PROP_EXEC</name></expr></argument>,
+                                  <argument><expr>"Could not execute PROPPATCH."</expr></argument>, <argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+}</block>
+
+<macro><name>DAV_DECLARE_NONSTD</name><argument_list>(<argument>void</argument>)</argument_list></macro> <macro><name>dav_prop_commit</name><argument_list>(<argument>dav_prop_ctx *ctx</argument>)</argument_list></macro>
+<block>{
+    <decl_stmt><decl><type><name>dav_elem_private</name> *</type><name>priv</name> <init>= <expr><name><name>ctx</name>-&gt;<name>prop</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+
+    <comment type="block">/*
+    ** Note that a commit implies ctx-&gt;err is NULL. The caller should assume
+    ** a status of HTTP_OK for this case.
+    */</comment>
+
+    <if>if <condition>(<expr><name><name>ctx</name>-&gt;<name>is_liveprop</name></name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call>(*<name><name>priv</name>-&gt;<name>provider</name>-&gt;<name>patch_commit</name></name>)<argument_list>(<argument><expr><name><name>ctx</name>-&gt;<name>propdb</name>-&gt;<name>resource</name></name></expr></argument>,
+                                        <argument><expr><name><name>ctx</name>-&gt;<name>operation</name></name></expr></argument>,
+                                        <argument><expr><name><name>ctx</name>-&gt;<name>liveprop_ctx</name></name></expr></argument>,
+                                        <argument><expr><name><name>ctx</name>-&gt;<name>rollback</name>-&gt;<name>liveprop</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+}</block>
+
+<macro><name>DAV_DECLARE_NONSTD</name><argument_list>(<argument>void</argument>)</argument_list></macro> <macro><name>dav_prop_rollback</name><argument_list>(<argument>dav_prop_ctx *ctx</argument>)</argument_list></macro>
+<block>{
+    <decl_stmt><decl><type><name>dav_error</name> *</type><name>err</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>dav_elem_private</name> *</type><name>priv</name> <init>= <expr><name><name>ctx</name>-&gt;<name>prop</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+
+    <comment type="block">/* do nothing if there is no rollback information. */</comment>
+    <if>if <condition>(<expr><name><name>ctx</name>-&gt;<name>rollback</name></name> == <name>NULL</name></expr>)</condition><then>
+        <return>return;</return></then></if>
+
+    <comment type="block">/*
+    ** ### if we have an error, and a rollback occurs, then the namespace
+    ** ### mods should not happen at all. Basically, the namespace management
+    ** ### is simply a bitch.
+    */</comment>
+
+    <if>if <condition>(<expr><name><name>ctx</name>-&gt;<name>is_liveprop</name></name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>err</name> = <call>(*<name><name>priv</name>-&gt;<name>provider</name>-&gt;<name>patch_rollback</name></name>)<argument_list>(<argument><expr><name><name>ctx</name>-&gt;<name>propdb</name>-&gt;<name>resource</name></name></expr></argument>,
+                                                <argument><expr><name><name>ctx</name>-&gt;<name>operation</name></name></expr></argument>,
+                                                <argument><expr><name><name>ctx</name>-&gt;<name>liveprop_ctx</name></name></expr></argument>,
+                                                <argument><expr><name><name>ctx</name>-&gt;<name>rollback</name>-&gt;<name>liveprop</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+    <else>else <block>{
+        <expr_stmt><expr><name>err</name> = <call>(*<name><name>ctx</name>-&gt;<name>propdb</name>-&gt;<name>db_hooks</name>
+               -&gt;<name>apply_rollback</name></name>)<argument_list>(<argument><expr><name><name>ctx</name>-&gt;<name>propdb</name>-&gt;<name>db</name></name></expr></argument>, <argument><expr><name><name>ctx</name>-&gt;<name>rollback</name>-&gt;<name>deadprop</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if>
+
+    <if>if <condition>(<expr><name>err</name> != <name>NULL</name></expr>)</condition><then> <block>{
+        <if>if <condition>(<expr><name><name>ctx</name>-&gt;<name>err</name></name> == <name>NULL</name></expr>)</condition><then>
+            <expr_stmt><expr><name><name>ctx</name>-&gt;<name>err</name></name> = <name>err</name></expr>;</expr_stmt></then>
+        <else>else <block>{
+            <decl_stmt><decl><type><name>dav_error</name> *</type><name>scan</name> <init>= <expr><name>err</name></expr></init></decl>;</decl_stmt>
+
+            <comment type="block">/* hook previous errors at the end of the rollback error */</comment>
+            <while>while <condition>(<expr><name><name>scan</name>-&gt;<name>prev</name></name> != <name>NULL</name></expr>)</condition>
+                <expr_stmt><expr><name>scan</name> = <name><name>scan</name>-&gt;<name>prev</name></name></expr>;</expr_stmt></while>
+            <expr_stmt><expr><name><name>scan</name>-&gt;<name>prev</name></name> = <name><name>ctx</name>-&gt;<name>err</name></name></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>ctx</name>-&gt;<name>err</name></name> = <name>err</name></expr>;</expr_stmt>
+        }</block></else></if>
+    }</block></then></if>
+}</block>
+</unit>

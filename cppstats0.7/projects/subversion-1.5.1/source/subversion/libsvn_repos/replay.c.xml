@@ -1,0 +1,785 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/subversion-1.5.1/source/subversion/libsvn_repos/replay.c"><comment type="block">/*
+ * replay.c:   an editor driver for changes made in a given revision
+ *             or transaction
+ *
+ * ====================================================================
+ * Copyright (c) 2000-2006 CollabNet.  All rights reserved.
+ *
+ * This software is licensed as described in the file COPYING, which
+ * you should have received as part of this distribution.  The terms
+ * are also available at http://subversion.tigris.org/license-1.html.
+ * If newer versions of this license are posted there, you may use a
+ * newer version instead, at your option.
+ *
+ * This software consists of voluntary contributions made by many
+ * individuals.  For exact contribution history, see the revision
+ * history and logs, available at http://subversion.tigris.org/.
+ * ====================================================================
+ */</comment>
+
+<escape char="0xc"/>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;assert.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_hash.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_md5.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_types.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_delta.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_fs.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_md5.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_repos.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_props.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_pools.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_path.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_private_config.h"</cpp:file></cpp:include>
+
+<escape char="0xc"/>
+<comment type="block">/*** Backstory ***/</comment>
+
+<comment type="block">/* The year was 2003.  Subversion usage was rampant in the world, and
+   there was a rapidly growing issues database to prove it.  To make
+   matters worse, svn_repos_dir_delta() had simply outgrown itself.
+   No longer content to simply describe the differences between two
+   trees, the function had been slowly bearing the added
+   responsibility of representing the actions that had been taken to
+   cause those differences -- a burden it was never meant to bear.
+   Now grown into a twisted mess of razor-sharp metal and glass, and
+   trembling with a sort of momentarily stayed spring force,
+   svn_repos_dir_delta was a timebomb poised for total annihilation of
+   the American Midwest.
+
+   Subversion needed a change.
+
+   Changes, in fact.  And not just in the literary segue sense.  What
+   Subversion desperately needed was a new mechanism solely
+   responsible for replaying repository actions back to some
+   interested party -- to translate and retransmit the contents of the
+   Berkeley 'changes' database file. */</comment>
+
+<comment type="block">/*** Overview ***/</comment>
+
+<comment type="block">/* The filesystem keeps a record of high-level actions that affect the
+   files and directories in itself.  The 'changes' table records
+   additions, deletions, textual and property modifications, and so
+   on.  The goal of the functions in this file is to examine those
+   change records, and use them to drive an editor interface in such a
+   way as to effectively replay those actions.
+
+   This is critically different than what svn_repos_dir_delta() was
+   designed to do.  That function describes, in the simplest way it
+   can, how to transform one tree into another.  It doesn't care
+   whether or not this was the same way a user might have done this
+   transformation.  More to the point, it doesn't care if this is how
+   those differences *did* come into being.  And it is for this reason
+   that it cannot be relied upon for tasks such as the repository
+   dumpfile-generation code, which is supposed to represent not
+   changes, but actions that cause changes.
+
+   So, what's the plan here?
+
+   First, we fetch the changes for a particular revision or
+   transaction.  We get these as an array, sorted chronologically.
+   From this array we will build a hash, keyed on the path associated
+   with each change item, and whose values are arrays of changes made
+   to that path, again preserving the chronological ordering.
+
+   Once our hash is built, we then sort all the keys of the hash (the
+   paths) using a depth-first directory sort routine.
+
+   Finally, we drive an editor, moving down our list of sorted paths,
+   and manufacturing any intermediate editor calls (directory openings
+   and closures) needed to navigate between each successive path.  For
+   each path, we replay the sorted actions that occurred at that path.
+
+   When we've finished the editor drive, we should have fully replayed
+   the filesystem events that occurred in that revision or transaction
+   (though not necessarily in the same order in which they
+   occurred). */</comment>
+
+
+<escape char="0xc"/>
+<comment type="block">/*** Helper functions. ***/</comment>
+
+
+<comment type="block">/* Information for an active copy, that is a directory which we are currently
+   working on and which was added with history. */</comment>
+<struct>struct <name>copy_info</name>
+<block>{
+  <comment type="block">/* Destination path. */</comment>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl>;</decl_stmt>
+  <comment type="block">/* Copy source.  NULL/invalid if this is an add without history,
+     nested inside an add with history. */</comment>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>copyfrom_path</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_revnum_t</name></type> <name>copyfrom_rev</name></decl>;</decl_stmt>
+}</block>;</struct>
+
+<struct>struct <name>path_driver_cb_baton</name>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>svn_delta_editor_t</name> *</type><name>editor</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>void</name> *</type><name>edit_baton</name></decl>;</decl_stmt>
+
+  <comment type="block">/* The root of the revision we're replaying. */</comment>
+  <decl_stmt><decl><type><name>svn_fs_root_t</name> *</type><name>root</name></decl>;</decl_stmt>
+
+  <comment type="block">/* The root of the previous revision.  If this is non-NULL it means that
+     we are supposed to generate props and text deltas relative to it. */</comment>
+  <decl_stmt><decl><type><name>svn_fs_root_t</name> *</type><name>compare_root</name></decl>;</decl_stmt>
+
+  <decl_stmt><decl><type><name>apr_hash_t</name> *</type><name>changed_paths</name></decl>;</decl_stmt>
+
+  <decl_stmt><decl><type><name>svn_repos_authz_func_t</name></type> <name>authz_read_func</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>void</name> *</type><name>authz_read_baton</name></decl>;</decl_stmt>
+
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>base_path</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>base_path_len</name></decl>;</decl_stmt>
+
+  <decl_stmt><decl><type><name>svn_revnum_t</name></type> <name>low_water_mark</name></decl>;</decl_stmt>
+  <comment type="block">/* Stack of active copy operations. */</comment>
+  <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>copies</name></decl>;</decl_stmt>
+
+  <comment type="block">/* The global pool for this replay operation. */</comment>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl>;</decl_stmt>
+}</block>;</struct>
+
+<comment type="block">/* Recursively traverse PATH (as it exists under SOURCE_ROOT) emitting
+   the appropriate editor calls to add it and its children without any
+   history.  This is meant to be used when either a subset of the tree
+   has been ignored and we need to copy something from that subset to
+   the part of the tree we do care about, or if a subset of the tree is
+   unavailable because of authz and we need to use it as the source of
+   a copy. */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>add_subdir</name><parameter_list>(<param><decl><type><name>svn_fs_root_t</name> *</type><name>source_root</name></decl></param>,
+           <param><decl><type><name>svn_fs_root_t</name> *</type><name>target_root</name></decl></param>,
+           <param><decl><type><specifier>const</specifier> <name>svn_delta_editor_t</name> *</type><name>editor</name></decl></param>,
+           <param><decl><type><name>void</name> *</type><name>edit_baton</name></decl></param>,
+           <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+           <param><decl><type><name>void</name> *</type><name>parent_baton</name></decl></param>,
+           <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>source_path</name></decl></param>,
+           <param><decl><type><name>svn_repos_authz_func_t</name></type> <name>authz_read_func</name></decl></param>,
+           <param><decl><type><name>void</name> *</type><name>authz_read_baton</name></decl></param>,
+           <param><decl><type><name>apr_hash_t</name> *</type><name>changed_paths</name></decl></param>,
+           <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>,
+           <param><decl><type><name>void</name> **</type><name>dir_baton</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>subpool</name> <init>= <expr><call><name>svn_pool_create</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_hash_index_t</name> *</type><name>hi</name></decl>, *<decl><type ref="prev"/><name>phi</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_hash_t</name> *</type><name>dirents</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_hash_t</name> *</type><name>props</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>editor</name>-&gt;<name>add_directory</name></name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr><name>parent_baton</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                <argument><expr><name>SVN_INVALID_REVNUM</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>, <argument><expr><name>dir_baton</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_node_proplist</name><argument_list>(<argument><expr>&amp;<name>props</name></expr></argument>, <argument><expr><name>target_root</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <for>for (<init><expr><name>phi</name> = <call><name>apr_hash_first</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>props</name></expr></argument>)</argument_list></call></expr>;</init> <condition><expr><name>phi</name></expr>;</condition> <incr><expr><name>phi</name> = <call><name>apr_hash_next</name><argument_list>(<argument><expr><name>phi</name></expr></argument>)</argument_list></call></expr></incr>)
+    <block>{
+      <decl_stmt><decl><type><specifier>const</specifier> <name>void</name> *</type><name>key</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>void</name> *</type><name>val</name></decl>;</decl_stmt>
+
+      <expr_stmt><expr><call><name>svn_pool_clear</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>apr_hash_this</name><argument_list>(<argument><expr><name>phi</name></expr></argument>, <argument><expr>&amp;<name>key</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr>&amp;<name>val</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>editor</name>-&gt;<name>change_dir_prop</name></name><argument_list>(<argument><expr>*<name>dir_baton</name></expr></argument>,
+                                      <argument><expr><name>key</name></expr></argument>,
+                                      <argument><expr><name>val</name></expr></argument>,
+                                      <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></for>
+
+  <comment type="block">/* We have to get the dirents from the source path, not the target,
+     because we want nested copies from *readable* paths to be handled by
+     path_driver_cb_func, not add_subdir (in order to preserve history). */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_dir_entries</name><argument_list>(<argument><expr>&amp;<name>dirents</name></expr></argument>, <argument><expr><name>source_root</name></expr></argument>, <argument><expr><name>source_path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <for>for (<init><expr><name>hi</name> = <call><name>apr_hash_first</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>dirents</name></expr></argument>)</argument_list></call></expr>;</init> <condition><expr><name>hi</name></expr>;</condition> <incr><expr><name>hi</name> = <call><name>apr_hash_next</name><argument_list>(<argument><expr><name>hi</name></expr></argument>)</argument_list></call></expr></incr>)
+    <block>{
+      <decl_stmt><decl><type><name>svn_fs_path_change_t</name> *</type><name>change</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>readable</name> <init>= <expr><name>TRUE</name></expr></init></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>svn_fs_dirent_t</name> *</type><name>dent</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>new_path</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>void</name> *</type><name>val</name></decl>;</decl_stmt>
+
+      <expr_stmt><expr><call><name>svn_pool_clear</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>apr_hash_this</name><argument_list>(<argument><expr><name>hi</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr>&amp;<name>val</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name>dent</name> = <name>val</name></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name>new_path</name> = <call><name>svn_path_join</name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr><name><name>dent</name>-&gt;<name>name</name></name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <comment type="block">/* If a file or subdirectory of the copied directory is listed as a
+         changed path (because it was modified after the copy but before the
+         commit), we remove it from the changed_paths hash so that future
+         calls to path_driver_cb_func will ignore it. */</comment>
+      <expr_stmt><expr><name>change</name> = <call><name>apr_hash_get</name><argument_list>(<argument><expr><name>changed_paths</name></expr></argument>, <argument><expr><name>new_path</name></expr></argument>, <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>change</name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name>changed_paths</name></expr></argument>, <argument><expr><name>new_path</name></expr></argument>, <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <comment type="block">/* If it's a delete, skip this entry. */</comment>
+          <if>if <condition>(<expr><name><name>change</name>-&gt;<name>change_kind</name></name> == <name>svn_fs_path_change_delete</name></expr>)</condition><then>
+            <continue>continue;</continue></then></if>
+        }</block></then></if>
+
+      <if>if <condition>(<expr><name>authz_read_func</name></expr>)</condition><then>
+        <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>authz_read_func</name><argument_list>(<argument><expr>&amp;<name>readable</name></expr></argument>, <argument><expr><name>target_root</name></expr></argument>, <argument><expr><name>new_path</name></expr></argument>,
+                                <argument><expr><name>authz_read_baton</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+      <if>if <condition>(<expr>! <name>readable</name></expr>)</condition><then>
+        <continue>continue;</continue></then></if>
+
+      <if>if <condition>(<expr><name><name>dent</name>-&gt;<name>kind</name></name> == <name>svn_node_dir</name></expr>)</condition><then>
+        <block>{
+          <decl_stmt><decl><type><name>void</name> *</type><name>new_dir_baton</name></decl>;</decl_stmt>
+
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>add_subdir</name><argument_list>(<argument><expr><name>source_root</name></expr></argument>, <argument><expr><name>target_root</name></expr></argument>, <argument><expr><name>editor</name></expr></argument>, <argument><expr><name>edit_baton</name></expr></argument>,
+                             <argument><expr><name>new_path</name></expr></argument>, <argument><expr>*<name>dir_baton</name></expr></argument>,
+                             <argument><expr><call><name>svn_path_join</name><argument_list>(<argument><expr><name>source_path</name></expr></argument>, <argument><expr><name><name>dent</name>-&gt;<name>name</name></name></expr></argument>,
+                                           <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>,
+                             <argument><expr><name>authz_read_func</name></expr></argument>, <argument><expr><name>authz_read_baton</name></expr></argument>,
+                             <argument><expr><name>changed_paths</name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>, <argument><expr>&amp;<name>new_dir_baton</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>editor</name>-&gt;<name>close_directory</name></name><argument_list>(<argument><expr><name>new_dir_baton</name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+      <else>else <if>if <condition>(<expr><name><name>dent</name>-&gt;<name>kind</name></name> == <name>svn_node_file</name></expr>)</condition><then>
+        <block>{
+          <decl_stmt><decl><type><name>svn_txdelta_window_handler_t</name></type> <name>delta_handler</name></decl>;</decl_stmt>
+          <decl_stmt><decl><type><name>void</name> *</type><name>delta_handler_baton</name></decl>, *<decl><type ref="prev"/><name>file_baton</name></decl>;</decl_stmt>
+          <decl_stmt><decl><type><name>svn_txdelta_stream_t</name> *</type><name>delta_stream</name></decl>;</decl_stmt>
+          <decl_stmt><decl><type><name>unsigned</name> <name>char</name></type> <name><name>digest</name><index>[<expr><name>APR_MD5_DIGESTSIZE</name></expr>]</index></name></decl>;</decl_stmt>
+
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>editor</name>-&gt;<name>add_file</name></name><argument_list>(<argument><expr><name>new_path</name></expr></argument>, <argument><expr>*<name>dir_baton</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                   <argument><expr><name>SVN_INVALID_REVNUM</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>, <argument><expr>&amp;<name>file_baton</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_node_proplist</name><argument_list>(<argument><expr>&amp;<name>props</name></expr></argument>, <argument><expr><name>target_root</name></expr></argument>, <argument><expr><name>new_path</name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+          <for>for (<init><expr><name>phi</name> = <call><name>apr_hash_first</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>props</name></expr></argument>)</argument_list></call></expr>;</init>
+               <condition><expr><name>phi</name></expr>;</condition>
+               <incr><expr><name>phi</name> = <call><name>apr_hash_next</name><argument_list>(<argument><expr><name>phi</name></expr></argument>)</argument_list></call></expr></incr>)
+            <block>{
+              <decl_stmt><decl><type><specifier>const</specifier> <name>void</name> *</type><name>key</name></decl>;</decl_stmt>
+
+              <expr_stmt><expr><call><name>apr_hash_this</name><argument_list>(<argument><expr><name>phi</name></expr></argument>, <argument><expr>&amp;<name>key</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr>&amp;<name>val</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+              <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>editor</name>-&gt;<name>change_file_prop</name></name><argument_list>(<argument><expr><name>file_baton</name></expr></argument>,
+                                               <argument><expr><name>key</name></expr></argument>,
+                                               <argument><expr><name>val</name></expr></argument>,
+                                               <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></for>
+
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>editor</name>-&gt;<name>apply_textdelta</name></name><argument_list>(<argument><expr><name>file_baton</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>,
+                                          <argument><expr>&amp;<name>delta_handler</name></expr></argument>,
+                                          <argument><expr>&amp;<name>delta_handler_baton</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_get_file_delta_stream</name>
+                  <argument_list>(<argument><expr>&amp;<name>delta_stream</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>target_root</name></expr></argument>, <argument><expr><name>new_path</name></expr></argument>,
+                   <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_txdelta_send_txstream</name><argument_list>(<argument><expr><name>delta_stream</name></expr></argument>,
+                                            <argument><expr><name>delta_handler</name></expr></argument>,
+                                            <argument><expr><name>delta_handler_baton</name></expr></argument>,
+                                            <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_file_md5_checksum</name><argument_list>(<argument><expr><name>digest</name></expr></argument>,
+                                           <argument><expr><name>target_root</name></expr></argument>,
+                                           <argument><expr><name>new_path</name></expr></argument>,
+                                           <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>editor</name>-&gt;<name>close_file</name></name><argument_list>(<argument><expr><name>file_baton</name></expr></argument>,
+                                     <argument><expr><call><name>svn_md5_digest_to_cstring</name><argument_list>(<argument><expr><name>digest</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>,
+                                     <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+      <else>else
+        <expr_stmt><expr><call><name>abort</name><argument_list>()</argument_list></call></expr>;</expr_stmt></else></if></else></if>
+    }</block></for>
+
+  <expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_boolean_t</name></type>
+<name>is_within_base_path</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>base_path</name></decl></param>, <param><decl><type><name>int</name></type> <name>base_len</name></decl></param>)</parameter_list>
+<block>{
+  <if>if <condition>(<expr><name><name>base_path</name><index>[<expr>0</expr>]</index></name> == '\0'</expr>)</condition><then>
+    <return>return <expr><name>TRUE</name></expr>;</return></then></if>
+
+  <if>if <condition>(<expr><call><name>strncmp</name><argument_list>(<argument><expr><name>base_path</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>base_len</name></expr></argument>)</argument_list></call> == 0
+      &amp;&amp; (<name><name>path</name><index>[<expr><name>base_len</name></expr>]</index></name> == '/' || <name><name>path</name><index>[<expr><name>base_len</name></expr>]</index></name> == '\0')</expr>)</condition><then>
+    <return>return <expr><name>TRUE</name></expr>;</return></then></if>
+
+  <return>return <expr><name>FALSE</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>path_driver_cb_func</name><parameter_list>(<param><decl><type><name>void</name> **</type><name>dir_baton</name></decl></param>,
+                    <param><decl><type><name>void</name> *</type><name>parent_baton</name></decl></param>,
+                    <param><decl><type><name>void</name> *</type><name>callback_baton</name></decl></param>,
+                    <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+                    <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>path_driver_cb_baton</name> *</type><name>cb</name> <init>= <expr><name>callback_baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>svn_delta_editor_t</name> *</type><name>editor</name> <init>= <expr><name><name>cb</name>-&gt;<name>editor</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>void</name> *</type><name>edit_baton</name> <init>= <expr><name><name>cb</name>-&gt;<name>edit_baton</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_fs_root_t</name> *</type><name>root</name> <init>= <expr><name><name>cb</name>-&gt;<name>root</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_fs_path_change_t</name> *</type><name>change</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>do_add</name> <init>= <expr><name>FALSE</name></expr></init>, <name>do_delete</name> <init>= <expr><name>FALSE</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_node_kind_t</name></type> <name>kind</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>void</name> *</type><name>file_baton</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>copyfrom_path</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>real_copyfrom_path</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_revnum_t</name></type> <name>copyfrom_rev</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>src_readable</name> <init>= <expr><name>TRUE</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_fs_root_t</name> *</type><name>source_root</name> <init>= <expr><name><name>cb</name>-&gt;<name>compare_root</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>source_path</name> <init>= <expr><name>source_root</name> ? <name>path</name> : <name>NULL</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>base_path</name> <init>= <expr><name><name>cb</name>-&gt;<name>base_path</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>base_path_len</name> <init>= <expr><name><name>cb</name>-&gt;<name>base_path_len</name></name></expr></init></decl>;</decl_stmt>
+
+  <expr_stmt><expr>*<name>dir_baton</name> = <name>NULL</name></expr>;</expr_stmt>
+
+  <comment type="block">/* First, flush the copies stack so it only contains ancestors of path. */</comment>
+  <while>while <condition>(<expr><name><name>cb</name>-&gt;<name>copies</name>-&gt;<name>nelts</name></name> &gt; 0
+         &amp;&amp; ! <call><name>svn_path_is_ancestor</name><argument_list>(<argument><expr><call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name><name>cb</name>-&gt;<name>copies</name></name></expr></argument>,
+                                               <argument><expr><name><name>cb</name>-&gt;<name>copies</name>-&gt;<name>nelts</name></name> - 1</expr></argument>,
+                                               <argument>struct <expr><name>copy_info</name></expr></argument>)</argument_list></call>.<name>path</name></expr></argument>,
+                                 <argument><expr><name>path</name></expr></argument>)</argument_list></call></expr>)</condition>
+    <expr_stmt><expr><name><name>cb</name>-&gt;<name>copies</name>-&gt;<name>nelts</name></name>--</expr>;</expr_stmt></while>
+
+  <expr_stmt><expr><name>change</name> = <call><name>apr_hash_get</name><argument_list>(<argument><expr><name><name>cb</name>-&gt;<name>changed_paths</name></name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr>! <name>change</name></expr>)</condition><then>
+    <block>{
+      <comment type="block">/* This can only happen if the path was removed from cb-&gt;changed_paths
+         by an earlier call to add_subdir, which means the path was already
+         handled and we should simply ignore it. */</comment>
+      <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+    }</block></then></if>
+  <switch>switch <condition>(<expr><name><name>change</name>-&gt;<name>change_kind</name></name></expr>)</condition>
+    <block>{
+    <case>case <expr><name>svn_fs_path_change_add</name></expr>:
+      <expr_stmt><expr><name>do_add</name> = <name>TRUE</name></expr>;</expr_stmt>
+      <break>break;</break>
+
+    </case><case>case <expr><name>svn_fs_path_change_delete</name></expr>:
+      <expr_stmt><expr><name>do_delete</name> = <name>TRUE</name></expr>;</expr_stmt>
+      <break>break;</break>
+
+    </case><case>case <expr><name>svn_fs_path_change_replace</name></expr>:
+      <expr_stmt><expr><name>do_add</name> = <name>TRUE</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name>do_delete</name> = <name>TRUE</name></expr>;</expr_stmt>
+      <break>break;</break>
+
+    </case><case>case <expr><name>svn_fs_path_change_modify</name></expr>:
+    </case><default>default:
+      <comment type="block">/* do nothing */</comment>
+      <break>break;</break>
+    </default>}</block></switch>
+
+  <comment type="block">/* Handle any deletions. */</comment>
+  <if>if <condition>(<expr><name>do_delete</name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>editor</name>-&gt;<name>delete_entry</name></name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr><name>SVN_INVALID_REVNUM</name></expr></argument>,
+                                 <argument><expr><name>parent_baton</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <comment type="block">/* Fetch the node kind if it makes sense to do so. */</comment>
+  <if>if <condition>(<expr>! <name>do_delete</name> || <name>do_add</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_check_path</name><argument_list>(<argument><expr>&amp;<name>kind</name></expr></argument>, <argument><expr><name>root</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr>(<name>kind</name> != <name>svn_node_dir</name>) &amp;&amp; (<name>kind</name> != <name>svn_node_file</name>)</expr>)</condition><then>
+        <return>return <expr><call><name>svn_error_createf</name>
+          <argument_list>(<argument><expr><name>SVN_ERR_FS_NOT_FOUND</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+           <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Filesystem path '%s' is neither a file nor a directory"</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>path</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+    }</block></then></if>
+
+  <comment type="block">/* Handle any adds/opens. */</comment>
+  <if>if <condition>(<expr><name>do_add</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>svn_fs_root_t</name> *</type><name>copyfrom_root</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+      <comment type="block">/* Was this node copied? */</comment>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_copied_from</name><argument_list>(<argument><expr>&amp;<name>copyfrom_rev</name></expr></argument>, <argument><expr>&amp;<name>copyfrom_path</name></expr></argument>,
+                                 <argument><expr><name>root</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <if>if <condition>(<expr><name>copyfrom_path</name> &amp;&amp; <call><name>SVN_IS_VALID_REVNUM</name><argument_list>(<argument><expr><name>copyfrom_rev</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_revision_root</name><argument_list>(<argument><expr>&amp;<name>copyfrom_root</name></expr></argument>,
+                                       <argument><expr><call><name>svn_fs_root_fs</name><argument_list>(<argument><expr><name>root</name></expr></argument>)</argument_list></call></expr></argument>,
+                                       <argument><expr><name>copyfrom_rev</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+          <if>if <condition>(<expr><name><name>cb</name>-&gt;<name>authz_read_func</name></name></expr>)</condition><then>
+            <block>{
+              <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>cb</name>-&gt;<name>authz_read_func</name></name><argument_list>(<argument><expr>&amp;<name>src_readable</name></expr></argument>, <argument><expr><name>copyfrom_root</name></expr></argument>,
+                                          <argument><expr><name>copyfrom_path</name></expr></argument>,
+                                          <argument><expr><name><name>cb</name>-&gt;<name>authz_read_baton</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></then></if>
+        }</block></then></if>
+
+      <comment type="block">/* Save away the copyfrom path in case we null it out below. */</comment>
+      <expr_stmt><expr><name>real_copyfrom_path</name> = <name>copyfrom_path</name></expr>;</expr_stmt>
+      <comment type="block">/* If we have a copyfrom path, and we can't read it or we're just
+         ignoring it, or the copyfrom rev is prior to the low water mark
+         then we just null them out and do a raw add with no history at
+         all. */</comment>
+      <if>if <condition>(<expr><name>copyfrom_path</name>
+          &amp;&amp; (! <name>src_readable</name>
+              || ! <call><name>is_within_base_path</name><argument_list>(<argument><expr><name>copyfrom_path</name> + 1</expr></argument>, <argument><expr><name>base_path</name></expr></argument>,
+                                       <argument><expr><name>base_path_len</name></expr></argument>)</argument_list></call>
+              || <name><name>cb</name>-&gt;<name>low_water_mark</name></name> &gt; <name>copyfrom_rev</name>)</expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><name>copyfrom_path</name> = <name>NULL</name></expr>;</expr_stmt>
+          <expr_stmt><expr><name>copyfrom_rev</name> = <name>SVN_INVALID_REVNUM</name></expr>;</expr_stmt>
+        }</block></then></if>
+
+      <comment type="block">/* Do the right thing based on the path KIND. */</comment>
+      <if>if <condition>(<expr><name>kind</name> == <name>svn_node_dir</name></expr>)</condition><then>
+        <block>{
+          <comment type="block">/* If this is a copy, but we can't represent it as such,
+             then we just do a recursive add of the source path
+             contents. */</comment>
+          <if>if <condition>(<expr><name>real_copyfrom_path</name> &amp;&amp; ! <name>copyfrom_path</name></expr>)</condition><then>
+            <block>{
+              <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>add_subdir</name><argument_list>(<argument><expr><name>copyfrom_root</name></expr></argument>, <argument><expr><name>root</name></expr></argument>, <argument><expr><name>editor</name></expr></argument>, <argument><expr><name>edit_baton</name></expr></argument>,
+                                 <argument><expr><name>path</name></expr></argument>, <argument><expr><name>parent_baton</name></expr></argument>, <argument><expr><name>real_copyfrom_path</name></expr></argument>,
+                                 <argument><expr><name><name>cb</name>-&gt;<name>authz_read_func</name></name></expr></argument>, <argument><expr><name><name>cb</name>-&gt;<name>authz_read_baton</name></name></expr></argument>,
+                                 <argument><expr><name><name>cb</name>-&gt;<name>changed_paths</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>, <argument><expr><name>dir_baton</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></then>
+          <else>else
+            <block>{
+              <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>editor</name>-&gt;<name>add_directory</name></name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr><name>parent_baton</name></expr></argument>,
+                                            <argument><expr><name>copyfrom_path</name></expr></argument>, <argument><expr><name>copyfrom_rev</name></expr></argument>,
+                                            <argument><expr><name>pool</name></expr></argument>, <argument><expr><name>dir_baton</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></else></if>
+        }</block></then>
+      <else>else
+        <block>{
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>editor</name>-&gt;<name>add_file</name></name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr><name>parent_baton</name></expr></argument>, <argument><expr><name>copyfrom_path</name></expr></argument>,
+                                   <argument><expr><name>copyfrom_rev</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>, <argument><expr>&amp;<name>file_baton</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></else></if>
+
+      <comment type="block">/* If we represent this as a copy... */</comment>
+      <if>if <condition>(<expr><name>copyfrom_path</name></expr>)</condition><then>
+        <block>{
+          <comment type="block">/* If it is a directory, make sure descendants get the correct
+             delta source by remembering that we are operating inside a
+             (possibly nested) copy operation. */</comment>
+          <if>if <condition>(<expr><name>kind</name> == <name>svn_node_dir</name></expr>)</condition><then>
+            <block>{
+              <decl_stmt><decl><type>struct <name>copy_info</name> *</type><name>info</name> <init>= <expr>&amp;<call><name>APR_ARRAY_PUSH</name><argument_list>(<argument><expr><name><name>cb</name>-&gt;<name>copies</name></name></expr></argument>,
+                                                       <argument>struct <expr><name>copy_info</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+              <expr_stmt><expr><name><name>info</name>-&gt;<name>path</name></name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name><name>cb</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>path</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+              <expr_stmt><expr><name><name>info</name>-&gt;<name>copyfrom_path</name></name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name><name>cb</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>copyfrom_path</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+              <expr_stmt><expr><name><name>info</name>-&gt;<name>copyfrom_rev</name></name> = <name>copyfrom_rev</name></expr>;</expr_stmt>
+            }</block></then></if>
+
+          <comment type="block">/* Save the source so that we can use it later, when we
+             need to generate text and prop deltas. */</comment>
+          <expr_stmt><expr><name>source_root</name> = <name>copyfrom_root</name></expr>;</expr_stmt>
+          <expr_stmt><expr><name>source_path</name> = <name>copyfrom_path</name></expr>;</expr_stmt>
+        }</block></then>
+      <else>else
+        <comment type="block">/* Else, we are an add without history... */</comment>
+        <block>{
+          <comment type="block">/* If an ancestor is added with history, we need to forget about
+             that here, go on with life and repeat all the mistakes of our
+             past... */</comment>
+          <if>if <condition>(<expr><name>kind</name> == <name>svn_node_dir</name> &amp;&amp; <name><name>cb</name>-&gt;<name>copies</name>-&gt;<name>nelts</name></name> &gt; 0</expr>)</condition><then>
+            <block>{
+              <decl_stmt><decl><type>struct <name>copy_info</name> *</type><name>info</name> <init>= <expr>&amp;<call><name>APR_ARRAY_PUSH</name><argument_list>(<argument><expr><name><name>cb</name>-&gt;<name>copies</name></name></expr></argument>,
+                                                       <argument>struct <expr><name>copy_info</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+              <expr_stmt><expr><name><name>info</name>-&gt;<name>path</name></name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name><name>cb</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>path</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+              <expr_stmt><expr><name><name>info</name>-&gt;<name>copyfrom_path</name></name> = <name>NULL</name></expr>;</expr_stmt>
+              <expr_stmt><expr><name><name>info</name>-&gt;<name>copyfrom_rev</name></name> = <name>SVN_INVALID_REVNUM</name></expr>;</expr_stmt>
+            }</block></then></if>
+          <expr_stmt><expr><name>source_root</name> = <name>NULL</name></expr>;</expr_stmt>
+          <expr_stmt><expr><name>source_path</name> = <name>NULL</name></expr>;</expr_stmt>
+        }</block></else></if>
+    }</block></then>
+  <else>else <if>if <condition>(<expr>! <name>do_delete</name></expr>)</condition><then>
+    <block>{
+      <comment type="block">/* Do the right thing based on the path KIND (and the presence
+         of a PARENT_BATON). */</comment>
+      <if>if <condition>(<expr><name>kind</name> == <name>svn_node_dir</name></expr>)</condition><then>
+        <block>{
+          <if>if <condition>(<expr><name>parent_baton</name></expr>)</condition><then>
+            <block>{
+              <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>editor</name>-&gt;<name>open_directory</name></name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr><name>parent_baton</name></expr></argument>,
+                                             <argument><expr><name>SVN_INVALID_REVNUM</name></expr></argument>,
+                                             <argument><expr><name>pool</name></expr></argument>, <argument><expr><name>dir_baton</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></then>
+          <else>else
+            <block>{
+              <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>editor</name>-&gt;<name>open_root</name></name><argument_list>(<argument><expr><name>edit_baton</name></expr></argument>, <argument><expr><name>SVN_INVALID_REVNUM</name></expr></argument>,
+                                        <argument><expr><name>pool</name></expr></argument>, <argument><expr><name>dir_baton</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></else></if>
+        }</block></then>
+      <else>else
+        <block>{
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>editor</name>-&gt;<name>open_file</name></name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr><name>parent_baton</name></expr></argument>, <argument><expr><name>SVN_INVALID_REVNUM</name></expr></argument>,
+                                    <argument><expr><name>pool</name></expr></argument>, <argument><expr>&amp;<name>file_baton</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></else></if>
+      <comment type="block">/* If we are inside an add with history, we need to adjust the
+         delta source. */</comment>
+      <if>if <condition>(<expr><name><name>cb</name>-&gt;<name>copies</name>-&gt;<name>nelts</name></name> &gt; 0</expr>)</condition><then>
+        <block>{
+          <decl_stmt><decl><type>struct <name>copy_info</name> *</type><name>info</name> <init>= <expr>&amp;<call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name><name>cb</name>-&gt;<name>copies</name></name></expr></argument>,
+                                                  <argument><expr><name><name>cb</name>-&gt;<name>copies</name>-&gt;<name>nelts</name></name> - 1</expr></argument>,
+                                                  <argument>struct <expr><name>copy_info</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+          <if>if <condition>(<expr><name><name>info</name>-&gt;<name>copyfrom_path</name></name></expr>)</condition><then>
+            <block>{
+              <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_revision_root</name><argument_list>(<argument><expr>&amp;<name>source_root</name></expr></argument>,
+                                           <argument><expr><call><name>svn_fs_root_fs</name><argument_list>(<argument><expr><name>root</name></expr></argument>)</argument_list></call></expr></argument>,
+                                           <argument><expr><name><name>info</name>-&gt;<name>copyfrom_rev</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+              <expr_stmt><expr><name>source_path</name> = <call><name>svn_path_join</name><argument_list>(<argument><expr><name><name>info</name>-&gt;<name>copyfrom_path</name></name></expr></argument>,
+                                          <argument><expr><call><name>svn_path_is_child</name><argument_list>(<argument><expr><name><name>info</name>-&gt;<name>path</name></name></expr></argument>, <argument><expr><name>path</name></expr></argument>,
+                                                            <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></then>
+          <else>else
+            <block>{
+              <comment type="block">/* This is an add without history, nested inside an
+                 add with history.  We have no delta source in this case. */</comment>
+              <expr_stmt><expr><name>source_root</name> = <name>NULL</name></expr>;</expr_stmt>
+              <expr_stmt><expr><name>source_path</name> = <name>NULL</name></expr>;</expr_stmt>
+            }</block></else></if>
+        }</block></then></if>
+    }</block></then></if></else></if>
+
+  <comment type="block">/* Handle property modifications. */</comment>
+  <if>if <condition>(<expr>! <name>do_delete</name> || <name>do_add</name></expr>)</condition><then>
+    <block>{
+      <if>if <condition>(<expr><name><name>change</name>-&gt;<name>prop_mod</name></name></expr>)</condition><then>
+        <block>{
+          <if>if <condition>(<expr><name><name>cb</name>-&gt;<name>compare_root</name></name></expr>)</condition><then>
+            <block>{
+              <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>prop_diffs</name></decl>;</decl_stmt>
+              <decl_stmt><decl><type><name>apr_hash_t</name> *</type><name>old_props</name></decl>;</decl_stmt>
+              <decl_stmt><decl><type><name>apr_hash_t</name> *</type><name>new_props</name></decl>;</decl_stmt>
+              <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+
+              <if>if <condition>(<expr><name>source_root</name></expr>)</condition><then>
+                <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_node_proplist</name>
+                        <argument_list>(<argument><expr>&amp;<name>old_props</name></expr></argument>, <argument><expr><name>source_root</name></expr></argument>, <argument><expr><name>source_path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+              <else>else
+                <expr_stmt><expr><name>old_props</name> = <call><name>apr_hash_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+
+              <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_node_proplist</name><argument_list>(<argument><expr>&amp;<name>new_props</name></expr></argument>, <argument><expr><name>root</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+              <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_prop_diffs</name><argument_list>(<argument><expr>&amp;<name>prop_diffs</name></expr></argument>, <argument><expr><name>new_props</name></expr></argument>, <argument><expr><name>old_props</name></expr></argument>,
+                                     <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+              <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name><name>prop_diffs</name>-&gt;<name>nelts</name></name></expr>;</condition> <incr><expr>++<name>i</name></expr></incr>)
+                <block>{
+                  <decl_stmt><decl><type><name>svn_prop_t</name> *</type><name>pc</name> <init>= <expr>&amp;<call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>prop_diffs</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr><name>svn_prop_t</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+                   <if>if <condition>(<expr><name>kind</name> == <name>svn_node_dir</name></expr>)</condition><then>
+                     <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>editor</name>-&gt;<name>change_dir_prop</name></name><argument_list>(<argument><expr>*<name>dir_baton</name></expr></argument>, <argument><expr><name><name>pc</name>-&gt;<name>name</name></name></expr></argument>,
+                                                     <argument><expr><name><name>pc</name>-&gt;<name>value</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+                   <else>else <if>if <condition>(<expr><name>kind</name> == <name>svn_node_file</name></expr>)</condition><then>
+                     <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>editor</name>-&gt;<name>change_file_prop</name></name><argument_list>(<argument><expr><name>file_baton</name></expr></argument>, <argument><expr><name><name>pc</name>-&gt;<name>name</name></name></expr></argument>,
+                                                      <argument><expr><name><name>pc</name>-&gt;<name>value</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if></else></if>
+                }</block></for>
+            }</block></then>
+          <else>else
+            <block>{
+              <comment type="block">/* Just do a dummy prop change to signal that there are *any*
+                 propmods. */</comment>
+              <if>if <condition>(<expr><name>kind</name> == <name>svn_node_dir</name></expr>)</condition><then>
+                <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>editor</name>-&gt;<name>change_dir_prop</name></name><argument_list>(<argument><expr>*<name>dir_baton</name></expr></argument>, <argument><expr>""</expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                                <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+              <else>else <if>if <condition>(<expr><name>kind</name> == <name>svn_node_file</name></expr>)</condition><then>
+                <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>editor</name>-&gt;<name>change_file_prop</name></name><argument_list>(<argument><expr><name>file_baton</name></expr></argument>, <argument><expr>""</expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                                 <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if></else></if>
+            }</block></else></if>
+        }</block></then></if>
+
+      <comment type="block">/* Handle textual modifications.
+
+         Note that this needs to happen in the "copy from a file we
+         aren't allowed to see" case since otherwise the caller will
+         have no way to actually get the new file's contents, which
+         they are apparently allowed to see. */</comment>
+      <if>if <condition>(<expr><name>kind</name> == <name>svn_node_file</name>
+          &amp;&amp; (<name><name>change</name>-&gt;<name>text_mod</name></name> || (<name>real_copyfrom_path</name> &amp;&amp; ! <name>copyfrom_path</name>))</expr>)</condition><then>
+        <block>{
+          <decl_stmt><decl><type><name>svn_txdelta_window_handler_t</name></type> <name>delta_handler</name></decl>;</decl_stmt>
+          <decl_stmt><decl><type><name>void</name> *</type><name>delta_handler_baton</name></decl>;</decl_stmt>
+          <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>checksum</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+
+          <if>if <condition>(<expr><name><name>cb</name>-&gt;<name>compare_root</name></name> &amp;&amp; <name>source_root</name> &amp;&amp; <name>source_path</name></expr>)</condition><then>
+            <block>{
+              <decl_stmt><decl><type><name>unsigned</name> <name>char</name></type> <name><name>digest</name><index>[<expr><name>APR_MD5_DIGESTSIZE</name></expr>]</index></name></decl>;</decl_stmt>
+              <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_file_md5_checksum</name><argument_list>(<argument><expr><name>digest</name></expr></argument>,
+                                               <argument><expr><name>source_root</name></expr></argument>,
+                                               <argument><expr><name>source_path</name></expr></argument>,
+                                               <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+              <expr_stmt><expr><name>checksum</name> = <call><name>svn_md5_digest_to_cstring</name><argument_list>(<argument><expr><name>digest</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></then></if>
+
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>editor</name>-&gt;<name>apply_textdelta</name></name><argument_list>(<argument><expr><name>file_baton</name></expr></argument>, <argument><expr><name>checksum</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>,
+                                          <argument><expr>&amp;<name>delta_handler</name></expr></argument>,
+                                          <argument><expr>&amp;<name>delta_handler_baton</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <if>if <condition>(<expr><name><name>cb</name>-&gt;<name>compare_root</name></name></expr>)</condition><then>
+            <block>{
+              <decl_stmt><decl><type><name>svn_txdelta_stream_t</name> *</type><name>delta_stream</name></decl>;</decl_stmt>
+
+              <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_get_file_delta_stream</name>
+                      <argument_list>(<argument><expr>&amp;<name>delta_stream</name></expr></argument>, <argument><expr><name>source_root</name></expr></argument>, <argument><expr><name>source_path</name></expr></argument>,
+                       <argument><expr><name>root</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+              <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_txdelta_send_txstream</name><argument_list>(<argument><expr><name>delta_stream</name></expr></argument>,
+                                                <argument><expr><name>delta_handler</name></expr></argument>,
+                                                <argument><expr><name>delta_handler_baton</name></expr></argument>,
+                                                <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></then>
+          <else>else
+            <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>delta_handler</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>delta_handler_baton</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+        }</block></then></if>
+    }</block></then></if>
+
+  <comment type="block">/* Close the file baton if we opened it. */</comment>
+  <if>if <condition>(<expr><name>file_baton</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>unsigned</name> <name>char</name></type> <name><name>digest</name><index>[<expr><name>APR_MD5_DIGESTSIZE</name></expr>]</index></name></decl>;</decl_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_file_md5_checksum</name><argument_list>(<argument><expr><name>digest</name></expr></argument>, <argument><expr><name>root</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>editor</name>-&gt;<name>close_file</name></name><argument_list>(<argument><expr><name>file_baton</name></expr></argument>,
+                                 <argument><expr><call><name>svn_md5_digest_to_cstring</name><argument_list>(<argument><expr><name>digest</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>,
+                                 <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<escape char="0xc"/>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_repos_replay2</name><parameter_list>(<param><decl><type><name>svn_fs_root_t</name> *</type><name>root</name></decl></param>,
+                  <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>base_path</name></decl></param>,
+                  <param><decl><type><name>svn_revnum_t</name></type> <name>low_water_mark</name></decl></param>,
+                  <param><decl><type><name>svn_boolean_t</name></type> <name>send_deltas</name></decl></param>,
+                  <param><decl><type><specifier>const</specifier> <name>svn_delta_editor_t</name> *</type><name>editor</name></decl></param>,
+                  <param><decl><type><name>void</name> *</type><name>edit_baton</name></decl></param>,
+                  <param><decl><type><name>svn_repos_authz_func_t</name></type> <name>authz_read_func</name></decl></param>,
+                  <param><decl><type><name>void</name> *</type><name>authz_read_baton</name></decl></param>,
+                  <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>apr_hash_t</name> *</type><name>fs_changes</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_hash_t</name> *</type><name>changed_paths</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_hash_index_t</name> *</type><name>hi</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>paths</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type>struct <name>path_driver_cb_baton</name></type> <name>cb_baton</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>base_path_len</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Fetch the paths changed under ROOT. */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_paths_changed</name><argument_list>(<argument><expr>&amp;<name>fs_changes</name></expr></argument>, <argument><expr><name>root</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr>! <name>base_path</name></expr>)</condition><then>
+    <expr_stmt><expr><name>base_path</name> = ""</expr>;</expr_stmt></then>
+  <else>else <if>if <condition>(<expr><name><name>base_path</name><index>[<expr>0</expr>]</index></name> == '/'</expr>)</condition><then>
+    <expr_stmt><expr>++<name>base_path</name></expr>;</expr_stmt></then></if></else></if>
+
+  <expr_stmt><expr><name>base_path_len</name> = <call><name>strlen</name><argument_list>(<argument><expr><name>base_path</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Make an array from the keys of our CHANGED_PATHS hash, and copy
+     the values into a new hash whose keys have no leading slashes. */</comment>
+  <expr_stmt><expr><name>paths</name> = <call><name>apr_array_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><call><name>apr_hash_count</name><argument_list>(<argument><expr><name>fs_changes</name></expr></argument>)</argument_list></call></expr></argument>,
+                         <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>const <name>char</name> *</expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>changed_paths</name> = <call><name>apr_hash_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <for>for (<init><expr><name>hi</name> = <call><name>apr_hash_first</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>fs_changes</name></expr></argument>)</argument_list></call></expr>;</init> <condition><expr><name>hi</name></expr>;</condition> <incr><expr><name>hi</name> = <call><name>apr_hash_next</name><argument_list>(<argument><expr><name>hi</name></expr></argument>)</argument_list></call></expr></incr>)
+    <block>{
+      <decl_stmt><decl><type><specifier>const</specifier> <name>void</name> *</type><name>key</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>void</name> *</type><name>val</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>apr_ssize_t</name></type> <name>keylen</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>svn_fs_path_change_t</name> *</type><name>change</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>allowed</name> <init>= <expr><name>TRUE</name></expr></init></decl>;</decl_stmt>
+
+      <expr_stmt><expr><call><name>apr_hash_this</name><argument_list>(<argument><expr><name>hi</name></expr></argument>, <argument><expr>&amp;<name>key</name></expr></argument>, <argument><expr>&amp;<name>keylen</name></expr></argument>, <argument><expr>&amp;<name>val</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name>path</name> = <name>key</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name>change</name> = <name>val</name></expr>;</expr_stmt>
+
+      <if>if <condition>(<expr><name>authz_read_func</name></expr>)</condition><then>
+        <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>authz_read_func</name><argument_list>(<argument><expr>&amp;<name>allowed</name></expr></argument>, <argument><expr><name>root</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>authz_read_baton</name></expr></argument>,
+                                <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+      <if>if <condition>(<expr><name>allowed</name></expr>)</condition><then>
+        <block>{
+          <if>if <condition>(<expr><name><name>path</name><index>[<expr>0</expr>]</index></name> == '/'</expr>)</condition><then>
+            <block>{
+              <expr_stmt><expr><name>path</name>++</expr>;</expr_stmt>
+              <expr_stmt><expr><name>keylen</name>--</expr>;</expr_stmt>
+            }</block></then></if>
+
+          <comment type="block">/* If the base_path doesn't match the top directory of this path
+             we don't want anything to do with it... */</comment>
+          <if>if <condition>(<expr><call><name>is_within_base_path</name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr><name>base_path</name></expr></argument>, <argument><expr><name>base_path_len</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+            <block>{
+              <expr_stmt><expr><call><name>APR_ARRAY_PUSH</name><argument_list>(<argument><expr><name>paths</name></expr></argument>, <argument><expr>const <name>char</name> *</expr></argument>)</argument_list></call> = <name>path</name></expr>;</expr_stmt>
+              <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name>changed_paths</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>keylen</name></expr></argument>, <argument><expr><name>change</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></then>
+          <comment type="block">/* ...unless this was a change to one of the parent directories of 
+             base_path. */</comment>
+          <else>else <if>if <condition>(<expr><call><name>is_within_base_path</name><argument_list>(<argument><expr><name>base_path</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>keylen</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+            <block>{
+              <expr_stmt><expr><call><name>APR_ARRAY_PUSH</name><argument_list>(<argument><expr><name>paths</name></expr></argument>, <argument><expr>const <name>char</name> *</expr></argument>)</argument_list></call> = <name>path</name></expr>;</expr_stmt>
+              <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name>changed_paths</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>keylen</name></expr></argument>, <argument><expr><name>change</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></then></if></else></if>
+        }</block></then></if>
+    }</block></for>
+
+  <comment type="block">/* If we were not given a low water mark, assume that everything is there,
+     all the way back to revision 0. */</comment>
+  <if>if <condition>(<expr>! <call><name>SVN_IS_VALID_REVNUM</name><argument_list>(<argument><expr><name>low_water_mark</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <expr_stmt><expr><name>low_water_mark</name> = 0</expr>;</expr_stmt></then></if>
+
+  <comment type="block">/* Initialize our callback baton. */</comment>
+  <expr_stmt><expr><name><name>cb_baton</name>.<name>editor</name></name> = <name>editor</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>cb_baton</name>.<name>edit_baton</name></name> = <name>edit_baton</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>cb_baton</name>.<name>root</name></name> = <name>root</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>cb_baton</name>.<name>changed_paths</name></name> = <name>changed_paths</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>cb_baton</name>.<name>authz_read_func</name></name> = <name>authz_read_func</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>cb_baton</name>.<name>authz_read_baton</name></name> = <name>authz_read_baton</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>cb_baton</name>.<name>base_path</name></name> = <name>base_path</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>cb_baton</name>.<name>base_path_len</name></name> = <name>base_path_len</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>cb_baton</name>.<name>low_water_mark</name></name> = <name>low_water_mark</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>cb_baton</name>.<name>compare_root</name></name> = <name>NULL</name></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name>send_deltas</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_revision_root</name><argument_list>(<argument><expr>&amp;<name><name>cb_baton</name>.<name>compare_root</name></name></expr></argument>,
+                                   <argument><expr><call><name>svn_fs_root_fs</name><argument_list>(<argument><expr><name>root</name></expr></argument>)</argument_list></call></expr></argument>,
+                                   <argument><expr><call><name>svn_fs_is_revision_root</name><argument_list>(<argument><expr><name>root</name></expr></argument>)</argument_list></call>
+                                     ? <call><name>svn_fs_revision_root_revision</name><argument_list>(<argument><expr><name>root</name></expr></argument>)</argument_list></call> - 1
+                                     : <call><name>svn_fs_txn_root_base_revision</name><argument_list>(<argument><expr><name>root</name></expr></argument>)</argument_list></call></expr></argument>,
+                                   <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <expr_stmt><expr><name><name>cb_baton</name>.<name>copies</name></name> = <call><name>apr_array_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>4</expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument>struct <expr><name>copy_info</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>cb_baton</name>.<name>pool</name></name> = <name>pool</name></expr>;</expr_stmt>
+
+  <comment type="block">/* Determine the revision to use throughout the edit, and call
+     EDITOR's set_target_revision() function.  */</comment>
+  <if>if <condition>(<expr><call><name>svn_fs_is_revision_root</name><argument_list>(<argument><expr><name>root</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>svn_revnum_t</name></type> <name>revision</name> <init>= <expr><call><name>svn_fs_revision_root_revision</name><argument_list>(<argument><expr><name>root</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>editor</name>-&gt;<name>set_target_revision</name></name><argument_list>(<argument><expr><name>edit_baton</name></expr></argument>, <argument><expr><name>revision</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <comment type="block">/* Call the path-based editor driver. */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_delta_path_driver</name><argument_list>(<argument><expr><name>editor</name></expr></argument>, <argument><expr><name>edit_baton</name></expr></argument>,
+                                <argument><expr><name>SVN_INVALID_REVNUM</name></expr></argument>, <argument><expr><name>paths</name></expr></argument>,
+                                <argument><expr><name>path_driver_cb_func</name></expr></argument>, <argument><expr>&amp;<name>cb_baton</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_repos_replay</name><parameter_list>(<param><decl><type><name>svn_fs_root_t</name> *</type><name>root</name></decl></param>,
+                 <param><decl><type><specifier>const</specifier> <name>svn_delta_editor_t</name> *</type><name>editor</name></decl></param>,
+                 <param><decl><type><name>void</name> *</type><name>edit_baton</name></decl></param>,
+                 <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <return>return <expr><call><name>svn_repos_replay2</name><argument_list>(<argument><expr><name>root</name></expr></argument>,
+                           <argument><expr>""</expr></argument> <comment type="block">/* the whole tree */</comment>,
+                           <argument><expr><name>SVN_INVALID_REVNUM</name></expr></argument>, <comment type="block">/* no low water mark */</comment>
+                           <argument><expr><name>FALSE</name></expr></argument> <comment type="block">/* no text deltas */</comment>,
+                           <argument><expr><name>editor</name></expr></argument>, <argument><expr><name>edit_baton</name></expr></argument>,
+                           <argument><expr><name>NULL</name></expr></argument> <comment type="block">/* no authz func */</comment>,
+                           <argument><expr><name>NULL</name></expr></argument> <comment type="block">/* no authz baton */</comment>,
+                           <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+</unit>

@@ -1,0 +1,1613 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/cpython-2.6.1/source/Modules/_csv.c"><comment type="block">/* csv module */</comment>
+
+<comment type="block">/*
+
+This module provides the low-level underpinnings of a CSV reading/writing
+module.  Users should not use this module directly, but import the csv.py
+module instead.
+
+**** For people modifying this code, please note that as of this writing
+**** (2003-03-23), it is intended that this code should work with Python
+**** 2.2.
+
+*/</comment>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>MODULE_VERSION</name></cpp:macro> <cpp:value>"1.0"</cpp:value></cpp:define>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"Python.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"structmember.h"</cpp:file></cpp:include>
+
+
+<comment type="block">/* begin 2.2 compatibility macros */</comment>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>PyDoc_STRVAR</name></cpp:ifndef>
+<comment type="block">/* Define macros for inline documentation. */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyDoc_VAR</name><parameter_list>(<param><type><name>name</name></type></param>)</parameter_list></cpp:macro> <cpp:value>static char name[]</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyDoc_STRVAR</name><parameter_list>(<param><type><name>name</name></type></param>,<param><type><name>str</name></type></param>)</parameter_list></cpp:macro> <cpp:value>PyDoc_VAR(name) = PyDoc_STR(str)</cpp:value></cpp:define>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>WITH_DOC_STRINGS</name></cpp:ifdef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyDoc_STR</name><parameter_list>(<param><type><name>str</name></type></param>)</parameter_list></cpp:macro> <cpp:value>str</cpp:value></cpp:define>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyDoc_STR</name><parameter_list>(<param><type><name>str</name></type></param>)</parameter_list></cpp:macro> <cpp:value>""</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* ifndef PyDoc_STRVAR */</comment>
+
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>PyMODINIT_FUNC</name></cpp:ifndef>
+<cpp:if>#	<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>__cplusplus</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<cpp:define>#		<cpp:directive>define</cpp:directive> <cpp:macro><name>PyMODINIT_FUNC</name></cpp:macro> <cpp:value>extern "C" void</cpp:value></cpp:define>
+<cpp:else>#	<cpp:directive>else</cpp:directive></cpp:else> <comment type="block">/* __cplusplus */</comment>
+<cpp:define>#		<cpp:directive>define</cpp:directive> <cpp:macro><name>PyMODINIT_FUNC</name></cpp:macro> <cpp:value>void</cpp:value></cpp:define>
+<cpp:endif>#	<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* __cplusplus */</comment>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>Py_CLEAR</name></cpp:ifndef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_CLEAR</name><parameter_list>(<param><type><name>op</name></type></param>)</parameter_list></cpp:macro>						\
+	<cpp:value>do {							\
+		if (op) {					\
+			PyObject *tmp = (PyObject *)(op);	\
+			(op) = NULL;				\
+			Py_DECREF(tmp);				\
+		}						\
+	} while (0)</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>Py_VISIT</name></cpp:ifndef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_VISIT</name><parameter_list>(<param><type><name>op</name></type></param>)</parameter_list></cpp:macro>							\
+        <cpp:value>do { 								\
+                if (op) {						\
+                        int vret = visit((PyObject *)(op), arg);	\
+                        if (vret)					\
+                                return vret;				\
+                }							\
+        } while (0)</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<comment type="block">/* end 2.2 compatibility macros */</comment>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>IS_BASESTRING</name><parameter_list>(<param><type><name>o</name></type></param>)</parameter_list></cpp:macro> \
+	<cpp:value>PyObject_TypeCheck(o, &amp;PyBaseString_Type)</cpp:value></cpp:define>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyObject</name> *</type><name>error_obj</name></decl>;</decl_stmt>	<comment type="block">/* CSV exception */</comment>
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyObject</name> *</type><name>dialects</name></decl>;</decl_stmt>      <comment type="block">/* Dialect registry */</comment>
+<decl_stmt><decl><type><specifier>static</specifier> <name>long</name></type> <name>field_limit</name> <init>= <expr>128 * 1024</expr></init></decl>;</decl_stmt>	<comment type="block">/* max parsed field size */</comment>
+
+<typedef>typedef <type><enum>enum <block>{
+	<decl><name>START_RECORD</name></decl>, <decl><name>START_FIELD</name></decl>, <decl><name>ESCAPED_CHAR</name></decl>, <decl><name>IN_FIELD</name></decl>, 
+	<decl><name>IN_QUOTED_FIELD</name></decl>, <decl><name>ESCAPE_IN_QUOTED_FIELD</name></decl>, <decl><name>QUOTE_IN_QUOTED_FIELD</name></decl>,
+	<decl><name>EAT_CRNL</name></decl>
+}</block></enum></type> <name>ParserState</name>;</typedef>
+
+<typedef>typedef <type><enum>enum <block>{
+	<decl><name>QUOTE_MINIMAL</name></decl>, <decl><name>QUOTE_ALL</name></decl>, <decl><name>QUOTE_NONNUMERIC</name></decl>, <decl><name>QUOTE_NONE</name></decl>
+}</block></enum></type> <name>QuoteStyle</name>;</typedef>
+
+<typedef>typedef <type><struct>struct <block>{
+	<decl_stmt><decl><type><name>QuoteStyle</name></type> <name>style</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>char</name> *</type><name>name</name></decl>;</decl_stmt>
+}</block></struct></type> <name>StyleDesc</name>;</typedef>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>StyleDesc</name></type> <name><name>quote_styles</name><index>[]</index></name> <init>= <expr><block>{
+	<expr><block>{ <expr><name>QUOTE_MINIMAL</name></expr>,    <expr>"QUOTE_MINIMAL"</expr> }</block></expr>,
+	<expr><block>{ <expr><name>QUOTE_ALL</name></expr>,        <expr>"QUOTE_ALL"</expr> }</block></expr>,
+	<expr><block>{ <expr><name>QUOTE_NONNUMERIC</name></expr>, <expr>"QUOTE_NONNUMERIC"</expr> }</block></expr>,
+	<expr><block>{ <expr><name>QUOTE_NONE</name></expr>,       <expr>"QUOTE_NONE"</expr> }</block></expr>,
+	<expr><block>{ <expr>0</expr> }</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+
+<typedef>typedef <type><struct>struct <block>{
+        <decl_stmt><decl><type><name>PyObject_HEAD</name>
+        
+	<name>int</name></type> <name>doublequote</name></decl>;</decl_stmt>	<comment type="block">/* is " represented by ""? */</comment>
+	<decl_stmt><decl><type><name>char</name></type> <name>delimiter</name></decl>;</decl_stmt>		<comment type="block">/* field separator */</comment>
+	<decl_stmt><decl><type><name>char</name></type> <name>quotechar</name></decl>;</decl_stmt>		<comment type="block">/* quote character */</comment>
+	<decl_stmt><decl><type><name>char</name></type> <name>escapechar</name></decl>;</decl_stmt>	<comment type="block">/* escape character */</comment>
+	<decl_stmt><decl><type><name>int</name></type> <name>skipinitialspace</name></decl>;</decl_stmt>	<comment type="block">/* ignore spaces following delimiter? */</comment>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>lineterminator</name></decl>;</decl_stmt> <comment type="block">/* string to write between records */</comment>
+	<decl_stmt><decl><type><name>int</name></type> <name>quoting</name></decl>;</decl_stmt>		<comment type="block">/* style of quoting to write */</comment>
+
+	<decl_stmt><decl><type><name>int</name></type> <name>strict</name></decl>;</decl_stmt>		<comment type="block">/* raise exception on bad CSV */</comment>
+}</block></struct></type> <name>DialectObj</name>;</typedef>
+
+<decl_stmt><decl><type><name>staticforward</name> <name>PyTypeObject</name></type> <name>Dialect_Type</name></decl>;</decl_stmt>
+
+<typedef>typedef <type><struct>struct <block>{
+        <decl_stmt><decl><type><name>PyObject_HEAD</name>
+
+        <name>PyObject</name> *</type><name>input_iter</name></decl>;</decl_stmt>   <comment type="block">/* iterate over this for input lines */</comment>
+
+        <decl_stmt><decl><type><name>DialectObj</name> *</type><name>dialect</name></decl>;</decl_stmt>    <comment type="block">/* parsing dialect */</comment>
+
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>fields</name></decl>;</decl_stmt>	<comment type="block">/* field list for current record */</comment>
+	<decl_stmt><decl><type><name>ParserState</name></type> <name>state</name></decl>;</decl_stmt>	<comment type="block">/* current CSV parse state */</comment>
+	<decl_stmt><decl><type><name>char</name> *</type><name>field</name></decl>;</decl_stmt>		<comment type="block">/* build current field in here */</comment>
+	<decl_stmt><decl><type><name>int</name></type> <name>field_size</name></decl>;</decl_stmt>		<comment type="block">/* size of allocated buffer */</comment>
+	<decl_stmt><decl><type><name>int</name></type> <name>field_len</name></decl>;</decl_stmt>		<comment type="block">/* length of current field */</comment>
+	<decl_stmt><decl><type><name>int</name></type> <name>numeric_field</name></decl>;</decl_stmt>	<comment type="block">/* treat field as numeric */</comment>
+	<decl_stmt><decl><type><name>unsigned</name> <name>long</name></type> <name>line_num</name></decl>;</decl_stmt>	<comment type="block">/* Source-file line number */</comment>
+}</block></struct></type> <name>ReaderObj</name>;</typedef>
+
+<decl_stmt><decl><type><name>staticforward</name> <name>PyTypeObject</name></type> <name>Reader_Type</name></decl>;</decl_stmt>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>ReaderObject_Check</name><parameter_list>(<param><type><name>v</name></type></param>)</parameter_list></cpp:macro>   <cpp:value>(Py_TYPE(v) == &amp;Reader_Type)</cpp:value></cpp:define>
+
+<typedef>typedef <type><struct>struct <block>{
+        <decl_stmt><decl><type><name>PyObject_HEAD</name>
+
+        <name>PyObject</name> *</type><name>writeline</name></decl>;</decl_stmt>    <comment type="block">/* write output lines to this file */</comment>
+
+        <decl_stmt><decl><type><name>DialectObj</name> *</type><name>dialect</name></decl>;</decl_stmt>    <comment type="block">/* parsing dialect */</comment>
+
+	<decl_stmt><decl><type><name>char</name> *</type><name>rec</name></decl>;</decl_stmt>		<comment type="block">/* buffer for parser.join */</comment>
+	<decl_stmt><decl><type><name>int</name></type> <name>rec_size</name></decl>;</decl_stmt>		<comment type="block">/* size of allocated record */</comment>
+	<decl_stmt><decl><type><name>int</name></type> <name>rec_len</name></decl>;</decl_stmt>		<comment type="block">/* length of record */</comment>
+	<decl_stmt><decl><type><name>int</name></type> <name>num_fields</name></decl>;</decl_stmt>		<comment type="block">/* number of fields in record */</comment>
+}</block></struct></type> <name>WriterObj</name>;</typedef>        
+
+<decl_stmt><decl><type><name>staticforward</name> <name>PyTypeObject</name></type> <name>Writer_Type</name></decl>;</decl_stmt>
+
+<comment type="block">/*
+ * DIALECT class
+ */</comment>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>get_dialect_from_registry</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type> <name>name_obj</name></decl></param>)</parameter_list>
+<block>{
+        <decl_stmt><decl><type><name>PyObject</name> *</type><name>dialect_obj</name></decl>;</decl_stmt>
+
+        <expr_stmt><expr><name>dialect_obj</name> = <call><name>PyDict_GetItem</name><argument_list>(<argument><expr><name>dialects</name></expr></argument>, <argument><expr><name>name_obj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>dialect_obj</name> == <name>NULL</name></expr>)</condition><then> <block>{
+		<if>if <condition>(<expr>!<call><name>PyErr_Occurred</name><argument_list>()</argument_list></call></expr>)</condition><then>
+			<expr_stmt><expr><call><name>PyErr_Format</name><argument_list>(<argument><expr><name>error_obj</name></expr></argument>, <argument><expr>"unknown dialect"</expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+	}</block></then>
+	<else>else
+		<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>dialect_obj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+        <return>return <expr><name>dialect_obj</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>get_string</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>str</name></decl></param>)</parameter_list>
+<block>{
+        <expr_stmt><expr><call><name>Py_XINCREF</name><argument_list>(<argument><expr><name>str</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>str</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>get_nullchar_as_None</name><parameter_list>(<param><decl><type><name>char</name></type> <name>c</name></decl></param>)</parameter_list>
+<block>{
+        <if>if <condition>(<expr><name>c</name> == '\0'</expr>)</condition><then> <block>{
+                <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <return>return <expr><name>Py_None</name></expr>;</return>
+        }</block></then>
+        <else>else
+                <return>return <expr><call><name>PyString_FromStringAndSize</name><argument_list>(<argument><expr>(<name>char</name>*)&amp;<name>c</name></expr></argument>, <argument><expr>1</expr></argument>)</argument_list></call></expr>;</return></else></if>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>Dialect_get_lineterminator</name><parameter_list>(<param><decl><type><name>DialectObj</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+        <return>return <expr><call><name>get_string</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>lineterminator</name></name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>Dialect_get_escapechar</name><parameter_list>(<param><decl><type><name>DialectObj</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+        <return>return <expr><call><name>get_nullchar_as_None</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>escapechar</name></name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>Dialect_get_quotechar</name><parameter_list>(<param><decl><type><name>DialectObj</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+        <return>return <expr><call><name>get_nullchar_as_None</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>quotechar</name></name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>Dialect_get_quoting</name><parameter_list>(<param><decl><type><name>DialectObj</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+        <return>return <expr><call><name>PyInt_FromLong</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>quoting</name></name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>_set_bool</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>name</name></decl></param>, <param><decl><type><name>int</name> *</type><name>target</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>src</name></decl></param>, <param><decl><type><name>int</name></type> <name>dflt</name></decl></param>)</parameter_list>
+<block>{
+	<if>if <condition>(<expr><name>src</name> == <name>NULL</name></expr>)</condition><then>
+		<expr_stmt><expr>*<name>target</name> = <name>dflt</name></expr>;</expr_stmt></then>
+	<else>else
+		<expr_stmt><expr>*<name>target</name> = <call><name>PyObject_IsTrue</name><argument_list>(<argument><expr><name>src</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+	<return>return <expr>0</expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>_set_int</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>name</name></decl></param>, <param><decl><type><name>int</name> *</type><name>target</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>src</name></decl></param>, <param><decl><type><name>int</name></type> <name>dflt</name></decl></param>)</parameter_list>
+<block>{
+	<if>if <condition>(<expr><name>src</name> == <name>NULL</name></expr>)</condition><then>
+		<expr_stmt><expr>*<name>target</name> = <name>dflt</name></expr>;</expr_stmt></then>
+	<else>else <block>{
+		<if>if <condition>(<expr>!<call><name>PyInt_Check</name><argument_list>(<argument><expr><name>src</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+			<expr_stmt><expr><call><name>PyErr_Format</name><argument_list>(<argument><expr><name>PyExc_TypeError</name></expr></argument>, 
+				     <argument><expr>"\"%s\" must be an integer"</expr></argument>, <argument><expr><name>name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr>-1</expr>;</return>
+		}</block></then></if>
+		<expr_stmt><expr>*<name>target</name> = <call><name>PyInt_AsLong</name><argument_list>(<argument><expr><name>src</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	}</block></else></if>
+	<return>return <expr>0</expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>_set_char</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>name</name></decl></param>, <param><decl><type><name>char</name> *</type><name>target</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>src</name></decl></param>, <param><decl><type><name>char</name></type> <name>dflt</name></decl></param>)</parameter_list>
+<block>{
+	<if>if <condition>(<expr><name>src</name> == <name>NULL</name></expr>)</condition><then>
+		<expr_stmt><expr>*<name>target</name> = <name>dflt</name></expr>;</expr_stmt></then>
+	<else>else <block>{
+		<if>if <condition>(<expr><name>src</name> == <name>Py_None</name> || <call><name>PyString_Size</name><argument_list>(<argument><expr><name>src</name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+			<expr_stmt><expr>*<name>target</name> = '\0'</expr>;</expr_stmt></then>
+		<else>else <if>if <condition>(<expr>!<call><name>PyString_Check</name><argument_list>(<argument><expr><name>src</name></expr></argument>)</argument_list></call> || <call><name>PyString_Size</name><argument_list>(<argument><expr><name>src</name></expr></argument>)</argument_list></call> != 1</expr>)</condition><then> <block>{
+			<expr_stmt><expr><call><name>PyErr_Format</name><argument_list>(<argument><expr><name>PyExc_TypeError</name></expr></argument>, 
+				     <argument><expr>"\"%s\" must be an 1-character string"</expr></argument>, 
+				     <argument><expr><name>name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr>-1</expr>;</return>
+		}</block></then>
+		<else>else <block>{
+			<decl_stmt><decl><type><name>char</name> *</type><name>s</name> <init>= <expr><call><name>PyString_AsString</name><argument_list>(<argument><expr><name>src</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+			<if>if <condition>(<expr><name>s</name> == <name>NULL</name></expr>)</condition><then>
+				<return>return <expr>-1</expr>;</return></then></if>
+			<expr_stmt><expr>*<name>target</name> = <name><name>s</name><index>[<expr>0</expr>]</index></name></expr>;</expr_stmt>
+		}</block></else></if></else></if>
+	}</block></else></if>
+        <return>return <expr>0</expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>_set_str</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>name</name></decl></param>, <param><decl><type><name>PyObject</name> **</type><name>target</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>src</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>dflt</name></decl></param>)</parameter_list>
+<block>{
+	<if>if <condition>(<expr><name>src</name> == <name>NULL</name></expr>)</condition><then>
+		<expr_stmt><expr>*<name>target</name> = <call><name>PyString_FromString</name><argument_list>(<argument><expr><name>dflt</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+	<else>else <block>{
+		<if>if <condition>(<expr><name>src</name> == <name>Py_None</name></expr>)</condition><then>
+			<expr_stmt><expr>*<name>target</name> = <name>NULL</name></expr>;</expr_stmt></then>
+		<else>else <if>if <condition>(<expr>!<call><name>IS_BASESTRING</name><argument_list>(<argument><expr><name>src</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+			<expr_stmt><expr><call><name>PyErr_Format</name><argument_list>(<argument><expr><name>PyExc_TypeError</name></expr></argument>, 
+				     <argument><expr>"\"%s\" must be an string"</expr></argument>, <argument><expr><name>name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr>-1</expr>;</return>
+		}</block></then>
+		<else>else <block>{
+			<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr>*<name>target</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>src</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<expr_stmt><expr>*<name>target</name> = <name>src</name></expr>;</expr_stmt>
+		}</block></else></if></else></if>
+	}</block></else></if>
+        <return>return <expr>0</expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>dialect_check_quoting</name><parameter_list>(<param><decl><type><name>int</name></type> <name>quoting</name></decl></param>)</parameter_list>
+<block>{
+        <decl_stmt><decl><type><name>StyleDesc</name> *</type><name>qs</name> <init>= <expr><name>quote_styles</name></expr></init></decl>;</decl_stmt>
+
+	<for>for (<init><expr><name>qs</name> = <name>quote_styles</name></expr>;</init> <condition><expr><name><name>qs</name>-&gt;<name>name</name></name></expr>;</condition> <incr><expr><name>qs</name>++</expr></incr>) <block>{
+		<if>if <condition>(<expr><name><name>qs</name>-&gt;<name>style</name></name> == <name>quoting</name></expr>)</condition><then>
+                        <return>return <expr>0</expr>;</return></then></if>
+        }</block></for>
+	<expr_stmt><expr><call><name>PyErr_Format</name><argument_list>(<argument><expr><name>PyExc_TypeError</name></expr></argument>, <argument><expr>"bad \"quoting\" value"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr>-1</expr>;</return>
+}</block></function>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>D_OFF</name><parameter_list>(<param><type><name>x</name></type></param>)</parameter_list></cpp:macro> <cpp:value>offsetof(DialectObj, x)</cpp:value></cpp:define>
+
+<decl_stmt><decl><type><specifier>static</specifier> struct <name>PyMemberDef</name></type> <name><name>Dialect_memberlist</name><index>[]</index></name> <init>= <expr><block>{
+	<expr><block>{ <expr>"delimiter"</expr>,          <expr><name>T_CHAR</name></expr>, <expr><call><name>D_OFF</name><argument_list>(<argument><expr><name>delimiter</name></expr></argument>)</argument_list></call></expr>, <expr><name>READONLY</name></expr> }</block></expr>,
+	<expr><block>{ <expr>"skipinitialspace"</expr>,   <expr><name>T_INT</name></expr>, <expr><call><name>D_OFF</name><argument_list>(<argument><expr><name>skipinitialspace</name></expr></argument>)</argument_list></call></expr>, <expr><name>READONLY</name></expr> }</block></expr>,
+	<expr><block>{ <expr>"doublequote"</expr>,        <expr><name>T_INT</name></expr>, <expr><call><name>D_OFF</name><argument_list>(<argument><expr><name>doublequote</name></expr></argument>)</argument_list></call></expr>, <expr><name>READONLY</name></expr> }</block></expr>,
+	<expr><block>{ <expr>"strict"</expr>,             <expr><name>T_INT</name></expr>, <expr><call><name>D_OFF</name><argument_list>(<argument><expr><name>strict</name></expr></argument>)</argument_list></call></expr>, <expr><name>READONLY</name></expr> }</block></expr>,
+	<expr><block>{ <expr><name>NULL</name></expr> }</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyGetSetDef</name></type> <name><name>Dialect_getsetlist</name><index>[]</index></name> <init>= <expr><block>{
+	<expr><block>{ <expr>"escapechar"</expr>,		<expr>(<name>getter</name>)<name>Dialect_get_escapechar</name></expr>}</block></expr>,
+	<expr><block>{ <expr>"lineterminator"</expr>,	<expr>(<name>getter</name>)<name>Dialect_get_lineterminator</name></expr>}</block></expr>,
+	<expr><block>{ <expr>"quotechar"</expr>,		<expr>(<name>getter</name>)<name>Dialect_get_quotechar</name></expr>}</block></expr>,
+	<expr><block>{ <expr>"quoting"</expr>,		<expr>(<name>getter</name>)<name>Dialect_get_quoting</name></expr>}</block></expr>,
+	<expr><block>{<expr><name>NULL</name></expr>}</block></expr>,
+}</block></expr></init></decl>;</decl_stmt>
+
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>Dialect_dealloc</name><parameter_list>(<param><decl><type><name>DialectObj</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+        <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>lineterminator</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>Py_TYPE</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call>-&gt;<call><name>tp_free</name><argument_list>(<argument><expr>(<name>PyObject</name> *)<name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>char</name> *</type><name><name>dialect_kws</name><index>[]</index></name> <init>= <expr><block>{
+	<expr>"dialect"</expr>,
+	<expr>"delimiter"</expr>,
+	<expr>"doublequote"</expr>,
+	<expr>"escapechar"</expr>,
+	<expr>"lineterminator"</expr>,
+	<expr>"quotechar"</expr>,
+	<expr>"quoting"</expr>,
+	<expr>"skipinitialspace"</expr>,
+	<expr>"strict"</expr>,
+	<expr><name>NULL</name></expr>
+}</block></expr></init></decl>;</decl_stmt>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>dialect_new</name><parameter_list>(<param><decl><type><name>PyTypeObject</name> *</type><name>type</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>kwargs</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>DialectObj</name> *</type><name>self</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>ret</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>dialect</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>delimiter</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>doublequote</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>escapechar</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>lineterminator</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>quotechar</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>quoting</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>skipinitialspace</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>strict</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTupleAndKeywords</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr><name>kwargs</name></expr></argument>,
+					 <argument><expr>"|OOOOOOOOO"</expr></argument>, <argument><expr><name>dialect_kws</name></expr></argument>,
+					 <argument><expr>&amp;<name>dialect</name></expr></argument>,
+					 <argument><expr>&amp;<name>delimiter</name></expr></argument>,
+					 <argument><expr>&amp;<name>doublequote</name></expr></argument>,
+					 <argument><expr>&amp;<name>escapechar</name></expr></argument>,
+					 <argument><expr>&amp;<name>lineterminator</name></expr></argument>,
+					 <argument><expr>&amp;<name>quotechar</name></expr></argument>,
+					 <argument><expr>&amp;<name>quoting</name></expr></argument>,
+					 <argument><expr>&amp;<name>skipinitialspace</name></expr></argument>,
+					 <argument><expr>&amp;<name>strict</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+	<if>if <condition>(<expr><name>dialect</name> != <name>NULL</name></expr>)</condition><then> <block>{
+		<if>if <condition>(<expr><call><name>IS_BASESTRING</name><argument_list>(<argument><expr><name>dialect</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+			<expr_stmt><expr><name>dialect</name> = <call><name>get_dialect_from_registry</name><argument_list>(<argument><expr><name>dialect</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<if>if <condition>(<expr><name>dialect</name> == <name>NULL</name></expr>)</condition><then>
+				<return>return <expr><name>NULL</name></expr>;</return></then></if>
+		}</block></then>
+		<else>else
+			<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>dialect</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+		<comment type="block">/* Can we reuse this instance? */</comment>
+		<if>if <condition>(<expr><call><name>PyObject_TypeCheck</name><argument_list>(<argument><expr><name>dialect</name></expr></argument>, <argument><expr>&amp;<name>Dialect_Type</name></expr></argument>)</argument_list></call> &amp;&amp;
+		    <name>delimiter</name> == 0 &amp;&amp;
+		    <name>doublequote</name> == 0 &amp;&amp;
+		    <name>escapechar</name> == 0 &amp;&amp;
+		    <name>lineterminator</name> == 0 &amp;&amp;
+		    <name>quotechar</name> == 0 &amp;&amp;
+		    <name>quoting</name> == 0 &amp;&amp;
+		    <name>skipinitialspace</name> == 0 &amp;&amp;
+		    <name>strict</name> == 0</expr>)</condition><then>
+			<return>return <expr><name>dialect</name></expr>;</return></then></if>
+	}</block></then></if>
+
+	<expr_stmt><expr><name>self</name> = (<name>DialectObj</name> *)<call><name><name>type</name>-&gt;<name>tp_alloc</name></name><argument_list>(<argument><expr><name>type</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>self</name> == <name>NULL</name></expr>)</condition><then> <block>{
+		<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>dialect</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<return>return <expr><name>NULL</name></expr>;</return>
+	}</block></then></if>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>lineterminator</name></name> = <name>NULL</name></expr>;</expr_stmt>
+
+	<expr_stmt><expr><call><name>Py_XINCREF</name><argument_list>(<argument><expr><name>delimiter</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_XINCREF</name><argument_list>(<argument><expr><name>doublequote</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_XINCREF</name><argument_list>(<argument><expr><name>escapechar</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_XINCREF</name><argument_list>(<argument><expr><name>lineterminator</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_XINCREF</name><argument_list>(<argument><expr><name>quotechar</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_XINCREF</name><argument_list>(<argument><expr><name>quoting</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_XINCREF</name><argument_list>(<argument><expr><name>skipinitialspace</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_XINCREF</name><argument_list>(<argument><expr><name>strict</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>dialect</name> != <name>NULL</name></expr>)</condition><then> <block>{
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>DIALECT_GETATTR</name><parameter_list>(<param><type><name>v</name></type></param>, <param><type><name>n</name></type></param>)</parameter_list></cpp:macro> \
+		<cpp:value>if (v == NULL) \
+			v = PyObject_GetAttrString(dialect, n)</cpp:value></cpp:define>
+		<expr_stmt><expr><call><name>DIALECT_GETATTR</name><argument_list>(<argument><expr><name>delimiter</name></expr></argument>, <argument><expr>"delimiter"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><call><name>DIALECT_GETATTR</name><argument_list>(<argument><expr><name>doublequote</name></expr></argument>, <argument><expr>"doublequote"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><call><name>DIALECT_GETATTR</name><argument_list>(<argument><expr><name>escapechar</name></expr></argument>, <argument><expr>"escapechar"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><call><name>DIALECT_GETATTR</name><argument_list>(<argument><expr><name>lineterminator</name></expr></argument>, <argument><expr>"lineterminator"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><call><name>DIALECT_GETATTR</name><argument_list>(<argument><expr><name>quotechar</name></expr></argument>, <argument><expr>"quotechar"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><call><name>DIALECT_GETATTR</name><argument_list>(<argument><expr><name>quoting</name></expr></argument>, <argument><expr>"quoting"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><call><name>DIALECT_GETATTR</name><argument_list>(<argument><expr><name>skipinitialspace</name></expr></argument>, <argument><expr>"skipinitialspace"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><call><name>DIALECT_GETATTR</name><argument_list>(<argument><expr><name>strict</name></expr></argument>, <argument><expr>"strict"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><call><name>PyErr_Clear</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+	}</block></then></if>
+
+	<comment type="block">/* check types and convert to C values */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>DIASET</name><parameter_list>(<param><type><name>meth</name></type></param>, <param><type><name>name</name></type></param>, <param><type><name>target</name></type></param>, <param><type><name>src</name></type></param>, <param><type><name>dflt</name></type></param>)</parameter_list></cpp:macro> \
+	<cpp:value>if (meth(name, target, src, dflt)) \
+		goto err</cpp:value></cpp:define>
+	<expr_stmt><expr><call><name>DIASET</name><argument_list>(<argument><expr><name>_set_char</name></expr></argument>, <argument><expr>"delimiter"</expr></argument>, <argument><expr>&amp;<name><name>self</name>-&gt;<name>delimiter</name></name></expr></argument>, <argument><expr><name>delimiter</name></expr></argument>, <argument><expr>','</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>DIASET</name><argument_list>(<argument><expr><name>_set_bool</name></expr></argument>, <argument><expr>"doublequote"</expr></argument>, <argument><expr>&amp;<name><name>self</name>-&gt;<name>doublequote</name></name></expr></argument>, <argument><expr><name>doublequote</name></expr></argument>, <argument><expr>1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>DIASET</name><argument_list>(<argument><expr><name>_set_char</name></expr></argument>, <argument><expr>"escapechar"</expr></argument>, <argument><expr>&amp;<name><name>self</name>-&gt;<name>escapechar</name></name></expr></argument>, <argument><expr><name>escapechar</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>DIASET</name><argument_list>(<argument><expr><name>_set_str</name></expr></argument>, <argument><expr>"lineterminator"</expr></argument>, <argument><expr>&amp;<name><name>self</name>-&gt;<name>lineterminator</name></name></expr></argument>, <argument><expr><name>lineterminator</name></expr></argument>, <argument><expr>"\r\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>DIASET</name><argument_list>(<argument><expr><name>_set_char</name></expr></argument>, <argument><expr>"quotechar"</expr></argument>, <argument><expr>&amp;<name><name>self</name>-&gt;<name>quotechar</name></name></expr></argument>, <argument><expr><name>quotechar</name></expr></argument>, <argument><expr>'"'</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>DIASET</name><argument_list>(<argument><expr><name>_set_int</name></expr></argument>, <argument><expr>"quoting"</expr></argument>, <argument><expr>&amp;<name><name>self</name>-&gt;<name>quoting</name></name></expr></argument>, <argument><expr><name>quoting</name></expr></argument>, <argument><expr><name>QUOTE_MINIMAL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>DIASET</name><argument_list>(<argument><expr><name>_set_bool</name></expr></argument>, <argument><expr>"skipinitialspace"</expr></argument>, <argument><expr>&amp;<name><name>self</name>-&gt;<name>skipinitialspace</name></name></expr></argument>, <argument><expr><name>skipinitialspace</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>DIASET</name><argument_list>(<argument><expr><name>_set_bool</name></expr></argument>, <argument><expr>"strict"</expr></argument>, <argument><expr>&amp;<name><name>self</name>-&gt;<name>strict</name></name></expr></argument>, <argument><expr><name>strict</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+	<comment type="block">/* validate options */</comment>
+	<if>if <condition>(<expr><call><name>dialect_check_quoting</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>quoting</name></name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<goto>goto <name>err</name>;</goto></then></if>
+	<if>if <condition>(<expr><name><name>self</name>-&gt;<name>delimiter</name></name> == 0</expr>)</condition><then> <block>{
+                <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_TypeError</name></expr></argument>, <argument><expr>"delimiter must be set"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<goto>goto <name>err</name>;</goto>
+	}</block></then></if>
+	<if>if <condition>(<expr><name>quotechar</name> == <name>Py_None</name> &amp;&amp; <name>quoting</name> == <name>NULL</name></expr>)</condition><then>
+		<expr_stmt><expr><name><name>self</name>-&gt;<name>quoting</name></name> = <name>QUOTE_NONE</name></expr>;</expr_stmt></then></if>
+	<if>if <condition>(<expr><name><name>self</name>-&gt;<name>quoting</name></name> != <name>QUOTE_NONE</name> &amp;&amp; <name><name>self</name>-&gt;<name>quotechar</name></name> == 0</expr>)</condition><then> <block>{
+                <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_TypeError</name></expr></argument>, 
+				<argument><expr>"quotechar must be set if quoting enabled"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<goto>goto <name>err</name>;</goto>
+	}</block></then></if>
+	<if>if <condition>(<expr><name><name>self</name>-&gt;<name>lineterminator</name></name> == 0</expr>)</condition><then> <block>{
+		<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_TypeError</name></expr></argument>, <argument><expr>"lineterminator must be set"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<goto>goto <name>err</name>;</goto>
+	}</block></then></if>
+
+	<expr_stmt><expr><name>ret</name> = (<name>PyObject</name> *)<name>self</name></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<label><name>err</name>:</label>
+	<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>dialect</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>delimiter</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>doublequote</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>escapechar</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>lineterminator</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>quotechar</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>quoting</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>skipinitialspace</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>strict</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>ret</name></expr>;</return>
+}</block></function>
+
+
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>Dialect_Type_doc</name></expr></argument>, 
+<argument><expr>"CSV dialect\n"
+"\n"
+"The Dialect type records CSV parsing and generation options.\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyTypeObject</name></type> <name>Dialect_Type</name> <init>= <expr><block>{
+	<expr><call><name>PyVarObject_HEAD_INIT</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call>
+	"_csv.Dialect"</expr>,                         <comment type="block">/* tp_name */</comment>
+	<expr><sizeof>sizeof<argument_list>(<argument><expr><name>DialectObj</name></expr></argument>)</argument_list></sizeof></expr>,                     <comment type="block">/* tp_basicsize */</comment>
+	<expr>0</expr>,                                      <comment type="block">/* tp_itemsize */</comment>
+	<comment type="block">/*  methods  */</comment>
+	<expr>(<name>destructor</name>)<name>Dialect_dealloc</name></expr>,            <comment type="block">/* tp_dealloc */</comment>
+	<expr>(<name>printfunc</name>)0</expr>,                           <comment type="block">/* tp_print */</comment>
+	<expr>(<name>getattrfunc</name>)0</expr>,                         <comment type="block">/* tp_getattr */</comment>
+	<expr>(<name>setattrfunc</name>)0</expr>,                         <comment type="block">/* tp_setattr */</comment>
+	<expr>(<name>cmpfunc</name>)0</expr>,                             <comment type="block">/* tp_compare */</comment>
+	<expr>(<name>reprfunc</name>)0</expr>,                            <comment type="block">/* tp_repr */</comment>
+	<expr>0</expr>,                                      <comment type="block">/* tp_as_number */</comment>
+	<expr>0</expr>,                                      <comment type="block">/* tp_as_sequence */</comment>
+	<expr>0</expr>,                                      <comment type="block">/* tp_as_mapping */</comment>
+	<expr>(<name>hashfunc</name>)0</expr>,                            <comment type="block">/* tp_hash */</comment>
+	<expr>(<name>ternaryfunc</name>)0</expr>,                         <comment type="block">/* tp_call */</comment>
+	<expr>(<name>reprfunc</name>)0</expr>,                    	<comment type="block">/* tp_str */</comment>
+	<expr>0</expr>,                                      <comment type="block">/* tp_getattro */</comment>
+        <expr>0</expr>,                                      <comment type="block">/* tp_setattro */</comment>
+        <expr>0</expr>,                                      <comment type="block">/* tp_as_buffer */</comment>
+        <expr><name>Py_TPFLAGS_DEFAULT</name> | <name>Py_TPFLAGS_BASETYPE</name></expr>, <comment type="block">/* tp_flags */</comment>
+	<expr><name>Dialect_Type_doc</name></expr>,                       <comment type="block">/* tp_doc */</comment>
+        <expr>0</expr>,                                      <comment type="block">/* tp_traverse */</comment>
+        <expr>0</expr>,                                      <comment type="block">/* tp_clear */</comment>
+        <expr>0</expr>,                                      <comment type="block">/* tp_richcompare */</comment>
+        <expr>0</expr>,                                      <comment type="block">/* tp_weaklistoffset */</comment>
+        <expr>0</expr>,                                      <comment type="block">/* tp_iter */</comment>
+        <expr>0</expr>,                                      <comment type="block">/* tp_iternext */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_methods */</comment>
+        <expr><name>Dialect_memberlist</name></expr>,                     <comment type="block">/* tp_members */</comment>
+        <expr><name>Dialect_getsetlist</name></expr>,                     <comment type="block">/* tp_getset */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_base */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_dict */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_descr_get */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_descr_set */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_dictoffset */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_init */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_alloc */</comment>
+	<expr><name>dialect_new</name></expr>,			        <comment type="block">/* tp_new */</comment>
+	<expr>0</expr>,                           		<comment type="block">/* tp_free */</comment>
+}</block></expr></init></decl>;</decl_stmt>
+
+<comment type="block">/*
+ * Return an instance of the dialect type, given a Python instance or kwarg
+ * description of the dialect
+ */</comment>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>_call_dialect</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>dialect_inst</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>kwargs</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>ctor_args</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>dialect</name></decl>;</decl_stmt>
+
+	<expr_stmt><expr><name>ctor_args</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr><name>dialect_inst</name> ? "(O)" : "()"</expr></argument>, <argument><expr><name>dialect_inst</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>ctor_args</name> == <name>NULL</name></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>dialect</name> = <call><name>PyObject_Call</name><argument_list>(<argument><expr>(<name>PyObject</name> *)&amp;<name>Dialect_Type</name></expr></argument>, <argument><expr><name>ctor_args</name></expr></argument>, <argument><expr><name>kwargs</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>ctor_args</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>dialect</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/*
+ * READER
+ */</comment>
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>parse_save_field</name><parameter_list>(<param><decl><type><name>ReaderObj</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>field</name></decl>;</decl_stmt>
+
+	<expr_stmt><expr><name>field</name> = <call><name>PyString_FromStringAndSize</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>field</name></name></expr></argument>, <argument><expr><name><name>self</name>-&gt;<name>field_len</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>field</name> == <name>NULL</name></expr>)</condition><then>
+		<return>return <expr>-1</expr>;</return></then></if>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>field_len</name></name> = 0</expr>;</expr_stmt>
+	<if>if <condition>(<expr><name><name>self</name>-&gt;<name>numeric_field</name></name></expr>)</condition><then> <block>{
+		<decl_stmt><decl><type><name>PyObject</name> *</type><name>tmp</name></decl>;</decl_stmt>
+
+		<expr_stmt><expr><name><name>self</name>-&gt;<name>numeric_field</name></name> = 0</expr>;</expr_stmt>
+		<expr_stmt><expr><name>tmp</name> = <call><name>PyNumber_Float</name><argument_list>(<argument><expr><name>field</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<if>if <condition>(<expr><name>tmp</name> == <name>NULL</name></expr>)</condition><then> <block>{
+			<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>field</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr>-1</expr>;</return>
+		}</block></then></if>
+		<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>field</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><name>field</name> = <name>tmp</name></expr>;</expr_stmt>
+	}</block></then></if>
+	<expr_stmt><expr><call><name>PyList_Append</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fields</name></name></expr></argument>, <argument><expr><name>field</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>field</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr>0</expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>parse_grow_buff</name><parameter_list>(<param><decl><type><name>ReaderObj</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+	<if>if <condition>(<expr><name><name>self</name>-&gt;<name>field_size</name></name> == 0</expr>)</condition><then> <block>{
+		<expr_stmt><expr><name><name>self</name>-&gt;<name>field_size</name></name> = 4096</expr>;</expr_stmt>
+		<if>if <condition>(<expr><name><name>self</name>-&gt;<name>field</name></name> != <name>NULL</name></expr>)</condition><then>
+			<expr_stmt><expr><call><name>PyMem_Free</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>field</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+		<expr_stmt><expr><name><name>self</name>-&gt;<name>field</name></name> = <call><name>PyMem_Malloc</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>field_size</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	}</block></then>
+	<else>else <block>{
+		<if>if <condition>(<expr><name><name>self</name>-&gt;<name>field_size</name></name> &gt; <name>INT_MAX</name> / 2</expr>)</condition><then> <block>{
+			<expr_stmt><expr><call><name>PyErr_NoMemory</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr>0</expr>;</return>
+		}</block></then></if> 
+		<expr_stmt><expr><name><name>self</name>-&gt;<name>field_size</name></name> *= 2</expr>;</expr_stmt>
+		<expr_stmt><expr><name><name>self</name>-&gt;<name>field</name></name> = <call><name>PyMem_Realloc</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>field</name></name></expr></argument>, <argument><expr><name><name>self</name>-&gt;<name>field_size</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	}</block></else></if>
+	<if>if <condition>(<expr><name><name>self</name>-&gt;<name>field</name></name> == <name>NULL</name></expr>)</condition><then> <block>{
+		<expr_stmt><expr><call><name>PyErr_NoMemory</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+		<return>return <expr>0</expr>;</return>
+	}</block></then></if>
+	<return>return <expr>1</expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>parse_add_char</name><parameter_list>(<param><decl><type><name>ReaderObj</name> *</type><name>self</name></decl></param>, <param><decl><type><name>char</name></type> <name>c</name></decl></param>)</parameter_list>
+<block>{
+	<if>if <condition>(<expr><name><name>self</name>-&gt;<name>field_len</name></name> &gt;= <name>field_limit</name></expr>)</condition><then> <block>{
+		<expr_stmt><expr><call><name>PyErr_Format</name><argument_list>(<argument><expr><name>error_obj</name></expr></argument>, <argument><expr>"field larger than field limit (%ld)"</expr></argument>,
+			     <argument><expr><name>field_limit</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<return>return <expr>-1</expr>;</return>
+	}</block></then></if>
+	<if>if <condition>(<expr><name><name>self</name>-&gt;<name>field_len</name></name> == <name><name>self</name>-&gt;<name>field_size</name></name> &amp;&amp; !<call><name>parse_grow_buff</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr>-1</expr>;</return></then></if>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>field</name><index>[<expr><name><name>self</name>-&gt;<name>field_len</name></name>++</expr>]</index></name> = <name>c</name></expr>;</expr_stmt>
+	<return>return <expr>0</expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>parse_process_char</name><parameter_list>(<param><decl><type><name>ReaderObj</name> *</type><name>self</name></decl></param>, <param><decl><type><name>char</name></type> <name>c</name></decl></param>)</parameter_list>
+<block>{
+        <decl_stmt><decl><type><name>DialectObj</name> *</type><name>dialect</name> <init>= <expr><name><name>self</name>-&gt;<name>dialect</name></name></expr></init></decl>;</decl_stmt>
+
+	<switch>switch <condition>(<expr><name><name>self</name>-&gt;<name>state</name></name></expr>)</condition> <block>{
+	<case>case <expr><name>START_RECORD</name></expr>:
+		<comment type="block">/* start of record */</comment>
+		<if>if <condition>(<expr><name>c</name> == '\0'</expr>)</condition><then>
+			<comment type="block">/* empty line - return [] */</comment>
+			<break>break;</break></then>
+		<else>else <if>if <condition>(<expr><name>c</name> == '\n' || <name>c</name> == '\r'</expr>)</condition><then> <block>{
+			<expr_stmt><expr><name><name>self</name>-&gt;<name>state</name></name> = <name>EAT_CRNL</name></expr>;</expr_stmt>
+			<break>break;</break>
+		}</block></then></if></else></if>
+		<comment type="block">/* normal character - handle as START_FIELD */</comment>
+		<expr_stmt><expr><name><name>self</name>-&gt;<name>state</name></name> = <name>START_FIELD</name></expr>;</expr_stmt>
+		<comment type="block">/* fallthru */</comment>
+	</case><case>case <expr><name>START_FIELD</name></expr>:
+		<comment type="block">/* expecting field */</comment>
+		<if>if <condition>(<expr><name>c</name> == '\n' || <name>c</name> == '\r' || <name>c</name> == '\0'</expr>)</condition><then> <block>{
+			<comment type="block">/* save empty field - return [fields] */</comment>
+			<if>if <condition>(<expr><call><name>parse_save_field</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+				<return>return <expr>-1</expr>;</return></then></if>
+			<expr_stmt><expr><name><name>self</name>-&gt;<name>state</name></name> = (<name>c</name> == '\0' ? <name>START_RECORD</name> : <name>EAT_CRNL</name>)</expr>;</expr_stmt>
+		}</block></then>
+		<else>else <if>if <condition>(<expr><name>c</name> == <name><name>dialect</name>-&gt;<name>quotechar</name></name> &amp;&amp; 
+			 <name><name>dialect</name>-&gt;<name>quoting</name></name> != <name>QUOTE_NONE</name></expr>)</condition><then> <block>{
+			<comment type="block">/* start quoted field */</comment>
+			<expr_stmt><expr><name><name>self</name>-&gt;<name>state</name></name> = <name>IN_QUOTED_FIELD</name></expr>;</expr_stmt>
+		}</block></then>
+		<else>else <if>if <condition>(<expr><name>c</name> == <name><name>dialect</name>-&gt;<name>escapechar</name></name></expr>)</condition><then> <block>{
+			<comment type="block">/* possible escaped character */</comment>
+			<expr_stmt><expr><name><name>self</name>-&gt;<name>state</name></name> = <name>ESCAPED_CHAR</name></expr>;</expr_stmt>
+		}</block></then>
+		<else>else <if>if <condition>(<expr><name>c</name> == ' ' &amp;&amp; <name><name>dialect</name>-&gt;<name>skipinitialspace</name></name></expr>)</condition><then>
+			<comment type="block">/* ignore space at start of field */</comment>
+			<empty_stmt>;</empty_stmt></then>
+		<else>else <if>if <condition>(<expr><name>c</name> == <name><name>dialect</name>-&gt;<name>delimiter</name></name></expr>)</condition><then> <block>{
+			<comment type="block">/* save empty field */</comment>
+			<if>if <condition>(<expr><call><name>parse_save_field</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+				<return>return <expr>-1</expr>;</return></then></if>
+		}</block></then>
+		<else>else <block>{
+			<comment type="block">/* begin new unquoted field */</comment>
+			<if>if <condition>(<expr><name><name>dialect</name>-&gt;<name>quoting</name></name> == <name>QUOTE_NONNUMERIC</name></expr>)</condition><then>
+				<expr_stmt><expr><name><name>self</name>-&gt;<name>numeric_field</name></name> = 1</expr>;</expr_stmt></then></if>
+			<if>if <condition>(<expr><call><name>parse_add_char</name><argument_list>(<argument><expr><name>self</name></expr></argument>, <argument><expr><name>c</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+				<return>return <expr>-1</expr>;</return></then></if>
+			<expr_stmt><expr><name><name>self</name>-&gt;<name>state</name></name> = <name>IN_FIELD</name></expr>;</expr_stmt>
+		}</block></else></if></else></if></else></if></else></if></else></if>
+		<break>break;</break>
+
+	</case><case>case <expr><name>ESCAPED_CHAR</name></expr>:
+		<if>if <condition>(<expr><name>c</name> == '\0'</expr>)</condition><then>
+			<expr_stmt><expr><name>c</name> = '\n'</expr>;</expr_stmt></then></if>
+		<if>if <condition>(<expr><call><name>parse_add_char</name><argument_list>(<argument><expr><name>self</name></expr></argument>, <argument><expr><name>c</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+			<return>return <expr>-1</expr>;</return></then></if>
+		<expr_stmt><expr><name><name>self</name>-&gt;<name>state</name></name> = <name>IN_FIELD</name></expr>;</expr_stmt>
+		<break>break;</break>
+
+	</case><case>case <expr><name>IN_FIELD</name></expr>:
+		<comment type="block">/* in unquoted field */</comment>
+		<if>if <condition>(<expr><name>c</name> == '\n' || <name>c</name> == '\r' || <name>c</name> == '\0'</expr>)</condition><then> <block>{
+			<comment type="block">/* end of line - return [fields] */</comment>
+			<if>if <condition>(<expr><call><name>parse_save_field</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+				<return>return <expr>-1</expr>;</return></then></if>
+			<expr_stmt><expr><name><name>self</name>-&gt;<name>state</name></name> = (<name>c</name> == '\0' ? <name>START_RECORD</name> : <name>EAT_CRNL</name>)</expr>;</expr_stmt>
+		}</block></then>
+		<else>else <if>if <condition>(<expr><name>c</name> == <name><name>dialect</name>-&gt;<name>escapechar</name></name></expr>)</condition><then> <block>{
+			<comment type="block">/* possible escaped character */</comment>
+			<expr_stmt><expr><name><name>self</name>-&gt;<name>state</name></name> = <name>ESCAPED_CHAR</name></expr>;</expr_stmt>
+		}</block></then>
+		<else>else <if>if <condition>(<expr><name>c</name> == <name><name>dialect</name>-&gt;<name>delimiter</name></name></expr>)</condition><then> <block>{
+			<comment type="block">/* save field - wait for new field */</comment>
+			<if>if <condition>(<expr><call><name>parse_save_field</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+				<return>return <expr>-1</expr>;</return></then></if>
+			<expr_stmt><expr><name><name>self</name>-&gt;<name>state</name></name> = <name>START_FIELD</name></expr>;</expr_stmt>
+		}</block></then>
+		<else>else <block>{
+			<comment type="block">/* normal character - save in field */</comment>
+			<if>if <condition>(<expr><call><name>parse_add_char</name><argument_list>(<argument><expr><name>self</name></expr></argument>, <argument><expr><name>c</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+				<return>return <expr>-1</expr>;</return></then></if>
+		}</block></else></if></else></if></else></if>
+		<break>break;</break>
+
+	</case><case>case <expr><name>IN_QUOTED_FIELD</name></expr>:
+		<comment type="block">/* in quoted field */</comment>
+		<if>if <condition>(<expr><name>c</name> == '\0'</expr>)</condition><then>
+			<empty_stmt>;</empty_stmt></then>
+		<else>else <if>if <condition>(<expr><name>c</name> == <name><name>dialect</name>-&gt;<name>escapechar</name></name></expr>)</condition><then> <block>{
+			<comment type="block">/* Possible escape character */</comment>
+			<expr_stmt><expr><name><name>self</name>-&gt;<name>state</name></name> = <name>ESCAPE_IN_QUOTED_FIELD</name></expr>;</expr_stmt>
+		}</block></then>
+		<else>else <if>if <condition>(<expr><name>c</name> == <name><name>dialect</name>-&gt;<name>quotechar</name></name> &amp;&amp;
+			 <name><name>dialect</name>-&gt;<name>quoting</name></name> != <name>QUOTE_NONE</name></expr>)</condition><then> <block>{
+			<if>if <condition>(<expr><name><name>dialect</name>-&gt;<name>doublequote</name></name></expr>)</condition><then> <block>{
+				<comment type="block">/* doublequote; " represented by "" */</comment>
+				<expr_stmt><expr><name><name>self</name>-&gt;<name>state</name></name> = <name>QUOTE_IN_QUOTED_FIELD</name></expr>;</expr_stmt>
+			}</block></then>
+			<else>else <block>{
+				<comment type="block">/* end of quote part of field */</comment>
+				<expr_stmt><expr><name><name>self</name>-&gt;<name>state</name></name> = <name>IN_FIELD</name></expr>;</expr_stmt>
+			}</block></else></if>
+		}</block></then>
+		<else>else <block>{
+			<comment type="block">/* normal character - save in field */</comment>
+			<if>if <condition>(<expr><call><name>parse_add_char</name><argument_list>(<argument><expr><name>self</name></expr></argument>, <argument><expr><name>c</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+				<return>return <expr>-1</expr>;</return></then></if>
+		}</block></else></if></else></if></else></if>
+		<break>break;</break>
+
+	</case><case>case <expr><name>ESCAPE_IN_QUOTED_FIELD</name></expr>:
+		<if>if <condition>(<expr><name>c</name> == '\0'</expr>)</condition><then>
+			<expr_stmt><expr><name>c</name> = '\n'</expr>;</expr_stmt></then></if>
+		<if>if <condition>(<expr><call><name>parse_add_char</name><argument_list>(<argument><expr><name>self</name></expr></argument>, <argument><expr><name>c</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+			<return>return <expr>-1</expr>;</return></then></if>
+		<expr_stmt><expr><name><name>self</name>-&gt;<name>state</name></name> = <name>IN_QUOTED_FIELD</name></expr>;</expr_stmt>
+		<break>break;</break>
+
+	</case><case>case <expr><name>QUOTE_IN_QUOTED_FIELD</name></expr>:
+		<comment type="block">/* doublequote - seen a quote in an quoted field */</comment>
+		<if>if <condition>(<expr><name><name>dialect</name>-&gt;<name>quoting</name></name> != <name>QUOTE_NONE</name> &amp;&amp; 
+                    <name>c</name> == <name><name>dialect</name>-&gt;<name>quotechar</name></name></expr>)</condition><then> <block>{
+			<comment type="block">/* save "" as " */</comment>
+			<if>if <condition>(<expr><call><name>parse_add_char</name><argument_list>(<argument><expr><name>self</name></expr></argument>, <argument><expr><name>c</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+				<return>return <expr>-1</expr>;</return></then></if>
+			<expr_stmt><expr><name><name>self</name>-&gt;<name>state</name></name> = <name>IN_QUOTED_FIELD</name></expr>;</expr_stmt>
+		}</block></then>
+		<else>else <if>if <condition>(<expr><name>c</name> == <name><name>dialect</name>-&gt;<name>delimiter</name></name></expr>)</condition><then> <block>{
+			<comment type="block">/* save field - wait for new field */</comment>
+			<if>if <condition>(<expr><call><name>parse_save_field</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+				<return>return <expr>-1</expr>;</return></then></if>
+			<expr_stmt><expr><name><name>self</name>-&gt;<name>state</name></name> = <name>START_FIELD</name></expr>;</expr_stmt>
+		}</block></then>
+		<else>else <if>if <condition>(<expr><name>c</name> == '\n' || <name>c</name> == '\r' || <name>c</name> == '\0'</expr>)</condition><then> <block>{
+			<comment type="block">/* end of line - return [fields] */</comment>
+			<if>if <condition>(<expr><call><name>parse_save_field</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+				<return>return <expr>-1</expr>;</return></then></if>
+			<expr_stmt><expr><name><name>self</name>-&gt;<name>state</name></name> = (<name>c</name> == '\0' ? <name>START_RECORD</name> : <name>EAT_CRNL</name>)</expr>;</expr_stmt>
+		}</block></then>
+		<else>else <if>if <condition>(<expr>!<name><name>dialect</name>-&gt;<name>strict</name></name></expr>)</condition><then> <block>{
+			<if>if <condition>(<expr><call><name>parse_add_char</name><argument_list>(<argument><expr><name>self</name></expr></argument>, <argument><expr><name>c</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+				<return>return <expr>-1</expr>;</return></then></if>
+			<expr_stmt><expr><name><name>self</name>-&gt;<name>state</name></name> = <name>IN_FIELD</name></expr>;</expr_stmt>
+		}</block></then>
+		<else>else <block>{
+			<comment type="block">/* illegal */</comment>
+			<expr_stmt><expr><call><name>PyErr_Format</name><argument_list>(<argument><expr><name>error_obj</name></expr></argument>, <argument><expr>"'%c' expected after '%c'"</expr></argument>, 
+					<argument><expr><name><name>dialect</name>-&gt;<name>delimiter</name></name></expr></argument>, 
+                                        <argument><expr><name><name>dialect</name>-&gt;<name>quotechar</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr>-1</expr>;</return>
+		}</block></else></if></else></if></else></if></else></if>
+		<break>break;</break>
+
+	</case><case>case <expr><name>EAT_CRNL</name></expr>:
+		<if>if <condition>(<expr><name>c</name> == '\n' || <name>c</name> == '\r'</expr>)</condition><then>
+			<empty_stmt>;</empty_stmt></then>
+		<else>else <if>if <condition>(<expr><name>c</name> == '\0'</expr>)</condition><then>
+			<expr_stmt><expr><name><name>self</name>-&gt;<name>state</name></name> = <name>START_RECORD</name></expr>;</expr_stmt></then>
+		<else>else <block>{
+			<expr_stmt><expr><call><name>PyErr_Format</name><argument_list>(<argument><expr><name>error_obj</name></expr></argument>, <argument><expr>"new-line character seen in unquoted field - do you need to open the file in universal-newline mode?"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr>-1</expr>;</return>
+		}</block></else></if></else></if>
+		<break>break;</break>
+
+	</case>}</block></switch>
+	<return>return <expr>0</expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>parse_reset</name><parameter_list>(<param><decl><type><name>ReaderObj</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+	<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fields</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>fields</name></name> = <call><name>PyList_New</name><argument_list>(<argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name><name>self</name>-&gt;<name>fields</name></name> == <name>NULL</name></expr>)</condition><then>
+		<return>return <expr>-1</expr>;</return></then></if>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>field_len</name></name> = 0</expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>state</name></name> = <name>START_RECORD</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>numeric_field</name></name> = 0</expr>;</expr_stmt>
+	<return>return <expr>0</expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>Reader_iternext</name><parameter_list>(<param><decl><type><name>ReaderObj</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+        <decl_stmt><decl><type><name>PyObject</name> *</type><name>lineobj</name></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>PyObject</name> *</type><name>fields</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>char</name> *</type><name>line</name></decl>, <decl><type ref="prev"/><name>c</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>linelen</name></decl>;</decl_stmt>
+
+	<if>if <condition>(<expr><call><name>parse_reset</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+        <do>do <block>{
+                <expr_stmt><expr><name>lineobj</name> = <call><name>PyIter_Next</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>input_iter</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <if>if <condition>(<expr><name>lineobj</name> == <name>NULL</name></expr>)</condition><then> <block>{
+                        <comment type="block">/* End of input OR exception */</comment>
+                        <if>if <condition>(<expr>!<call><name>PyErr_Occurred</name><argument_list>()</argument_list></call> &amp;&amp; <name><name>self</name>-&gt;<name>field_len</name></name> != 0</expr>)</condition><then>
+                                <expr_stmt><expr><call><name>PyErr_Format</name><argument_list>(<argument><expr><name>error_obj</name></expr></argument>,
+					     <argument><expr>"newline inside string"</expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+                        <return>return <expr><name>NULL</name></expr>;</return>
+                }</block></then></if>
+		<expr_stmt><expr>++<name><name>self</name>-&gt;<name>line_num</name></name></expr>;</expr_stmt>
+
+                <expr_stmt><expr><name>line</name> = <call><name>PyString_AsString</name><argument_list>(<argument><expr><name>lineobj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><name>linelen</name> = <call><name>PyString_Size</name><argument_list>(<argument><expr><name>lineobj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+                <if>if <condition>(<expr><name>line</name> == <name>NULL</name> || <name>linelen</name> &lt; 0</expr>)</condition><then> <block>{
+                        <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>lineobj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                        <return>return <expr><name>NULL</name></expr>;</return>
+                }</block></then></if>
+                <while>while <condition>(<expr><name>linelen</name>--</expr>)</condition> <block>{
+			<expr_stmt><expr><name>c</name> = *<name>line</name>++</expr>;</expr_stmt>
+			<if>if <condition>(<expr><name>c</name> == '\0'</expr>)</condition><then> <block>{
+				<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>lineobj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+				<expr_stmt><expr><call><name>PyErr_Format</name><argument_list>(<argument><expr><name>error_obj</name></expr></argument>,
+					     <argument><expr>"line contains NULL byte"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+				<goto>goto <name>err</name>;</goto>
+			}</block></then></if>
+			<if>if <condition>(<expr><call><name>parse_process_char</name><argument_list>(<argument><expr><name>self</name></expr></argument>, <argument><expr><name>c</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then> <block>{
+				<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>lineobj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+				<goto>goto <name>err</name>;</goto>
+			}</block></then></if>
+		}</block></while>
+                <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>lineobj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<if>if <condition>(<expr><call><name>parse_process_char</name><argument_list>(<argument><expr><name>self</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+			<goto>goto <name>err</name>;</goto></then></if>
+        }</block> while <condition>(<expr><name><name>self</name>-&gt;<name>state</name></name> != <name>START_RECORD</name></expr>)</condition>;</do>
+
+        <expr_stmt><expr><name>fields</name> = <name><name>self</name>-&gt;<name>fields</name></name></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>self</name>-&gt;<name>fields</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<label><name>err</name>:</label>
+        <return>return <expr><name>fields</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>Reader_dealloc</name><parameter_list>(<param><decl><type><name>ReaderObj</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+	<expr_stmt><expr><call><name>PyObject_GC_UnTrack</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>dialect</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>input_iter</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fields</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name><name>self</name>-&gt;<name>field</name></name> != <name>NULL</name></expr>)</condition><then>
+        	<expr_stmt><expr><call><name>PyMem_Free</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>field</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+	<expr_stmt><expr><call><name>PyObject_GC_Del</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>Reader_traverse</name><parameter_list>(<param><decl><type><name>ReaderObj</name> *</type><name>self</name></decl></param>, <param><decl><type><name>visitproc</name></type> <name>visit</name></decl></param>, <param><decl><type><name>void</name> *</type><name>arg</name></decl></param>)</parameter_list>
+<block>{
+	<expr_stmt><expr><call><name>Py_VISIT</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>dialect</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_VISIT</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>input_iter</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_VISIT</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fields</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr>0</expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>Reader_clear</name><parameter_list>(<param><decl><type><name>ReaderObj</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+	<expr_stmt><expr><call><name>Py_CLEAR</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>dialect</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_CLEAR</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>input_iter</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_CLEAR</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>fields</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr>0</expr>;</return>
+}</block></function>
+
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>Reader_Type_doc</name></expr></argument>,
+<argument><expr>"CSV reader\n"
+"\n"
+"Reader objects are responsible for reading and parsing tabular data\n"
+"in CSV format.\n"</expr></argument>
+)</argument_list></call></expr>;</expr_stmt>
+
+<decl_stmt><decl><type><specifier>static</specifier> struct <name>PyMethodDef</name></type> <name><name>Reader_methods</name><index>[]</index></name> <init>= <expr><block>{
+	<expr><block>{ <expr><name>NULL</name></expr>, <expr><name>NULL</name></expr> }</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>R_OFF</name><parameter_list>(<param><type><name>x</name></type></param>)</parameter_list></cpp:macro> <cpp:value>offsetof(ReaderObj, x)</cpp:value></cpp:define>
+
+<decl_stmt><decl><type><specifier>static</specifier> struct <name>PyMemberDef</name></type> <name><name>Reader_memberlist</name><index>[]</index></name> <init>= <expr><block>{
+	<expr><block>{ <expr>"dialect"</expr>, <expr><name>T_OBJECT</name></expr>, <expr><call><name>R_OFF</name><argument_list>(<argument><expr><name>dialect</name></expr></argument>)</argument_list></call></expr>, <expr><name>RO</name></expr> }</block></expr>,
+	<expr><block>{ <expr>"line_num"</expr>, <expr><name>T_ULONG</name></expr>, <expr><call><name>R_OFF</name><argument_list>(<argument><expr><name>line_num</name></expr></argument>)</argument_list></call></expr>, <expr><name>RO</name></expr> }</block></expr>,
+	<expr><block>{ <expr><name>NULL</name></expr> }</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyTypeObject</name></type> <name>Reader_Type</name> <init>= <expr><block>{
+	<expr><call><name>PyVarObject_HEAD_INIT</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call>
+	"_csv.reader"</expr>,                          <comment type="block">/*tp_name*/</comment>
+	<expr><sizeof>sizeof<argument_list>(<argument><expr><name>ReaderObj</name></expr></argument>)</argument_list></sizeof></expr>,                      <comment type="block">/*tp_basicsize*/</comment>
+	<expr>0</expr>,                                      <comment type="block">/*tp_itemsize*/</comment>
+	<comment type="block">/* methods */</comment>
+	<expr>(<name>destructor</name>)<name>Reader_dealloc</name></expr>,             <comment type="block">/*tp_dealloc*/</comment>
+	<expr>(<name>printfunc</name>)0</expr>,                           <comment type="block">/*tp_print*/</comment>
+	<expr>(<name>getattrfunc</name>)0</expr>,                         <comment type="block">/*tp_getattr*/</comment>
+	<expr>(<name>setattrfunc</name>)0</expr>,                         <comment type="block">/*tp_setattr*/</comment>
+	<expr>(<name>cmpfunc</name>)0</expr>,                             <comment type="block">/*tp_compare*/</comment>
+	<expr>(<name>reprfunc</name>)0</expr>,                            <comment type="block">/*tp_repr*/</comment>
+	<expr>0</expr>,                                      <comment type="block">/*tp_as_number*/</comment>
+	<expr>0</expr>,                                      <comment type="block">/*tp_as_sequence*/</comment>
+	<expr>0</expr>,                                      <comment type="block">/*tp_as_mapping*/</comment>
+	<expr>(<name>hashfunc</name>)0</expr>,                            <comment type="block">/*tp_hash*/</comment>
+	<expr>(<name>ternaryfunc</name>)0</expr>,                         <comment type="block">/*tp_call*/</comment>
+	<expr>(<name>reprfunc</name>)0</expr>,                    	<comment type="block">/*tp_str*/</comment>
+	<expr>0</expr>,                                      <comment type="block">/*tp_getattro*/</comment>
+        <expr>0</expr>,                                      <comment type="block">/*tp_setattro*/</comment>
+        <expr>0</expr>,                                      <comment type="block">/*tp_as_buffer*/</comment>
+        <expr><name>Py_TPFLAGS_DEFAULT</name> | <name>Py_TPFLAGS_BASETYPE</name> |
+		<name>Py_TPFLAGS_HAVE_GC</name></expr>,		<comment type="block">/*tp_flags*/</comment>
+	<expr><name>Reader_Type_doc</name></expr>,                        <comment type="block">/*tp_doc*/</comment>
+        <expr>(<name>traverseproc</name>)<name>Reader_traverse</name></expr>,          <comment type="block">/*tp_traverse*/</comment>
+        <expr>(<name>inquiry</name>)<name>Reader_clear</name></expr>,                  <comment type="block">/*tp_clear*/</comment>
+        <expr>0</expr>,                                      <comment type="block">/*tp_richcompare*/</comment>
+        <expr>0</expr>,                                      <comment type="block">/*tp_weaklistoffset*/</comment>
+        <expr><name>PyObject_SelfIter</name></expr>,		        <comment type="block">/*tp_iter*/</comment>
+        <expr>(<name>getiterfunc</name>)<name>Reader_iternext</name></expr>,           <comment type="block">/*tp_iternext*/</comment>
+        <expr><name>Reader_methods</name></expr>,                         <comment type="block">/*tp_methods*/</comment>
+        <expr><name>Reader_memberlist</name></expr>,                      <comment type="block">/*tp_members*/</comment>
+        <expr>0</expr>,                                      <comment type="block">/*tp_getset*/</comment>
+
+}</block></expr></init></decl>;</decl_stmt>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>csv_reader</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>module</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>keyword_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type> <name>iterator</name></decl>, * <decl><type ref="prev"/><name>dialect</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>ReaderObj</name> *</type> <name>self</name> <init>= <expr><call><name>PyObject_GC_New</name><argument_list>(<argument><expr><name>ReaderObj</name></expr></argument>, <argument><expr>&amp;<name>Reader_Type</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+        <if>if <condition>(<expr>!<name>self</name></expr>)</condition><then>
+                <return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+        <expr_stmt><expr><name><name>self</name>-&gt;<name>dialect</name></name> = <name>NULL</name></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>self</name>-&gt;<name>fields</name></name> = <name>NULL</name></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>self</name>-&gt;<name>input_iter</name></name> = <name>NULL</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>field</name></name> = <name>NULL</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>field_size</name></name> = 0</expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>line_num</name></name> = 0</expr>;</expr_stmt>
+
+	<if>if <condition>(<expr><call><name>parse_reset</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then> <block>{
+                <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <return>return <expr><name>NULL</name></expr>;</return>
+	}</block></then></if>
+
+	<if>if <condition>(<expr>!<call><name>PyArg_UnpackTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>""</expr></argument>, <argument><expr>1</expr></argument>, <argument><expr>2</expr></argument>, <argument><expr>&amp;<name>iterator</name></expr></argument>, <argument><expr>&amp;<name>dialect</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+                <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <return>return <expr><name>NULL</name></expr>;</return>
+        }</block></then></if>
+        <expr_stmt><expr><name><name>self</name>-&gt;<name>input_iter</name></name> = <call><name>PyObject_GetIter</name><argument_list>(<argument><expr><name>iterator</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name><name>self</name>-&gt;<name>input_iter</name></name> == <name>NULL</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_TypeError</name></expr></argument>, 
+                                <argument><expr>"argument 1 must be an iterator"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <return>return <expr><name>NULL</name></expr>;</return>
+        }</block></then></if>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>dialect</name></name> = (<name>DialectObj</name> *)<call><name>_call_dialect</name><argument_list>(<argument><expr><name>dialect</name></expr></argument>, <argument><expr><name>keyword_args</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name><name>self</name>-&gt;<name>dialect</name></name> == <name>NULL</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <return>return <expr><name>NULL</name></expr>;</return>
+        }</block></then></if>
+
+	<expr_stmt><expr><call><name>PyObject_GC_Track</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr>(<name>PyObject</name> *)<name>self</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/*
+ * WRITER
+ */</comment>
+<comment type="block">/* ---------------------------------------------------------------- */</comment>
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>join_reset</name><parameter_list>(<param><decl><type><name>WriterObj</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>rec_len</name></name> = 0</expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>num_fields</name></name> = 0</expr>;</expr_stmt>
+}</block></function>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>MEM_INCR</name></cpp:macro> <cpp:value>32768</cpp:value></cpp:define>
+
+<comment type="block">/* Calculate new record length or append field to record.  Return new
+ * record length.
+ */</comment>
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>join_append_data</name><parameter_list>(<param><decl><type><name>WriterObj</name> *</type><name>self</name></decl></param>, <param><decl><type><name>char</name> *</type><name>field</name></decl></param>, <param><decl><type><name>int</name></type> <name>quote_empty</name></decl></param>,
+		 <param><decl><type><name>int</name> *</type><name>quoted</name></decl></param>, <param><decl><type><name>int</name></type> <name>copy_phase</name></decl></param>)</parameter_list>
+<block>{
+        <decl_stmt><decl><type><name>DialectObj</name> *</type><name>dialect</name> <init>= <expr><name><name>self</name>-&gt;<name>dialect</name></name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>, <decl><type ref="prev"/><name>rec_len</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>char</name> *</type><name>lineterm</name></decl>;</decl_stmt>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>ADDCH</name><parameter_list>(<param><type><name>c</name></type></param>)</parameter_list></cpp:macro> \
+	<cpp:value>do {\
+		if (copy_phase) \
+			self-&gt;rec[rec_len] = c;\
+		rec_len++;\
+	} while(0)</cpp:value></cpp:define>
+
+	<expr_stmt><expr><name>lineterm</name> = <call><name>PyString_AsString</name><argument_list>(<argument><expr><name><name>dialect</name>-&gt;<name>lineterminator</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>lineterm</name> == <name>NULL</name></expr>)</condition><then>
+		<return>return <expr>-1</expr>;</return></then></if>
+
+	<expr_stmt><expr><name>rec_len</name> = <name><name>self</name>-&gt;<name>rec_len</name></name></expr>;</expr_stmt>
+
+	<comment type="block">/* If this is not the first field we need a field separator */</comment>
+	<if>if <condition>(<expr><name><name>self</name>-&gt;<name>num_fields</name></name> &gt; 0</expr>)</condition><then>
+		<expr_stmt><expr><call><name>ADDCH</name><argument_list>(<argument><expr><name><name>dialect</name>-&gt;<name>delimiter</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+	<comment type="block">/* Handle preceding quote */</comment>
+	<if>if <condition>(<expr><name>copy_phase</name> &amp;&amp; *<name>quoted</name></expr>)</condition><then>
+		<expr_stmt><expr><call><name>ADDCH</name><argument_list>(<argument><expr><name><name>dialect</name>-&gt;<name>quotechar</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+	<comment type="block">/* Copy/count field data */</comment>
+	<for>for (<init><expr><name>i</name> = 0</expr>;</init><condition>;</condition> <incr><expr><name>i</name>++</expr></incr>) <block>{
+		<decl_stmt><decl><type><name>char</name></type> <name>c</name> <init>= <expr><name><name>field</name><index>[<expr><name>i</name></expr>]</index></name></expr></init></decl>;</decl_stmt>
+		<decl_stmt><decl><type><name>int</name></type> <name>want_escape</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+
+		<if>if <condition>(<expr><name>c</name> == '\0'</expr>)</condition><then>
+			<break>break;</break></then></if>
+
+		<if>if <condition>(<expr><name>c</name> == <name><name>dialect</name>-&gt;<name>delimiter</name></name> ||
+		    <name>c</name> == <name><name>dialect</name>-&gt;<name>escapechar</name></name> ||
+		    <name>c</name> == <name><name>dialect</name>-&gt;<name>quotechar</name></name> ||
+		    <call><name>strchr</name><argument_list>(<argument><expr><name>lineterm</name></expr></argument>, <argument><expr><name>c</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+			<if>if <condition>(<expr><name><name>dialect</name>-&gt;<name>quoting</name></name> == <name>QUOTE_NONE</name></expr>)</condition><then>
+				<expr_stmt><expr><name>want_escape</name> = 1</expr>;</expr_stmt></then>
+			<else>else <block>{
+				<if>if <condition>(<expr><name>c</name> == <name><name>dialect</name>-&gt;<name>quotechar</name></name></expr>)</condition><then> <block>{
+					<if>if <condition>(<expr><name><name>dialect</name>-&gt;<name>doublequote</name></name></expr>)</condition><then>
+						<expr_stmt><expr><call><name>ADDCH</name><argument_list>(<argument><expr><name><name>dialect</name>-&gt;<name>quotechar</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+					<else>else
+						<expr_stmt><expr><name>want_escape</name> = 1</expr>;</expr_stmt></else></if>
+				}</block></then></if>
+				<if>if <condition>(<expr>!<name>want_escape</name></expr>)</condition><then>
+					<expr_stmt><expr>*<name>quoted</name> = 1</expr>;</expr_stmt></then></if>
+			}</block></else></if>
+			<if>if <condition>(<expr><name>want_escape</name></expr>)</condition><then> <block>{
+				<if>if <condition>(<expr>!<name><name>dialect</name>-&gt;<name>escapechar</name></name></expr>)</condition><then> <block>{
+					<expr_stmt><expr><call><name>PyErr_Format</name><argument_list>(<argument><expr><name>error_obj</name></expr></argument>, 
+						     <argument><expr>"need to escape, but no escapechar set"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+					<return>return <expr>-1</expr>;</return>
+				}</block></then></if>
+				<expr_stmt><expr><call><name>ADDCH</name><argument_list>(<argument><expr><name><name>dialect</name>-&gt;<name>escapechar</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			}</block></then></if>
+		}</block></then></if>
+		<comment type="block">/* Copy field character into record buffer.
+		 */</comment>
+		<expr_stmt><expr><call><name>ADDCH</name><argument_list>(<argument><expr><name>c</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	}</block></for>
+
+	<comment type="block">/* If field is empty check if it needs to be quoted.
+	 */</comment>
+	<if>if <condition>(<expr><name>i</name> == 0 &amp;&amp; <name>quote_empty</name></expr>)</condition><then> <block>{
+		<if>if <condition>(<expr><name><name>dialect</name>-&gt;<name>quoting</name></name> == <name>QUOTE_NONE</name></expr>)</condition><then> <block>{
+			<expr_stmt><expr><call><name>PyErr_Format</name><argument_list>(<argument><expr><name>error_obj</name></expr></argument>,
+                                     <argument><expr>"single empty field record must be quoted"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr>-1</expr>;</return>
+		}</block></then>
+		<else>else
+			<expr_stmt><expr>*<name>quoted</name> = 1</expr>;</expr_stmt></else></if>
+	}</block></then></if>
+
+	<if>if <condition>(<expr>*<name>quoted</name></expr>)</condition><then> <block>{
+		<if>if <condition>(<expr><name>copy_phase</name></expr>)</condition><then>
+			<expr_stmt><expr><call><name>ADDCH</name><argument_list>(<argument><expr><name><name>dialect</name>-&gt;<name>quotechar</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+		<else>else
+			<expr_stmt><expr><name>rec_len</name> += 2</expr>;</expr_stmt></else></if>
+	}</block></then></if>
+	<return>return <expr><name>rec_len</name></expr>;</return>
+<cpp:undef>#<cpp:directive>undef</cpp:directive> <name>ADDCH</name></cpp:undef>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>join_check_rec_size</name><parameter_list>(<param><decl><type><name>WriterObj</name> *</type><name>self</name></decl></param>, <param><decl><type><name>int</name></type> <name>rec_len</name></decl></param>)</parameter_list>
+<block>{
+
+	<if>if <condition>(<expr><name>rec_len</name> &lt; 0 || <name>rec_len</name> &gt; <name>INT_MAX</name> - <name>MEM_INCR</name></expr>)</condition><then> <block>{
+		<expr_stmt><expr><call><name>PyErr_NoMemory</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+		<return>return <expr>0</expr>;</return>
+	}</block></then></if>
+
+	<if>if <condition>(<expr><name>rec_len</name> &gt; <name><name>self</name>-&gt;<name>rec_size</name></name></expr>)</condition><then> <block>{
+		<if>if <condition>(<expr><name><name>self</name>-&gt;<name>rec_size</name></name> == 0</expr>)</condition><then> <block>{
+			<expr_stmt><expr><name><name>self</name>-&gt;<name>rec_size</name></name> = (<name>rec_len</name> / <name>MEM_INCR</name> + 1) * <name>MEM_INCR</name></expr>;</expr_stmt>
+			<if>if <condition>(<expr><name><name>self</name>-&gt;<name>rec</name></name> != <name>NULL</name></expr>)</condition><then>
+				<expr_stmt><expr><call><name>PyMem_Free</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>rec</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+			<expr_stmt><expr><name><name>self</name>-&gt;<name>rec</name></name> = <call><name>PyMem_Malloc</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>rec_size</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		}</block></then>
+		<else>else <block>{
+			<decl_stmt><decl><type><name>char</name> *</type><name>old_rec</name> <init>= <expr><name><name>self</name>-&gt;<name>rec</name></name></expr></init></decl>;</decl_stmt>
+
+			<expr_stmt><expr><name><name>self</name>-&gt;<name>rec_size</name></name> = (<name>rec_len</name> / <name>MEM_INCR</name> + 1) * <name>MEM_INCR</name></expr>;</expr_stmt>
+			<expr_stmt><expr><name><name>self</name>-&gt;<name>rec</name></name> = <call><name>PyMem_Realloc</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>rec</name></name></expr></argument>, <argument><expr><name><name>self</name>-&gt;<name>rec_size</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<if>if <condition>(<expr><name><name>self</name>-&gt;<name>rec</name></name> == <name>NULL</name></expr>)</condition><then>
+				<expr_stmt><expr><call><name>PyMem_Free</name><argument_list>(<argument><expr><name>old_rec</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+		}</block></else></if>
+		<if>if <condition>(<expr><name><name>self</name>-&gt;<name>rec</name></name> == <name>NULL</name></expr>)</condition><then> <block>{
+			<expr_stmt><expr><call><name>PyErr_NoMemory</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr>0</expr>;</return>
+		}</block></then></if>
+	}</block></then></if>
+	<return>return <expr>1</expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>join_append</name><parameter_list>(<param><decl><type><name>WriterObj</name> *</type><name>self</name></decl></param>, <param><decl><type><name>char</name> *</type><name>field</name></decl></param>, <param><decl><type><name>int</name> *</type><name>quoted</name></decl></param>, <param><decl><type><name>int</name></type> <name>quote_empty</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>int</name></type> <name>rec_len</name></decl>;</decl_stmt>
+
+	<expr_stmt><expr><name>rec_len</name> = <call><name>join_append_data</name><argument_list>(<argument><expr><name>self</name></expr></argument>, <argument><expr><name>field</name></expr></argument>, <argument><expr><name>quote_empty</name></expr></argument>, <argument><expr><name>quoted</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>rec_len</name> &lt; 0</expr>)</condition><then>
+		<return>return <expr>0</expr>;</return></then></if>
+
+	<comment type="block">/* grow record buffer if necessary */</comment>
+	<if>if <condition>(<expr>!<call><name>join_check_rec_size</name><argument_list>(<argument><expr><name>self</name></expr></argument>, <argument><expr><name>rec_len</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr>0</expr>;</return></then></if>
+
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>rec_len</name></name> = <call><name>join_append_data</name><argument_list>(<argument><expr><name>self</name></expr></argument>, <argument><expr><name>field</name></expr></argument>, <argument><expr><name>quote_empty</name></expr></argument>, <argument><expr><name>quoted</name></expr></argument>, <argument><expr>1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>num_fields</name></name>++</expr>;</expr_stmt>
+
+	<return>return <expr>1</expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>join_append_lineterminator</name><parameter_list>(<param><decl><type><name>WriterObj</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>int</name></type> <name>terminator_len</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>char</name> *</type><name>terminator</name></decl>;</decl_stmt>
+
+	<expr_stmt><expr><name>terminator_len</name> = <call><name>PyString_Size</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>dialect</name>-&gt;<name>lineterminator</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>terminator_len</name> == -1</expr>)</condition><then>
+		<return>return <expr>0</expr>;</return></then></if>
+
+	<comment type="block">/* grow record buffer if necessary */</comment>
+	<if>if <condition>(<expr>!<call><name>join_check_rec_size</name><argument_list>(<argument><expr><name>self</name></expr></argument>, <argument><expr><name><name>self</name>-&gt;<name>rec_len</name></name> + <name>terminator_len</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr>0</expr>;</return></then></if>
+
+	<expr_stmt><expr><name>terminator</name> = <call><name>PyString_AsString</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>dialect</name>-&gt;<name>lineterminator</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt> 
+	<if>if <condition>(<expr><name>terminator</name> == <name>NULL</name></expr>)</condition><then>
+		<return>return <expr>0</expr>;</return></then></if>
+	<expr_stmt><expr><call><name>memmove</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>rec</name></name> + <name><name>self</name>-&gt;<name>rec_len</name></name></expr></argument>, <argument><expr><name>terminator</name></expr></argument>, <argument><expr><name>terminator_len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>rec_len</name></name> += <name>terminator_len</name></expr>;</expr_stmt>
+
+	<return>return <expr>1</expr>;</return>
+}</block></function>
+
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>csv_writerow_doc</name></expr></argument>,
+<argument><expr>"writerow(sequence)\n"
+"\n"
+"Construct and write a CSV record from a sequence of fields.  Non-string\n"
+"elements will be converted to string."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>csv_writerow</name><parameter_list>(<param><decl><type><name>WriterObj</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>seq</name></decl></param>)</parameter_list>
+<block>{
+        <decl_stmt><decl><type><name>DialectObj</name> *</type><name>dialect</name> <init>= <expr><name><name>self</name>-&gt;<name>dialect</name></name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>len</name></decl>, <decl><type ref="prev"/><name>i</name></decl>;</decl_stmt>
+
+	<if>if <condition>(<expr>!<call><name>PySequence_Check</name><argument_list>(<argument><expr><name>seq</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><call><name>PyErr_Format</name><argument_list>(<argument><expr><name>error_obj</name></expr></argument>, <argument><expr>"sequence expected"</expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+	<expr_stmt><expr><name>len</name> = <call><name>PySequence_Length</name><argument_list>(<argument><expr><name>seq</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>len</name> &lt; 0</expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+	<comment type="block">/* Join all fields in internal buffer.
+	 */</comment>
+	<expr_stmt><expr><call><name>join_reset</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name>len</name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>) <block>{
+		<decl_stmt><decl><type><name>PyObject</name> *</type><name>field</name></decl>;</decl_stmt>
+		<decl_stmt><decl><type><name>int</name></type> <name>append_ok</name></decl>;</decl_stmt>
+		<decl_stmt><decl><type><name>int</name></type> <name>quoted</name></decl>;</decl_stmt>
+
+		<expr_stmt><expr><name>field</name> = <call><name>PySequence_GetItem</name><argument_list>(<argument><expr><name>seq</name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<if>if <condition>(<expr><name>field</name> == <name>NULL</name></expr>)</condition><then>
+			<return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+		<switch>switch <condition>(<expr><name><name>dialect</name>-&gt;<name>quoting</name></name></expr>)</condition> <block>{
+		<case>case <expr><name>QUOTE_NONNUMERIC</name></expr>:
+			<expr_stmt><expr><name>quoted</name> = !<call><name>PyNumber_Check</name><argument_list>(<argument><expr><name>field</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<break>break;</break>
+		</case><case>case <expr><name>QUOTE_ALL</name></expr>:
+			<expr_stmt><expr><name>quoted</name> = 1</expr>;</expr_stmt>
+			<break>break;</break>
+		</case><default>default:
+			<expr_stmt><expr><name>quoted</name> = 0</expr>;</expr_stmt>
+			<break>break;</break>
+		</default>}</block></switch>
+
+		<if>if <condition>(<expr><call><name>PyString_Check</name><argument_list>(<argument><expr><name>field</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+			<expr_stmt><expr><name>append_ok</name> = <call><name>join_append</name><argument_list>(<argument><expr><name>self</name></expr></argument>,
+						<argument><expr><call><name>PyString_AS_STRING</name><argument_list>(<argument><expr><name>field</name></expr></argument>)</argument_list></call></expr></argument>,
+                                                <argument><expr>&amp;<name>quoted</name></expr></argument>, <argument><expr><name>len</name> == 1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>field</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		}</block></then>
+		<else>else <if>if <condition>(<expr><name>field</name> == <name>Py_None</name></expr>)</condition><then> <block>{
+			<expr_stmt><expr><name>append_ok</name> = <call><name>join_append</name><argument_list>(<argument><expr><name>self</name></expr></argument>, <argument><expr>""</expr></argument>, <argument><expr>&amp;<name>quoted</name></expr></argument>, <argument><expr><name>len</name> == 1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>field</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		}</block></then>
+		<else>else <block>{
+			<decl_stmt><decl><type><name>PyObject</name> *</type><name>str</name></decl>;</decl_stmt>
+
+			<expr_stmt><expr><name>str</name> = <call><name>PyObject_Str</name><argument_list>(<argument><expr><name>field</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>field</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<if>if <condition>(<expr><name>str</name> == <name>NULL</name></expr>)</condition><then>
+				<return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+			<expr_stmt><expr><name>append_ok</name> = <call><name>join_append</name><argument_list>(<argument><expr><name>self</name></expr></argument>, <argument><expr><call><name>PyString_AS_STRING</name><argument_list>(<argument><expr><name>str</name></expr></argument>)</argument_list></call></expr></argument>, 
+                                                <argument><expr>&amp;<name>quoted</name></expr></argument>, <argument><expr><name>len</name> == 1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>str</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		}</block></else></if></else></if>
+		<if>if <condition>(<expr>!<name>append_ok</name></expr>)</condition><then>
+			<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	}</block></for>
+
+	<comment type="block">/* Add line terminator.
+	 */</comment>
+	<if>if <condition>(<expr>!<call><name>join_append_lineterminator</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr>0</expr>;</return></then></if>
+
+	<return>return <expr><call><name>PyObject_CallFunction</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>writeline</name></name></expr></argument>, 
+                                     <argument><expr>"(s#)"</expr></argument>, <argument><expr><name><name>self</name>-&gt;<name>rec</name></name></expr></argument>, <argument><expr><name><name>self</name>-&gt;<name>rec_len</name></name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>csv_writerows_doc</name></expr></argument>,
+<argument><expr>"writerows(sequence of sequences)\n"
+"\n"
+"Construct and write a series of sequences to a csv file.  Non-string\n"
+"elements will be converted to string."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>csv_writerows</name><parameter_list>(<param><decl><type><name>WriterObj</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>seqseq</name></decl></param>)</parameter_list>
+<block>{
+        <decl_stmt><decl><type><name>PyObject</name> *</type><name>row_iter</name></decl>, *<decl><type ref="prev"/><name>row_obj</name></decl>, *<decl><type ref="prev"/><name>result</name></decl>;</decl_stmt>
+
+        <expr_stmt><expr><name>row_iter</name> = <call><name>PyObject_GetIter</name><argument_list>(<argument><expr><name>seqseq</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>row_iter</name> == <name>NULL</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_TypeError</name></expr></argument>,
+                                <argument><expr>"writerows() argument must be iterable"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <return>return <expr><name>NULL</name></expr>;</return>
+        }</block></then></if>
+        <while>while <condition>(<expr>(<name>row_obj</name> = <call><name>PyIter_Next</name><argument_list>(<argument><expr><name>row_iter</name></expr></argument>)</argument_list></call>)</expr>)</condition> <block>{
+                <expr_stmt><expr><name>result</name> = <call><name>csv_writerow</name><argument_list>(<argument><expr><name>self</name></expr></argument>, <argument><expr><name>row_obj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>row_obj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <if>if <condition>(<expr>!<name>result</name></expr>)</condition><then> <block>{
+                        <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>row_iter</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                        <return>return <expr><name>NULL</name></expr>;</return>
+                }</block></then>
+                <else>else
+                     <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>result</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>   
+        }</block></while>
+        <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>row_iter</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><call><name>PyErr_Occurred</name><argument_list>()</argument_list></call></expr>)</condition><then>
+                <return>return <expr><name>NULL</name></expr>;</return></then></if>
+        <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+
+<decl_stmt><decl><type><specifier>static</specifier> struct <name>PyMethodDef</name></type> <name><name>Writer_methods</name><index>[]</index></name> <init>= <expr><block>{
+        <expr><block>{ <expr>"writerow"</expr>, <expr>(<name>PyCFunction</name>)<name>csv_writerow</name></expr>, <expr><name>METH_O</name></expr>, <expr><name>csv_writerow_doc</name></expr>}</block></expr>,
+        <expr><block>{ <expr>"writerows"</expr>, <expr>(<name>PyCFunction</name>)<name>csv_writerows</name></expr>, <expr><name>METH_O</name></expr>, <expr><name>csv_writerows_doc</name></expr>}</block></expr>,
+	<expr><block>{ <expr><name>NULL</name></expr>, <expr><name>NULL</name></expr> }</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>W_OFF</name><parameter_list>(<param><type><name>x</name></type></param>)</parameter_list></cpp:macro> <cpp:value>offsetof(WriterObj, x)</cpp:value></cpp:define>
+
+<decl_stmt><decl><type><specifier>static</specifier> struct <name>PyMemberDef</name></type> <name><name>Writer_memberlist</name><index>[]</index></name> <init>= <expr><block>{
+	<expr><block>{ <expr>"dialect"</expr>, <expr><name>T_OBJECT</name></expr>, <expr><call><name>W_OFF</name><argument_list>(<argument><expr><name>dialect</name></expr></argument>)</argument_list></call></expr>, <expr><name>RO</name></expr> }</block></expr>,
+	<expr><block>{ <expr><name>NULL</name></expr> }</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>Writer_dealloc</name><parameter_list>(<param><decl><type><name>WriterObj</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+	<expr_stmt><expr><call><name>PyObject_GC_UnTrack</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>dialect</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>writeline</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name><name>self</name>-&gt;<name>rec</name></name> != <name>NULL</name></expr>)</condition><then>
+		<expr_stmt><expr><call><name>PyMem_Free</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>rec</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+	<expr_stmt><expr><call><name>PyObject_GC_Del</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>Writer_traverse</name><parameter_list>(<param><decl><type><name>WriterObj</name> *</type><name>self</name></decl></param>, <param><decl><type><name>visitproc</name></type> <name>visit</name></decl></param>, <param><decl><type><name>void</name> *</type><name>arg</name></decl></param>)</parameter_list>
+<block>{
+	<expr_stmt><expr><call><name>Py_VISIT</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>dialect</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_VISIT</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>writeline</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr>0</expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>Writer_clear</name><parameter_list>(<param><decl><type><name>WriterObj</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+	<expr_stmt><expr><call><name>Py_CLEAR</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>dialect</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_CLEAR</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>writeline</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr>0</expr>;</return>
+}</block></function>
+
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>Writer_Type_doc</name></expr></argument>, 
+<argument><expr>"CSV writer\n"
+"\n"
+"Writer objects are responsible for generating tabular data\n"
+"in CSV format from sequence input.\n"</expr></argument>
+)</argument_list></call></expr>;</expr_stmt>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyTypeObject</name></type> <name>Writer_Type</name> <init>= <expr><block>{
+	<expr><call><name>PyVarObject_HEAD_INIT</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call>
+	"_csv.writer"</expr>,                          <comment type="block">/*tp_name*/</comment>
+	<expr><sizeof>sizeof<argument_list>(<argument><expr><name>WriterObj</name></expr></argument>)</argument_list></sizeof></expr>,                      <comment type="block">/*tp_basicsize*/</comment>
+	<expr>0</expr>,                                      <comment type="block">/*tp_itemsize*/</comment>
+	<comment type="block">/* methods */</comment>
+	<expr>(<name>destructor</name>)<name>Writer_dealloc</name></expr>,             <comment type="block">/*tp_dealloc*/</comment>
+	<expr>(<name>printfunc</name>)0</expr>,                           <comment type="block">/*tp_print*/</comment>
+	<expr>(<name>getattrfunc</name>)0</expr>,                         <comment type="block">/*tp_getattr*/</comment>
+	<expr>(<name>setattrfunc</name>)0</expr>,                         <comment type="block">/*tp_setattr*/</comment>
+	<expr>(<name>cmpfunc</name>)0</expr>,                             <comment type="block">/*tp_compare*/</comment>
+	<expr>(<name>reprfunc</name>)0</expr>,                            <comment type="block">/*tp_repr*/</comment>
+	<expr>0</expr>,                                      <comment type="block">/*tp_as_number*/</comment>
+	<expr>0</expr>,                                      <comment type="block">/*tp_as_sequence*/</comment>
+	<expr>0</expr>,                                      <comment type="block">/*tp_as_mapping*/</comment>
+	<expr>(<name>hashfunc</name>)0</expr>,                            <comment type="block">/*tp_hash*/</comment>
+	<expr>(<name>ternaryfunc</name>)0</expr>,                         <comment type="block">/*tp_call*/</comment>
+	<expr>(<name>reprfunc</name>)0</expr>,                            <comment type="block">/*tp_str*/</comment>
+	<expr>0</expr>,                                      <comment type="block">/*tp_getattro*/</comment>
+        <expr>0</expr>,                                      <comment type="block">/*tp_setattro*/</comment>
+        <expr>0</expr>,                                      <comment type="block">/*tp_as_buffer*/</comment>
+        <expr><name>Py_TPFLAGS_DEFAULT</name> | <name>Py_TPFLAGS_BASETYPE</name> |
+		<name>Py_TPFLAGS_HAVE_GC</name></expr>,		<comment type="block">/*tp_flags*/</comment>
+	<expr><name>Writer_Type_doc</name></expr>,
+        <expr>(<name>traverseproc</name>)<name>Writer_traverse</name></expr>,          <comment type="block">/*tp_traverse*/</comment>
+        <expr>(<name>inquiry</name>)<name>Writer_clear</name></expr>,                  <comment type="block">/*tp_clear*/</comment>
+        <expr>0</expr>,                                      <comment type="block">/*tp_richcompare*/</comment>
+        <expr>0</expr>,                                      <comment type="block">/*tp_weaklistoffset*/</comment>
+        <expr>(<name>getiterfunc</name>)0</expr>,                         <comment type="block">/*tp_iter*/</comment>
+        <expr>(<name>getiterfunc</name>)0</expr>,                         <comment type="block">/*tp_iternext*/</comment>
+        <expr><name>Writer_methods</name></expr>,                         <comment type="block">/*tp_methods*/</comment>
+        <expr><name>Writer_memberlist</name></expr>,                      <comment type="block">/*tp_members*/</comment>
+        <expr>0</expr>,                                      <comment type="block">/*tp_getset*/</comment>
+}</block></expr></init></decl>;</decl_stmt>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>csv_writer</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>module</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>keyword_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type> <name>output_file</name></decl>, * <decl><type ref="prev"/><name>dialect</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>WriterObj</name> *</type> <name>self</name> <init>= <expr><call><name>PyObject_GC_New</name><argument_list>(<argument><expr><name>WriterObj</name></expr></argument>, <argument><expr>&amp;<name>Writer_Type</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+        <if>if <condition>(<expr>!<name>self</name></expr>)</condition><then>
+                <return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+        <expr_stmt><expr><name><name>self</name>-&gt;<name>dialect</name></name> = <name>NULL</name></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>self</name>-&gt;<name>writeline</name></name> = <name>NULL</name></expr>;</expr_stmt>
+
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>rec</name></name> = <name>NULL</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>rec_size</name></name> = 0</expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>rec_len</name></name> = 0</expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>num_fields</name></name> = 0</expr>;</expr_stmt>
+
+	<if>if <condition>(<expr>!<call><name>PyArg_UnpackTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>""</expr></argument>, <argument><expr>1</expr></argument>, <argument><expr>2</expr></argument>, <argument><expr>&amp;<name>output_file</name></expr></argument>, <argument><expr>&amp;<name>dialect</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+                <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <return>return <expr><name>NULL</name></expr>;</return>
+        }</block></then></if>
+        <expr_stmt><expr><name><name>self</name>-&gt;<name>writeline</name></name> = <call><name>PyObject_GetAttrString</name><argument_list>(<argument><expr><name>output_file</name></expr></argument>, <argument><expr>"write"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name><name>self</name>-&gt;<name>writeline</name></name> == <name>NULL</name> || !<call><name>PyCallable_Check</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>writeline</name></name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+                <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_TypeError</name></expr></argument>,
+                                <argument><expr>"argument 1 must have a \"write\" method"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <return>return <expr><name>NULL</name></expr>;</return>
+        }</block></then></if>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>dialect</name></name> = (<name>DialectObj</name> *)<call><name>_call_dialect</name><argument_list>(<argument><expr><name>dialect</name></expr></argument>, <argument><expr><name>keyword_args</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name><name>self</name>-&gt;<name>dialect</name></name> == <name>NULL</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <return>return <expr><name>NULL</name></expr>;</return>
+        }</block></then></if>
+	<expr_stmt><expr><call><name>PyObject_GC_Track</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr>(<name>PyObject</name> *)<name>self</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/*
+ * DIALECT REGISTRY
+ */</comment>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>csv_list_dialects</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>module</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+        <return>return <expr><call><name>PyDict_Keys</name><argument_list>(<argument><expr><name>dialects</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>csv_register_dialect</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>module</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>kwargs</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>name_obj</name></decl>, *<decl><type ref="prev"/><name>dialect_obj</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>dialect</name></decl>;</decl_stmt>
+
+	<if>if <condition>(<expr>!<call><name>PyArg_UnpackTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>""</expr></argument>, <argument><expr>1</expr></argument>, <argument><expr>2</expr></argument>, <argument><expr>&amp;<name>name_obj</name></expr></argument>, <argument><expr>&amp;<name>dialect_obj</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+                <return>return <expr><name>NULL</name></expr>;</return></then></if>
+        <if>if <condition>(<expr>!<call><name>IS_BASESTRING</name><argument_list>(<argument><expr><name>name_obj</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+                <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_TypeError</name></expr></argument>, 
+                                <argument><expr>"dialect name must be a string or unicode"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <return>return <expr><name>NULL</name></expr>;</return>
+        }</block></then></if>
+	<expr_stmt><expr><name>dialect</name> = <call><name>_call_dialect</name><argument_list>(<argument><expr><name>dialect_obj</name></expr></argument>, <argument><expr><name>kwargs</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>dialect</name> == <name>NULL</name></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<if>if <condition>(<expr><call><name>PyDict_SetItem</name><argument_list>(<argument><expr><name>dialects</name></expr></argument>, <argument><expr><name>name_obj</name></expr></argument>, <argument><expr><name>dialect</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then> <block>{
+		<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>dialect</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <return>return <expr><name>NULL</name></expr>;</return>
+        }</block></then></if>
+	<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>dialect</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>csv_unregister_dialect</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>module</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>name_obj</name></decl></param>)</parameter_list>
+<block>{
+        <if>if <condition>(<expr><call><name>PyDict_DelItem</name><argument_list>(<argument><expr><name>dialects</name></expr></argument>, <argument><expr><name>name_obj</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+                <return>return <expr><call><name>PyErr_Format</name><argument_list>(<argument><expr><name>error_obj</name></expr></argument>, <argument><expr>"unknown dialect"</expr></argument>)</argument_list></call></expr>;</return></then></if>
+        <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>csv_get_dialect</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>module</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>name_obj</name></decl></param>)</parameter_list>
+<block>{
+        <return>return <expr><call><name>get_dialect_from_registry</name><argument_list>(<argument><expr><name>name_obj</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>csv_field_size_limit</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>module</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>new_limit</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>long</name></type> <name>old_limit</name> <init>= <expr><name>field_limit</name></expr></init></decl>;</decl_stmt>
+
+	<if>if <condition>(<expr>!<call><name>PyArg_UnpackTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"field_size_limit"</expr></argument>, <argument><expr>0</expr></argument>, <argument><expr>1</expr></argument>, <argument><expr>&amp;<name>new_limit</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<if>if <condition>(<expr><name>new_limit</name> != <name>NULL</name></expr>)</condition><then> <block>{
+		<if>if <condition>(<expr>!<call><name>PyInt_Check</name><argument_list>(<argument><expr><name>new_limit</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+			<expr_stmt><expr><call><name>PyErr_Format</name><argument_list>(<argument><expr><name>PyExc_TypeError</name></expr></argument>, 
+				     <argument><expr>"limit must be an integer"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr><name>NULL</name></expr>;</return>
+		}</block></then></if>
+		<expr_stmt><expr><name>field_limit</name> = <call><name>PyInt_AsLong</name><argument_list>(<argument><expr><name>new_limit</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	}</block></then></if>
+	<return>return <expr><call><name>PyInt_FromLong</name><argument_list>(<argument><expr><name>old_limit</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<comment type="block">/*
+ * MODULE
+ */</comment>
+
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>csv_module_doc</name></expr></argument>,
+<argument><expr>"CSV parsing and writing.\n"
+"\n"
+"This module provides classes that assist in the reading and writing\n"
+"of Comma Separated Value (CSV) files, and implements the interface\n"
+"described by PEP 305.  Although many CSV files are simple to parse,\n"
+"the format is not formally defined by a stable specification and\n"
+"is subtle enough that parsing lines of a CSV file with something\n"
+"like line.split(\",\") is bound to fail.  The module supports three\n"
+"basic APIs: reading, writing, and registration of dialects.\n"
+"\n"
+"\n"
+"DIALECT REGISTRATION:\n"
+"\n"
+"Readers and writers support a dialect argument, which is a convenient\n"
+"handle on a group of settings.  When the dialect argument is a string,\n"
+"it identifies one of the dialects previously registered with the module.\n"
+"If it is a class or instance, the attributes of the argument are used as\n"
+"the settings for the reader or writer:\n"
+"\n"
+"    class excel:\n"
+"        delimiter = ','\n"
+"        quotechar = '\"'\n"
+"        escapechar = None\n"
+"        doublequote = True\n"
+"        skipinitialspace = False\n"
+"        lineterminator = '\\r\\n'\n"
+"        quoting = QUOTE_MINIMAL\n"
+"\n"
+"SETTINGS:\n"
+"\n"
+"    * quotechar - specifies a one-character string to use as the \n"
+"        quoting character.  It defaults to '\"'.\n"
+"    * delimiter - specifies a one-character string to use as the \n"
+"        field separator.  It defaults to ','.\n"
+"    * skipinitialspace - specifies how to interpret whitespace which\n"
+"        immediately follows a delimiter.  It defaults to False, which\n"
+"        means that whitespace immediately following a delimiter is part\n"
+"        of the following field.\n"
+"    * lineterminator -  specifies the character sequence which should \n"
+"        terminate rows.\n"
+"    * quoting - controls when quotes should be generated by the writer.\n"
+"        It can take on any of the following module constants:\n"
+"\n"
+"        csv.QUOTE_MINIMAL means only when required, for example, when a\n"
+"            field contains either the quotechar or the delimiter\n"
+"        csv.QUOTE_ALL means that quotes are always placed around fields.\n"
+"        csv.QUOTE_NONNUMERIC means that quotes are always placed around\n"
+"            fields which do not parse as integers or floating point\n"
+"            numbers.\n"
+"        csv.QUOTE_NONE means that quotes are never placed around fields.\n"
+"    * escapechar - specifies a one-character string used to escape \n"
+"        the delimiter when quoting is set to QUOTE_NONE.\n"
+"    * doublequote - controls the handling of quotes inside fields.  When\n"
+"        True, two consecutive quotes are interpreted as one during read,\n"
+"        and when writing, each quote character embedded in the data is\n"
+"        written as two quotes\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>csv_reader_doc</name></expr></argument>,
+<argument><expr>"    csv_reader = reader(iterable [, dialect='excel']\n"
+"                        [optional keyword args])\n"
+"    for row in csv_reader:\n"
+"        process(row)\n"
+"\n"
+"The \"iterable\" argument can be any object that returns a line\n"
+"of input for each iteration, such as a file object or a list.  The\n"
+"optional \"dialect\" parameter is discussed below.  The function\n"
+"also accepts optional keyword arguments which override settings\n"
+"provided by the dialect.\n"
+"\n"
+"The returned object is an iterator.  Each iteration returns a row\n"
+"of the CSV file (which can span multiple input lines):\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>csv_writer_doc</name></expr></argument>,
+<argument><expr>"    csv_writer = csv.writer(fileobj [, dialect='excel']\n"
+"                            [optional keyword args])\n"
+"    for row in sequence:\n"
+"        csv_writer.writerow(row)\n"
+"\n"
+"    [or]\n"
+"\n"
+"    csv_writer = csv.writer(fileobj [, dialect='excel']\n"
+"                            [optional keyword args])\n"
+"    csv_writer.writerows(rows)\n"
+"\n"
+"The \"fileobj\" argument can be any object that supports the file API.\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>csv_list_dialects_doc</name></expr></argument>,
+<argument><expr>"Return a list of all know dialect names.\n"
+"    names = csv.list_dialects()"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>csv_get_dialect_doc</name></expr></argument>,
+<argument><expr>"Return the dialect instance associated with name.\n"
+"    dialect = csv.get_dialect(name)"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>csv_register_dialect_doc</name></expr></argument>,
+<argument><expr>"Create a mapping from a string name to a dialect class.\n"
+"    dialect = csv.register_dialect(name, dialect)"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>csv_unregister_dialect_doc</name></expr></argument>,
+<argument><expr>"Delete the name/dialect mapping associated with a string name.\n"
+"    csv.unregister_dialect(name)"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>csv_field_size_limit_doc</name></expr></argument>,
+<argument><expr>"Sets an upper limit on parsed fields.\n"
+"    csv.field_size_limit([limit])\n"
+"\n"
+"Returns old limit. If limit is not given, no new limit is set and\n"
+"the old limit is returned"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<decl_stmt><decl><type><specifier>static</specifier> struct <name>PyMethodDef</name></type> <name><name>csv_methods</name><index>[]</index></name> <init>= <expr><block>{
+	<expr><block>{ <expr>"reader"</expr>, <expr>(<name>PyCFunction</name>)<name>csv_reader</name></expr>, 
+		<expr><name>METH_VARARGS</name> | <name>METH_KEYWORDS</name></expr>, <expr><name>csv_reader_doc</name></expr>}</block></expr>,
+	<expr><block>{ <expr>"writer"</expr>, <expr>(<name>PyCFunction</name>)<name>csv_writer</name></expr>, 
+		<expr><name>METH_VARARGS</name> | <name>METH_KEYWORDS</name></expr>, <expr><name>csv_writer_doc</name></expr>}</block></expr>,
+	<expr><block>{ <expr>"list_dialects"</expr>, <expr>(<name>PyCFunction</name>)<name>csv_list_dialects</name></expr>, 
+		<expr><name>METH_NOARGS</name></expr>, <expr><name>csv_list_dialects_doc</name></expr>}</block></expr>,
+	<expr><block>{ <expr>"register_dialect"</expr>, <expr>(<name>PyCFunction</name>)<name>csv_register_dialect</name></expr>, 
+		<expr><name>METH_VARARGS</name> | <name>METH_KEYWORDS</name></expr>, <expr><name>csv_register_dialect_doc</name></expr>}</block></expr>,
+	<expr><block>{ <expr>"unregister_dialect"</expr>, <expr>(<name>PyCFunction</name>)<name>csv_unregister_dialect</name></expr>, 
+		<expr><name>METH_O</name></expr>, <expr><name>csv_unregister_dialect_doc</name></expr>}</block></expr>,
+	<expr><block>{ <expr>"get_dialect"</expr>, <expr>(<name>PyCFunction</name>)<name>csv_get_dialect</name></expr>, 
+		<expr><name>METH_O</name></expr>, <expr><name>csv_get_dialect_doc</name></expr>}</block></expr>,
+	<expr><block>{ <expr>"field_size_limit"</expr>, <expr>(<name>PyCFunction</name>)<name>csv_field_size_limit</name></expr>, 
+		<expr><name>METH_VARARGS</name></expr>, <expr><name>csv_field_size_limit_doc</name></expr>}</block></expr>,
+	<expr><block>{ <expr><name>NULL</name></expr>, <expr><name>NULL</name></expr> }</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+
+<function><type><name>PyMODINIT_FUNC</name></type>
+<name>init_csv</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>module</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>StyleDesc</name> *</type><name>style</name></decl>;</decl_stmt>
+
+	<if>if <condition>(<expr><call><name>PyType_Ready</name><argument_list>(<argument><expr>&amp;<name>Dialect_Type</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+		<return>return;</return></then></if>
+
+	<if>if <condition>(<expr><call><name>PyType_Ready</name><argument_list>(<argument><expr>&amp;<name>Reader_Type</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+		<return>return;</return></then></if>
+
+	<if>if <condition>(<expr><call><name>PyType_Ready</name><argument_list>(<argument><expr>&amp;<name>Writer_Type</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+		<return>return;</return></then></if>
+
+	<comment type="block">/* Create the module and add the functions */</comment>
+	<expr_stmt><expr><name>module</name> = <call><name>Py_InitModule3</name><argument_list>(<argument><expr>"_csv"</expr></argument>, <argument><expr><name>csv_methods</name></expr></argument>, <argument><expr><name>csv_module_doc</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>module</name> == <name>NULL</name></expr>)</condition><then>
+		<return>return;</return></then></if>
+
+	<comment type="block">/* Add version to the module. */</comment>
+	<if>if <condition>(<expr><call><name>PyModule_AddStringConstant</name><argument_list>(<argument><expr><name>module</name></expr></argument>, <argument><expr>"__version__"</expr></argument>,
+				       <argument><expr><name>MODULE_VERSION</name></expr></argument>)</argument_list></call> == -1</expr>)</condition><then>
+		<return>return;</return></then></if>
+
+        <comment type="block">/* Add _dialects dictionary */</comment>
+        <expr_stmt><expr><name>dialects</name> = <call><name>PyDict_New</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>dialects</name> == <name>NULL</name></expr>)</condition><then>
+                <return>return;</return></then></if>
+        <if>if <condition>(<expr><call><name>PyModule_AddObject</name><argument_list>(<argument><expr><name>module</name></expr></argument>, <argument><expr>"_dialects"</expr></argument>, <argument><expr><name>dialects</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+                <return>return;</return></then></if>
+
+	<comment type="block">/* Add quote styles into dictionary */</comment>
+	<for>for (<init><expr><name>style</name> = <name>quote_styles</name></expr>;</init> <condition><expr><name><name>style</name>-&gt;<name>name</name></name></expr>;</condition> <incr><expr><name>style</name>++</expr></incr>) <block>{
+		<if>if <condition>(<expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>module</name></expr></argument>, <argument><expr><name><name>style</name>-&gt;<name>name</name></name></expr></argument>,
+					    <argument><expr><name><name>style</name>-&gt;<name>style</name></name></expr></argument>)</argument_list></call> == -1</expr>)</condition><then>
+			<return>return;</return></then></if>
+	}</block></for>
+
+        <comment type="block">/* Add the Dialect type */</comment>
+	<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr>&amp;<name>Dialect_Type</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><call><name>PyModule_AddObject</name><argument_list>(<argument><expr><name>module</name></expr></argument>, <argument><expr>"Dialect"</expr></argument>, <argument><expr>(<name>PyObject</name> *)&amp;<name>Dialect_Type</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+                <return>return;</return></then></if>
+
+	<comment type="block">/* Add the CSV exception object to the module. */</comment>
+	<expr_stmt><expr><name>error_obj</name> = <call><name>PyErr_NewException</name><argument_list>(<argument><expr>"_csv.Error"</expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>error_obj</name> == <name>NULL</name></expr>)</condition><then>
+		<return>return;</return></then></if>
+	<expr_stmt><expr><call><name>PyModule_AddObject</name><argument_list>(<argument><expr><name>module</name></expr></argument>, <argument><expr>"Error"</expr></argument>, <argument><expr><name>error_obj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+</unit>

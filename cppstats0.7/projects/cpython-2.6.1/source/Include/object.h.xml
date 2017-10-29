@@ -1,0 +1,975 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/cpython-2.6.1/source/Include/object.h"><cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>Py_OBJECT_H</name></cpp:ifndef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_OBJECT_H</name></cpp:macro></cpp:define>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>__cplusplus</name></cpp:ifdef>
+<extern>extern "C" <block>{
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+
+<comment type="block">/* Object and type object interface */</comment>
+
+<comment type="block">/*
+Objects are structures allocated on the heap.  Special rules apply to
+the use of objects to ensure they are properly garbage-collected.
+Objects are never allocated statically or on the stack; they must be
+accessed through special macros and functions only.  (Type objects are
+exceptions to the first rule; the standard types are represented by
+statically initialized type objects, although work on type/class unification
+for Python 2.2 made it possible to have heap-allocated type objects too).
+
+An object has a 'reference count' that is increased or decreased when a
+pointer to the object is copied or deleted; when the reference count
+reaches zero there are no references to the object left and it can be
+removed from the heap.
+
+An object has a 'type' that determines what it represents and what kind
+of data it contains.  An object's type is fixed when it is created.
+Types themselves are represented as objects; an object contains a
+pointer to the corresponding type object.  The type itself has a type
+pointer pointing to the object representing the type 'type', which
+contains a pointer to itself!).
+
+Objects do not float around in memory; once allocated an object keeps
+the same size and address.  Objects that must hold variable-size data
+can contain pointers to variable-size parts of the object.  Not all
+objects of the same type have the same size; but the size cannot change
+after allocation.  (These restrictions are made so a reference to an
+object can be simply a pointer -- moving an object would require
+updating all the pointers, and changing an object's size would require
+moving it if there was another object right next to it.)
+
+Objects are always accessed through pointers of the type 'PyObject *'.
+The type 'PyObject' is a structure that only contains the reference count
+and the type pointer.  The actual memory allocated for an object
+contains other data that can only be accessed after casting the pointer
+to a pointer to a longer structure type.  This longer type must start
+with the reference count and type fields; the macro PyObject_HEAD should be
+used for this (to accommodate for future changes).  The implementation
+of a particular object type can cast the object pointer to the proper
+type and back.
+
+A standard interface exists for objects that contain an array of items
+whose size is determined when the object is allocated.
+*/</comment>
+
+<comment type="block">/* Py_DEBUG implies Py_TRACE_REFS. */</comment>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>Py_DEBUG</name></expr></argument>)</argument_list></call> &amp;&amp; !<call><name>defined</name><argument_list>(<argument><expr><name>Py_TRACE_REFS</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TRACE_REFS</name></cpp:macro></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<comment type="block">/* Py_TRACE_REFS implies Py_REF_DEBUG. */</comment>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>Py_TRACE_REFS</name></expr></argument>)</argument_list></call> &amp;&amp; !<call><name>defined</name><argument_list>(<argument><expr><name>Py_REF_DEBUG</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_REF_DEBUG</name></cpp:macro></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>Py_TRACE_REFS</name></cpp:ifdef>
+<comment type="block">/* Define pointers to support a doubly-linked list of all live heap objects. */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>_PyObject_HEAD_EXTRA</name></cpp:macro>		\
+	<cpp:value>struct _object *_ob_next;	\
+	struct _object *_ob_prev;</cpp:value></cpp:define>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>_PyObject_EXTRA_INIT</name></cpp:macro> <cpp:value>0, 0,</cpp:value></cpp:define>
+
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>_PyObject_HEAD_EXTRA</name></cpp:macro></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>_PyObject_EXTRA_INIT</name></cpp:macro></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<comment type="block">/* PyObject_HEAD defines the initial segment of every PyObject. */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyObject_HEAD</name></cpp:macro>			\
+	<cpp:value>_PyObject_HEAD_EXTRA		\
+	Py_ssize_t ob_refcnt;		\
+	struct _typeobject *ob_type;</cpp:value></cpp:define>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyObject_HEAD_INIT</name><parameter_list>(<param><type><name>type</name></type></param>)</parameter_list></cpp:macro>	\
+	<cpp:value>_PyObject_EXTRA_INIT		\
+	1, type,</cpp:value></cpp:define>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyVarObject_HEAD_INIT</name><parameter_list>(<param><type><name>type</name></type></param>, <param><type><name>size</name></type></param>)</parameter_list></cpp:macro>	\
+	<cpp:value>PyObject_HEAD_INIT(type) size,</cpp:value></cpp:define>
+
+<comment type="block">/* PyObject_VAR_HEAD defines the initial segment of all variable-size
+ * container objects.  These end with a declaration of an array with 1
+ * element, but enough space is malloc'ed so that the array actually
+ * has room for ob_size elements.  Note that ob_size is an element count,
+ * not necessarily a byte count.
+ */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyObject_VAR_HEAD</name></cpp:macro>		\
+	<cpp:value>PyObject_HEAD			\
+	Py_ssize_t ob_size;</cpp:value></cpp:define> <comment type="block">/* Number of items in variable part */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_INVALID_SIZE</name></cpp:macro> <cpp:value>(Py_ssize_t)-1</cpp:value></cpp:define>
+
+<comment type="block">/* Nothing is actually declared to be a PyObject, but every pointer to
+ * a Python object can be cast to a PyObject*.  This is inheritance built
+ * by hand.  Similarly every pointer to a variable-size Python object can,
+ * in addition, be cast to PyVarObject*.
+ */</comment>
+<typedef>typedef <type><struct>struct <name>_object</name> <block>{
+	<expr_stmt><expr><name>PyObject_HEAD</name></expr></expr_stmt>
+}</block></struct></type> <name>PyObject</name>;</typedef>
+
+<typedef>typedef <type><struct>struct <block>{
+	<expr_stmt><expr><name>PyObject_VAR_HEAD</name></expr></expr_stmt>
+}</block></struct></type> <name>PyVarObject</name>;</typedef>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_REFCNT</name><parameter_list>(<param><type><name>ob</name></type></param>)</parameter_list></cpp:macro>		<cpp:value>(((PyObject*)(ob))-&gt;ob_refcnt)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TYPE</name><parameter_list>(<param><type><name>ob</name></type></param>)</parameter_list></cpp:macro>		<cpp:value>(((PyObject*)(ob))-&gt;ob_type)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_SIZE</name><parameter_list>(<param><type><name>ob</name></type></param>)</parameter_list></cpp:macro>		<cpp:value>(((PyVarObject*)(ob))-&gt;ob_size)</cpp:value></cpp:define>
+
+<comment type="block">/*
+Type objects contain a string containing the type name (to help somewhat
+in debugging), the allocation parameters (see PyObject_New() and
+PyObject_NewVar()),
+and methods for accessing objects of the type.  Methods are optional, a
+nil pointer meaning that particular kind of access is not available for
+this type.  The Py_DECREF() macro uses the tp_dealloc method without
+checking for a nil pointer; it should always be implemented except if
+the implementation can guarantee that the reference count will never
+reach zero (e.g., for statically allocated type objects).
+
+NB: the methods for certain type groups are now contained in separate
+method blocks.
+*/</comment>
+
+<typedef>typedef <function_decl><type><name>PyObject</name> *</type> (*<name>unaryfunc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>PyObject</name> *</type> (*<name>binaryfunc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>PyObject</name> *</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>PyObject</name> *</type> (*<name>ternaryfunc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>PyObject</name> *</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>int</name></type> (*<name>inquiry</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>Py_ssize_t</name></type> (*<name>lenfunc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>int</name></type> (*<name>coercion</name>)<parameter_list>(<param><decl><type><name>PyObject</name> **</type></decl></param>, <param><decl><type><name>PyObject</name> **</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>PyObject</name> *</type>(*<name>intargfunc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>int</name></type></decl></param>)</parameter_list> Py_DEPRECATED<parameter_list>(</parameter_list>2.5</function_decl>);</typedef>
+<typedef>typedef <function_decl><type><name>PyObject</name> *</type>(*<name>intintargfunc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>int</name></type></decl></param>, <param><decl><type><name>int</name></type></decl></param>)</parameter_list> Py_DEPRECATED<parameter_list>(</parameter_list>2.5</function_decl>);</typedef>
+<typedef>typedef <function_decl><type><name>PyObject</name> *</type>(*<name>ssizeargfunc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>Py_ssize_t</name></type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>PyObject</name> *</type>(*<name>ssizessizeargfunc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>Py_ssize_t</name></type></decl></param>, <param><decl><type><name>Py_ssize_t</name></type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>int</name></type>(*<name>intobjargproc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>int</name></type></decl></param>, <param><decl><type><name>PyObject</name> *</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>int</name></type>(*<name>intintobjargproc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>int</name></type></decl></param>, <param><decl><type><name>int</name></type></decl></param>, <param><decl><type><name>PyObject</name> *</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>int</name></type>(*<name>ssizeobjargproc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>Py_ssize_t</name></type></decl></param>, <param><decl><type><name>PyObject</name> *</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>int</name></type>(*<name>ssizessizeobjargproc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>Py_ssize_t</name></type></decl></param>, <param><decl><type><name>Py_ssize_t</name></type></decl></param>, <param><decl><type><name>PyObject</name> *</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>int</name></type>(*<name>objobjargproc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>PyObject</name> *</type></decl></param>)</parameter_list>;</function_decl></typedef>
+
+
+
+<comment type="block">/* int-based buffer interface */</comment>
+<typedef>typedef <function_decl><type><name>int</name></type> (*<name>getreadbufferproc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>int</name></type></decl></param>, <param><decl><type><name>void</name> **</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>int</name></type> (*<name>getwritebufferproc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>int</name></type></decl></param>, <param><decl><type><name>void</name> **</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>int</name></type> (*<name>getsegcountproc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>int</name> *</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>int</name></type> (*<name>getcharbufferproc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>int</name></type></decl></param>, <param><decl><type><name>char</name> **</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<comment type="block">/* ssize_t-based buffer interface */</comment>
+<typedef>typedef <function_decl><type><name>Py_ssize_t</name></type> (*<name>readbufferproc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>Py_ssize_t</name></type></decl></param>, <param><decl><type><name>void</name> **</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>Py_ssize_t</name></type> (*<name>writebufferproc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>Py_ssize_t</name></type></decl></param>, <param><decl><type><name>void</name> **</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>Py_ssize_t</name></type> (*<name>segcountproc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>Py_ssize_t</name> *</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>Py_ssize_t</name></type> (*<name>charbufferproc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>Py_ssize_t</name></type></decl></param>, <param><decl><type><name>char</name> **</type></decl></param>)</parameter_list>;</function_decl></typedef>
+
+<comment type="block">/* Py3k buffer interface */</comment>
+
+<typedef>typedef <type><struct>struct <name>bufferinfo</name> <block>{
+	<decl_stmt><decl><type><name>void</name> *</type><name>buf</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>obj</name></decl>;</decl_stmt>        <comment type="block">/* borrowed reference */</comment>
+        <decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>len</name></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>itemsize</name></decl>;</decl_stmt>  <comment type="block">/* This is Py_ssize_t so it can be
+                                 pointed to by strides in simple case.*/</comment>
+        <decl_stmt><decl><type><name>int</name></type> <name>readonly</name></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>int</name></type> <name>ndim</name></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>char</name> *</type><name>format</name></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>Py_ssize_t</name> *</type><name>shape</name></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>Py_ssize_t</name> *</type><name>strides</name></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>Py_ssize_t</name> *</type><name>suboffsets</name></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>void</name> *</type><name>internal</name></decl>;</decl_stmt>
+}</block></struct></type> <name>Py_buffer</name>;</typedef>
+
+<typedef>typedef <function_decl><type><name>int</name></type> (*<name>getbufferproc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>Py_buffer</name> *</type></decl></param>, <param><decl><type><name>int</name></type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>void</name></type> (*<name>releasebufferproc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>Py_buffer</name> *</type></decl></param>)</parameter_list>;</function_decl></typedef>
+
+        <comment type="block">/* Flags for getting buffers */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyBUF_SIMPLE</name></cpp:macro> <cpp:value>0</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyBUF_WRITABLE</name></cpp:macro> <cpp:value>0x0001</cpp:value></cpp:define>
+<comment type="block">/*  we used to include an E, backwards compatible alias  */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyBUF_WRITEABLE</name></cpp:macro> <cpp:value>PyBUF_WRITABLE</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyBUF_FORMAT</name></cpp:macro> <cpp:value>0x0004</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyBUF_ND</name></cpp:macro> <cpp:value>0x0008</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyBUF_STRIDES</name></cpp:macro> <cpp:value>(0x0010 | PyBUF_ND)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyBUF_C_CONTIGUOUS</name></cpp:macro> <cpp:value>(0x0020 | PyBUF_STRIDES)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyBUF_F_CONTIGUOUS</name></cpp:macro> <cpp:value>(0x0040 | PyBUF_STRIDES)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyBUF_ANY_CONTIGUOUS</name></cpp:macro> <cpp:value>(0x0080 | PyBUF_STRIDES)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyBUF_INDIRECT</name></cpp:macro> <cpp:value>(0x0100 | PyBUF_STRIDES)</cpp:value></cpp:define>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyBUF_CONTIG</name></cpp:macro> <cpp:value>(PyBUF_ND | PyBUF_WRITABLE)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyBUF_CONTIG_RO</name></cpp:macro> <cpp:value>(PyBUF_ND)</cpp:value></cpp:define>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyBUF_STRIDED</name></cpp:macro> <cpp:value>(PyBUF_STRIDES | PyBUF_WRITABLE)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyBUF_STRIDED_RO</name></cpp:macro> <cpp:value>(PyBUF_STRIDES)</cpp:value></cpp:define>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyBUF_RECORDS</name></cpp:macro> <cpp:value>(PyBUF_STRIDES | PyBUF_WRITABLE | PyBUF_FORMAT)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyBUF_RECORDS_RO</name></cpp:macro> <cpp:value>(PyBUF_STRIDES | PyBUF_FORMAT)</cpp:value></cpp:define>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyBUF_FULL</name></cpp:macro> <cpp:value>(PyBUF_INDIRECT | PyBUF_WRITABLE | PyBUF_FORMAT)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyBUF_FULL_RO</name></cpp:macro> <cpp:value>(PyBUF_INDIRECT | PyBUF_FORMAT)</cpp:value></cpp:define>
+
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyBUF_READ</name></cpp:macro>  <cpp:value>0x100</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyBUF_WRITE</name></cpp:macro> <cpp:value>0x200</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyBUF_SHADOW</name></cpp:macro> <cpp:value>0x400</cpp:value></cpp:define>
+<comment type="block">/* end Py3k buffer interface */</comment>
+
+<typedef>typedef <function_decl><type><name>int</name></type> (*<name>objobjproc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>PyObject</name> *</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>int</name></type> (*<name>visitproc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>void</name> *</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>int</name></type> (*<name>traverseproc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>visitproc</name></type></decl></param>, <param><decl><type><name>void</name> *</type></decl></param>)</parameter_list>;</function_decl></typedef>
+
+<typedef>typedef <type><struct>struct <block>{
+	<comment type="block">/* For numbers without flag bit Py_TPFLAGS_CHECKTYPES set, all
+	   arguments are guaranteed to be of the object's type (modulo
+	   coercion hacks -- i.e. if the type's coercion function
+	   returns other types, then these are allowed as well).  Numbers that
+	   have the Py_TPFLAGS_CHECKTYPES flag bit set should check *both*
+	   arguments for proper type and implement the necessary conversions
+	   in the slot functions themselves. */</comment>
+
+	<decl_stmt><decl><type><name>binaryfunc</name></type> <name>nb_add</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>binaryfunc</name></type> <name>nb_subtract</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>binaryfunc</name></type> <name>nb_multiply</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>binaryfunc</name></type> <name>nb_divide</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>binaryfunc</name></type> <name>nb_remainder</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>binaryfunc</name></type> <name>nb_divmod</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>ternaryfunc</name></type> <name>nb_power</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>unaryfunc</name></type> <name>nb_negative</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>unaryfunc</name></type> <name>nb_positive</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>unaryfunc</name></type> <name>nb_absolute</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>inquiry</name></type> <name>nb_nonzero</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>unaryfunc</name></type> <name>nb_invert</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>binaryfunc</name></type> <name>nb_lshift</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>binaryfunc</name></type> <name>nb_rshift</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>binaryfunc</name></type> <name>nb_and</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>binaryfunc</name></type> <name>nb_xor</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>binaryfunc</name></type> <name>nb_or</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>coercion</name></type> <name>nb_coerce</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>unaryfunc</name></type> <name>nb_int</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>unaryfunc</name></type> <name>nb_long</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>unaryfunc</name></type> <name>nb_float</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>unaryfunc</name></type> <name>nb_oct</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>unaryfunc</name></type> <name>nb_hex</name></decl>;</decl_stmt>
+	<comment type="block">/* Added in release 2.0 */</comment>
+	<decl_stmt><decl><type><name>binaryfunc</name></type> <name>nb_inplace_add</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>binaryfunc</name></type> <name>nb_inplace_subtract</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>binaryfunc</name></type> <name>nb_inplace_multiply</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>binaryfunc</name></type> <name>nb_inplace_divide</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>binaryfunc</name></type> <name>nb_inplace_remainder</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>ternaryfunc</name></type> <name>nb_inplace_power</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>binaryfunc</name></type> <name>nb_inplace_lshift</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>binaryfunc</name></type> <name>nb_inplace_rshift</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>binaryfunc</name></type> <name>nb_inplace_and</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>binaryfunc</name></type> <name>nb_inplace_xor</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>binaryfunc</name></type> <name>nb_inplace_or</name></decl>;</decl_stmt>
+
+	<comment type="block">/* Added in release 2.2 */</comment>
+	<comment type="block">/* The following require the Py_TPFLAGS_HAVE_CLASS flag */</comment>
+	<decl_stmt><decl><type><name>binaryfunc</name></type> <name>nb_floor_divide</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>binaryfunc</name></type> <name>nb_true_divide</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>binaryfunc</name></type> <name>nb_inplace_floor_divide</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>binaryfunc</name></type> <name>nb_inplace_true_divide</name></decl>;</decl_stmt>
+
+	<comment type="block">/* Added in release 2.5 */</comment>
+	<decl_stmt><decl><type><name>unaryfunc</name></type> <name>nb_index</name></decl>;</decl_stmt>
+}</block></struct></type> <name>PyNumberMethods</name>;</typedef>
+
+<typedef>typedef <type><struct>struct <block>{
+	<decl_stmt><decl><type><name>lenfunc</name></type> <name>sq_length</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>binaryfunc</name></type> <name>sq_concat</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>ssizeargfunc</name></type> <name>sq_repeat</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>ssizeargfunc</name></type> <name>sq_item</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>ssizessizeargfunc</name></type> <name>sq_slice</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>ssizeobjargproc</name></type> <name>sq_ass_item</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>ssizessizeobjargproc</name></type> <name>sq_ass_slice</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>objobjproc</name></type> <name>sq_contains</name></decl>;</decl_stmt>
+	<comment type="block">/* Added in release 2.0 */</comment>
+	<decl_stmt><decl><type><name>binaryfunc</name></type> <name>sq_inplace_concat</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>ssizeargfunc</name></type> <name>sq_inplace_repeat</name></decl>;</decl_stmt>
+}</block></struct></type> <name>PySequenceMethods</name>;</typedef>
+
+<typedef>typedef <type><struct>struct <block>{
+	<decl_stmt><decl><type><name>lenfunc</name></type> <name>mp_length</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>binaryfunc</name></type> <name>mp_subscript</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>objobjargproc</name></type> <name>mp_ass_subscript</name></decl>;</decl_stmt>
+}</block></struct></type> <name>PyMappingMethods</name>;</typedef>
+
+<typedef>typedef <type><struct>struct <block>{
+	<decl_stmt><decl><type><name>readbufferproc</name></type> <name>bf_getreadbuffer</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>writebufferproc</name></type> <name>bf_getwritebuffer</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>segcountproc</name></type> <name>bf_getsegcount</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>charbufferproc</name></type> <name>bf_getcharbuffer</name></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>getbufferproc</name></type> <name>bf_getbuffer</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>releasebufferproc</name></type> <name>bf_releasebuffer</name></decl>;</decl_stmt>
+}</block></struct></type> <name>PyBufferProcs</name>;</typedef>
+
+
+<typedef>typedef <function_decl><type><name>void</name></type> (*<name>freefunc</name>)<parameter_list>(<param><decl><type><name>void</name> *</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>void</name></type> (*<name>destructor</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>int</name></type> (*<name>printfunc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>FILE</name> *</type></decl></param>, <param><decl><type><name>int</name></type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>PyObject</name> *</type>(*<name>getattrfunc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>char</name> *</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>PyObject</name> *</type>(*<name>getattrofunc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>PyObject</name> *</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>int</name></type> (*<name>setattrfunc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>char</name> *</type></decl></param>, <param><decl><type><name>PyObject</name> *</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>int</name></type> (*<name>setattrofunc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>PyObject</name> *</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>int</name></type> (*<name>cmpfunc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>PyObject</name> *</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>PyObject</name> *</type>(*<name>reprfunc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>long</name></type> (*<name>hashfunc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>PyObject</name> *</type>(*<name>richcmpfunc</name>) <parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>int</name></type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>PyObject</name> *</type>(*<name>getiterfunc</name>) <parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>PyObject</name> *</type>(*<name>iternextfunc</name>) <parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>PyObject</name> *</type>(*<name>descrgetfunc</name>) <parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>PyObject</name> *</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>int</name></type> (*<name>descrsetfunc</name>) <parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>PyObject</name> *</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>int</name></type> (*<name>initproc</name>)<parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>PyObject</name> *</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>PyObject</name> *</type>(*<name>newfunc</name>)<parameter_list>(<param><decl><type>struct</type> <name>_typeobject</name> *</decl></param>, <param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>PyObject</name> *</type></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>PyObject</name> *</type>(*<name>allocfunc</name>)<parameter_list>(<param><decl><type>struct</type> <name>_typeobject</name> *</decl></param>, <param><decl><type><name>Py_ssize_t</name></type></decl></param>)</parameter_list>;</function_decl></typedef>
+
+<typedef>typedef <type><struct>struct <name>_typeobject</name> <block>{
+	<decl_stmt><decl><type><name>PyObject_VAR_HEAD</name>
+	<specifier>const</specifier> <name>char</name> *</type><name>tp_name</name></decl>;</decl_stmt> <comment type="block">/* For printing, in format "&lt;module&gt;.&lt;name&gt;" */</comment>
+	<decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>tp_basicsize</name></decl>, <name>tp_itemsize</name>;</decl_stmt> <comment type="block">/* For allocation */</comment>
+
+	<comment type="block">/* Methods to implement standard operations */</comment>
+
+	<decl_stmt><decl><type><name>destructor</name></type> <name>tp_dealloc</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>printfunc</name></type> <name>tp_print</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>getattrfunc</name></type> <name>tp_getattr</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>setattrfunc</name></type> <name>tp_setattr</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>cmpfunc</name></type> <name>tp_compare</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>reprfunc</name></type> <name>tp_repr</name></decl>;</decl_stmt>
+
+	<comment type="block">/* Method suites for standard classes */</comment>
+
+	<decl_stmt><decl><type><name>PyNumberMethods</name> *</type><name>tp_as_number</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PySequenceMethods</name> *</type><name>tp_as_sequence</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyMappingMethods</name> *</type><name>tp_as_mapping</name></decl>;</decl_stmt>
+
+	<comment type="block">/* More standard operations (here for binary compatibility) */</comment>
+
+	<decl_stmt><decl><type><name>hashfunc</name></type> <name>tp_hash</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>ternaryfunc</name></type> <name>tp_call</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>reprfunc</name></type> <name>tp_str</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>getattrofunc</name></type> <name>tp_getattro</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>setattrofunc</name></type> <name>tp_setattro</name></decl>;</decl_stmt>
+
+	<comment type="block">/* Functions to access object as input/output buffer */</comment>
+	<decl_stmt><decl><type><name>PyBufferProcs</name> *</type><name>tp_as_buffer</name></decl>;</decl_stmt>
+
+	<comment type="block">/* Flags to define presence of optional/expanded features */</comment>
+	<decl_stmt><decl><type><name>long</name></type> <name>tp_flags</name></decl>;</decl_stmt>
+
+	<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>tp_doc</name></decl>;</decl_stmt> <comment type="block">/* Documentation string */</comment>
+
+	<comment type="block">/* Assigned meaning in release 2.0 */</comment>
+	<comment type="block">/* call function for all accessible objects */</comment>
+	<decl_stmt><decl><type><name>traverseproc</name></type> <name>tp_traverse</name></decl>;</decl_stmt>
+
+	<comment type="block">/* delete references to contained objects */</comment>
+	<decl_stmt><decl><type><name>inquiry</name></type> <name>tp_clear</name></decl>;</decl_stmt>
+
+	<comment type="block">/* Assigned meaning in release 2.1 */</comment>
+	<comment type="block">/* rich comparisons */</comment>
+	<decl_stmt><decl><type><name>richcmpfunc</name></type> <name>tp_richcompare</name></decl>;</decl_stmt>
+
+	<comment type="block">/* weak reference enabler */</comment>
+	<decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>tp_weaklistoffset</name></decl>;</decl_stmt>
+
+	<comment type="block">/* Added in release 2.2 */</comment>
+	<comment type="block">/* Iterators */</comment>
+	<decl_stmt><decl><type><name>getiterfunc</name></type> <name>tp_iter</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>iternextfunc</name></type> <name>tp_iternext</name></decl>;</decl_stmt>
+
+	<comment type="block">/* Attribute descriptor and subclassing stuff */</comment>
+	<decl_stmt><decl><type>struct <name>PyMethodDef</name> *</type><name>tp_methods</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type>struct <name>PyMemberDef</name> *</type><name>tp_members</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type>struct <name>PyGetSetDef</name> *</type><name>tp_getset</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type>struct <name>_typeobject</name> *</type><name>tp_base</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>tp_dict</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>descrgetfunc</name></type> <name>tp_descr_get</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>descrsetfunc</name></type> <name>tp_descr_set</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>tp_dictoffset</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>initproc</name></type> <name>tp_init</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>allocfunc</name></type> <name>tp_alloc</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>newfunc</name></type> <name>tp_new</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>freefunc</name></type> <name>tp_free</name></decl>;</decl_stmt> <comment type="block">/* Low-level free-memory routine */</comment>
+	<decl_stmt><decl><type><name>inquiry</name></type> <name>tp_is_gc</name></decl>;</decl_stmt> <comment type="block">/* For PyObject_IS_GC */</comment>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>tp_bases</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>tp_mro</name></decl>;</decl_stmt> <comment type="block">/* method resolution order */</comment>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>tp_cache</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>tp_subclasses</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>tp_weaklist</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>destructor</name></type> <name>tp_del</name></decl>;</decl_stmt>
+
+	<comment type="block">/* Type attribute cache version tag. Added in version 2.6 */</comment>
+	<decl_stmt><decl><type><name>unsigned</name> <name>int</name></type> <name>tp_version_tag</name></decl>;</decl_stmt>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>COUNT_ALLOCS</name></cpp:ifdef>
+	<comment type="block">/* these must be last and never explicitly initialized */</comment>
+	<decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>tp_allocs</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>tp_frees</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>tp_maxalloc</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type>struct <name>_typeobject</name> *</type><name>tp_prev</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type>struct <name>_typeobject</name> *</type><name>tp_next</name></decl>;</decl_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+}</block></struct></type> <name>PyTypeObject</name>;</typedef>
+
+
+<comment type="block">/* The *real* layout of a type object when allocated on the heap */</comment>
+<typedef>typedef <type><struct>struct <name>_heaptypeobject</name> <block>{
+	<comment type="block">/* Note: there's a dependency on the order of these members
+	   in slotptr() in typeobject.c . */</comment>
+	<decl_stmt><decl><type><name>PyTypeObject</name></type> <name>ht_type</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyNumberMethods</name></type> <name>as_number</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyMappingMethods</name></type> <name>as_mapping</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PySequenceMethods</name></type> <name>as_sequence</name></decl>;</decl_stmt> <comment type="block">/* as_sequence comes after as_mapping,
+					  so that the mapping wins when both
+					  the mapping and the sequence define
+					  a given operator (e.g. __getitem__).
+					  see add_operators() in typeobject.c . */</comment>
+	<decl_stmt><decl><type><name>PyBufferProcs</name></type> <name>as_buffer</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>ht_name</name></decl>, *<name>ht_slots</name>;</decl_stmt>
+	<comment type="block">/* here are optional user slots, followed by the members. */</comment>
+}</block></struct></type> <name>PyHeapTypeObject</name>;</typedef>
+
+<comment type="block">/* access macro to the members which are floating "behind" the object */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyHeapType_GET_MEMBERS</name><parameter_list>(<param><type><name>etype</name></type></param>)</parameter_list></cpp:macro> \
+    <cpp:value>((PyMemberDef *)(((char *)etype) + Py_TYPE(etype)-&gt;tp_basicsize))</cpp:value></cpp:define>
+
+
+<comment type="block">/* Generic type check */</comment>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>int</argument>)</argument_list></macro> <expr_stmt><expr><call><name>PyType_IsSubtype</name><argument_list>(<argument><expr><name>PyTypeObject</name> *</expr></argument>, <argument><expr><name>PyTypeObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyObject_TypeCheck</name><parameter_list>(<param><type><name>ob</name></type></param>, <param><type><name>tp</name></type></param>)</parameter_list></cpp:macro> \
+	<cpp:value>(Py_TYPE(ob) == (tp) || PyType_IsSubtype(Py_TYPE(ob), (tp)))</cpp:value></cpp:define>
+
+<macro><name>PyAPI_DATA</name><argument_list>(<argument>PyTypeObject</argument>)</argument_list></macro> <expr_stmt><expr><name>PyType_Type</name></expr>;</expr_stmt> <comment type="block">/* built-in 'type' */</comment>
+<macro><name>PyAPI_DATA</name><argument_list>(<argument>PyTypeObject</argument>)</argument_list></macro> <expr_stmt><expr><name>PyBaseObject_Type</name></expr>;</expr_stmt> <comment type="block">/* built-in 'object' */</comment>
+<macro><name>PyAPI_DATA</name><argument_list>(<argument>PyTypeObject</argument>)</argument_list></macro> <expr_stmt><expr><name>PySuper_Type</name></expr>;</expr_stmt> <comment type="block">/* built-in 'super' */</comment>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyType_Check</name><parameter_list>(<param><type><name>op</name></type></param>)</parameter_list></cpp:macro> \
+	<cpp:value>PyType_FastSubclass(Py_TYPE(op), Py_TPFLAGS_TYPE_SUBCLASS)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyType_CheckExact</name><parameter_list>(<param><type><name>op</name></type></param>)</parameter_list></cpp:macro> <cpp:value>(Py_TYPE(op) == &amp;PyType_Type)</cpp:value></cpp:define>
+
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>int</argument>)</argument_list></macro> <expr_stmt><expr><call><name>PyType_Ready</name><argument_list>(<argument><expr><name>PyTypeObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>PyObject *</argument>)</argument_list></macro> <expr_stmt><expr><call><name>PyType_GenericAlloc</name><argument_list>(<argument><expr><name>PyTypeObject</name> *</expr></argument>, <argument><expr><name>Py_ssize_t</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>PyObject *</argument>)</argument_list></macro> <expr_stmt><expr><call><name>PyType_GenericNew</name><argument_list>(<argument><expr><name>PyTypeObject</name> *</expr></argument>,
+					       <argument><expr><name>PyObject</name> *</expr></argument>, <argument><expr><name>PyObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>PyObject *</argument>)</argument_list></macro> <expr_stmt><expr><call><name>_PyType_Lookup</name><argument_list>(<argument><expr><name>PyTypeObject</name> *</expr></argument>, <argument><expr><name>PyObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>unsigned int</argument>)</argument_list></macro> <expr_stmt><expr><call><name>PyType_ClearCache</name><argument_list>(<argument><expr><name>void</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>void</argument>)</argument_list></macro> <expr_stmt><expr><call><name>PyType_Modified</name><argument_list>(<argument><expr><name>PyTypeObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<comment type="block">/* Generic operations on objects */</comment>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>int</argument>)</argument_list></macro> <expr_stmt><expr><call><name>PyObject_Print</name><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>, <argument><expr><name>FILE</name> *</expr></argument>, <argument><expr><name>int</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>void</argument>)</argument_list></macro> <expr_stmt><expr><call><name>_PyObject_Dump</name><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>PyObject *</argument>)</argument_list></macro> <expr_stmt><expr><call><name>PyObject_Repr</name><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>PyObject *</argument>)</argument_list></macro> <expr_stmt><expr><call><name>_PyObject_Str</name><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>PyObject *</argument>)</argument_list></macro> <expr_stmt><expr><call><name>PyObject_Str</name><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyObject_Bytes</name></cpp:macro> <cpp:value>PyObject_Str</cpp:value></cpp:define>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>Py_USING_UNICODE</name></cpp:ifdef>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>PyObject *</argument>)</argument_list></macro> <expr_stmt><expr><call><name>PyObject_Unicode</name><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>int</argument>)</argument_list></macro> <expr_stmt><expr><call><name>PyObject_Compare</name><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>, <argument><expr><name>PyObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>PyObject *</argument>)</argument_list></macro> <expr_stmt><expr><call><name>PyObject_RichCompare</name><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>, <argument><expr><name>PyObject</name> *</expr></argument>, <argument><expr><name>int</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>int</argument>)</argument_list></macro> <expr_stmt><expr><call><name>PyObject_RichCompareBool</name><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>, <argument><expr><name>PyObject</name> *</expr></argument>, <argument><expr><name>int</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>PyObject *</argument>)</argument_list></macro> <expr_stmt><expr><call><name>PyObject_GetAttrString</name><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>, <argument><expr>const <name>char</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>int</argument>)</argument_list></macro> <expr_stmt><expr><call><name>PyObject_SetAttrString</name><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>, <argument><expr>const <name>char</name> *</expr></argument>, <argument><expr><name>PyObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>int</argument>)</argument_list></macro> <expr_stmt><expr><call><name>PyObject_HasAttrString</name><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>, <argument><expr>const <name>char</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>PyObject *</argument>)</argument_list></macro> <expr_stmt><expr><call><name>PyObject_GetAttr</name><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>, <argument><expr><name>PyObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>int</argument>)</argument_list></macro> <expr_stmt><expr><call><name>PyObject_SetAttr</name><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>, <argument><expr><name>PyObject</name> *</expr></argument>, <argument><expr><name>PyObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>int</argument>)</argument_list></macro> <expr_stmt><expr><call><name>PyObject_HasAttr</name><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>, <argument><expr><name>PyObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>PyObject **</argument>)</argument_list></macro> <expr_stmt><expr><call><name>_PyObject_GetDictPtr</name><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>PyObject *</argument>)</argument_list></macro> <expr_stmt><expr><call><name>PyObject_SelfIter</name><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>PyObject *</argument>)</argument_list></macro> <expr_stmt><expr><call><name>PyObject_GenericGetAttr</name><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>, <argument><expr><name>PyObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>int</argument>)</argument_list></macro> <expr_stmt><expr><call><name>PyObject_GenericSetAttr</name><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>,
+					      <argument><expr><name>PyObject</name> *</expr></argument>, <argument><expr><name>PyObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>long</argument>)</argument_list></macro> <expr_stmt><expr><call><name>PyObject_Hash</name><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>long</argument>)</argument_list></macro> <expr_stmt><expr><call><name>PyObject_HashNotImplemented</name><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>int</argument>)</argument_list></macro> <expr_stmt><expr><call><name>PyObject_IsTrue</name><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>int</argument>)</argument_list></macro> <expr_stmt><expr><call><name>PyObject_Not</name><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>int</argument>)</argument_list></macro> <expr_stmt><expr><call><name>PyCallable_Check</name><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>int</argument>)</argument_list></macro> <expr_stmt><expr><call><name>PyNumber_Coerce</name><argument_list>(<argument><expr><name>PyObject</name> **</expr></argument>, <argument><expr><name>PyObject</name> **</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>int</argument>)</argument_list></macro> <expr_stmt><expr><call><name>PyNumber_CoerceEx</name><argument_list>(<argument><expr><name>PyObject</name> **</expr></argument>, <argument><expr><name>PyObject</name> **</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>void</argument>)</argument_list></macro> <expr_stmt><expr><call><name>PyObject_ClearWeakRefs</name><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<comment type="block">/* A slot function whose address we need to compare */</comment>
+<function_decl><type><specifier>extern</specifier> <name>int</name></type> <name>_PyObject_SlotCompare</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>PyObject</name> *</type></decl></param>)</parameter_list>;</function_decl>
+
+
+<comment type="block">/* PyObject_Dir(obj) acts like Python __builtin__.dir(obj), returning a
+   list of strings.  PyObject_Dir(NULL) is like __builtin__.dir(),
+   returning the names of the current locals.  In this case, if there are
+   no current locals, NULL is returned, and PyErr_Occurred() is false.
+*/</comment>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>PyObject *</argument>)</argument_list></macro> <expr_stmt><expr><call><name>PyObject_Dir</name><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+
+<comment type="block">/* Helpers for printing recursive container types */</comment>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>int</argument>)</argument_list></macro> <expr_stmt><expr><call><name>Py_ReprEnter</name><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>void</argument>)</argument_list></macro> <expr_stmt><expr><call><name>Py_ReprLeave</name><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<comment type="block">/* Helpers for hash functions */</comment>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>long</argument>)</argument_list></macro> <expr_stmt><expr><call><name>_Py_HashDouble</name><argument_list>(<argument><expr><name>double</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>long</argument>)</argument_list></macro> <expr_stmt><expr><call><name>_Py_HashPointer</name><argument_list>(<argument><expr><name>void</name>*</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<comment type="block">/* Helper for passing objects to printf and the like */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyObject_REPR</name><parameter_list>(<param><type><name>obj</name></type></param>)</parameter_list></cpp:macro> <cpp:value>PyString_AS_STRING(PyObject_Repr(obj))</cpp:value></cpp:define>
+
+<comment type="block">/* Flag bits for printing: */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_PRINT_RAW</name></cpp:macro>	<cpp:value>1</cpp:value></cpp:define>	<comment type="block">/* No string quotes etc. */</comment>
+
+<comment type="block">/*
+`Type flags (tp_flags)
+
+These flags are used to extend the type structure in a backwards-compatible
+fashion. Extensions can use the flags to indicate (and test) when a given
+type structure contains a new feature. The Python core will use these when
+introducing new functionality between major revisions (to avoid mid-version
+changes in the PYTHON_API_VERSION).
+
+Arbitration of the flag bit positions will need to be coordinated among
+all extension writers who publically release their extensions (this will
+be fewer than you might expect!)..
+
+Python 1.5.2 introduced the bf_getcharbuffer slot into PyBufferProcs.
+
+Type definitions should use Py_TPFLAGS_DEFAULT for their tp_flags value.
+
+Code can use PyType_HasFeature(type_ob, flag_value) to test whether the
+given type object has a specified feature.
+
+NOTE: when building the core, Py_TPFLAGS_DEFAULT includes
+Py_TPFLAGS_HAVE_VERSION_TAG; outside the core, it doesn't.  This is so
+that extensions that modify tp_dict of their own types directly don't
+break, since this was allowed in 2.5.  In 3.0 they will have to
+manually remove this flag though!
+*/</comment>
+
+<comment type="block">/* PyBufferProcs contains bf_getcharbuffer */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_HAVE_GETCHARBUFFER</name></cpp:macro>  <cpp:value>(1L&lt;&lt;0)</cpp:value></cpp:define>
+
+<comment type="block">/* PySequenceMethods contains sq_contains */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_HAVE_SEQUENCE_IN</name></cpp:macro> <cpp:value>(1L&lt;&lt;1)</cpp:value></cpp:define>
+
+<comment type="block">/* This is here for backwards compatibility.  Extensions that use the old GC
+ * API will still compile but the objects will not be tracked by the GC. */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_GC</name></cpp:macro> <cpp:value>0</cpp:value></cpp:define> <comment type="block">/* used to be (1L&lt;&lt;2) */</comment>
+
+<comment type="block">/* PySequenceMethods and PyNumberMethods contain in-place operators */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_HAVE_INPLACEOPS</name></cpp:macro> <cpp:value>(1L&lt;&lt;3)</cpp:value></cpp:define>
+
+<comment type="block">/* PyNumberMethods do their own coercion */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_CHECKTYPES</name></cpp:macro> <cpp:value>(1L&lt;&lt;4)</cpp:value></cpp:define>
+
+<comment type="block">/* tp_richcompare is defined */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_HAVE_RICHCOMPARE</name></cpp:macro> <cpp:value>(1L&lt;&lt;5)</cpp:value></cpp:define>
+
+<comment type="block">/* Objects which are weakly referencable if their tp_weaklistoffset is &gt;0 */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_HAVE_WEAKREFS</name></cpp:macro> <cpp:value>(1L&lt;&lt;6)</cpp:value></cpp:define>
+
+<comment type="block">/* tp_iter is defined */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_HAVE_ITER</name></cpp:macro> <cpp:value>(1L&lt;&lt;7)</cpp:value></cpp:define>
+
+<comment type="block">/* New members introduced by Python 2.2 exist */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_HAVE_CLASS</name></cpp:macro> <cpp:value>(1L&lt;&lt;8)</cpp:value></cpp:define>
+
+<comment type="block">/* Set if the type object is dynamically allocated */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_HEAPTYPE</name></cpp:macro> <cpp:value>(1L&lt;&lt;9)</cpp:value></cpp:define>
+
+<comment type="block">/* Set if the type allows subclassing */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_BASETYPE</name></cpp:macro> <cpp:value>(1L&lt;&lt;10)</cpp:value></cpp:define>
+
+<comment type="block">/* Set if the type is 'ready' -- fully initialized */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_READY</name></cpp:macro> <cpp:value>(1L&lt;&lt;12)</cpp:value></cpp:define>
+
+<comment type="block">/* Set while the type is being 'readied', to prevent recursive ready calls */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_READYING</name></cpp:macro> <cpp:value>(1L&lt;&lt;13)</cpp:value></cpp:define>
+
+<comment type="block">/* Objects support garbage collection (see objimp.h) */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_HAVE_GC</name></cpp:macro> <cpp:value>(1L&lt;&lt;14)</cpp:value></cpp:define>
+
+<comment type="block">/* These two bits are preserved for Stackless Python, next after this is 17 */</comment>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>STACKLESS</name></cpp:ifdef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_HAVE_STACKLESS_EXTENSION</name></cpp:macro> <cpp:value>(3L&lt;&lt;15)</cpp:value></cpp:define>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_HAVE_STACKLESS_EXTENSION</name></cpp:macro> <cpp:value>0</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<comment type="block">/* Objects support nb_index in PyNumberMethods */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_HAVE_INDEX</name></cpp:macro> <cpp:value>(1L&lt;&lt;17)</cpp:value></cpp:define>
+
+<comment type="block">/* Objects support type attribute cache */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_HAVE_VERSION_TAG</name></cpp:macro>   <cpp:value>(1L&lt;&lt;18)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_VALID_VERSION_TAG</name></cpp:macro>  <cpp:value>(1L&lt;&lt;19)</cpp:value></cpp:define>
+
+<comment type="block">/* Type is abstract and cannot be instantiated */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_IS_ABSTRACT</name></cpp:macro> <cpp:value>(1L&lt;&lt;20)</cpp:value></cpp:define>
+
+<comment type="block">/* Has the new buffer protocol */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_HAVE_NEWBUFFER</name></cpp:macro> <cpp:value>(1L&lt;&lt;21)</cpp:value></cpp:define>
+
+<comment type="block">/* These flags are used to determine if a type is a subclass. */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_INT_SUBCLASS</name></cpp:macro>		<cpp:value>(1L&lt;&lt;23)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_LONG_SUBCLASS</name></cpp:macro>	<cpp:value>(1L&lt;&lt;24)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_LIST_SUBCLASS</name></cpp:macro>	<cpp:value>(1L&lt;&lt;25)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_TUPLE_SUBCLASS</name></cpp:macro>	<cpp:value>(1L&lt;&lt;26)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_STRING_SUBCLASS</name></cpp:macro>	<cpp:value>(1L&lt;&lt;27)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_UNICODE_SUBCLASS</name></cpp:macro>	<cpp:value>(1L&lt;&lt;28)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_DICT_SUBCLASS</name></cpp:macro>	<cpp:value>(1L&lt;&lt;29)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_BASE_EXC_SUBCLASS</name></cpp:macro>	<cpp:value>(1L&lt;&lt;30)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_TYPE_SUBCLASS</name></cpp:macro>	<cpp:value>(1L&lt;&lt;31)</cpp:value></cpp:define>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_DEFAULT_EXTERNAL</name></cpp:macro> <cpp:value>( \
+                             Py_TPFLAGS_HAVE_GETCHARBUFFER | \
+                             Py_TPFLAGS_HAVE_SEQUENCE_IN | \
+                             Py_TPFLAGS_HAVE_INPLACEOPS | \
+                             Py_TPFLAGS_HAVE_RICHCOMPARE | \
+                             Py_TPFLAGS_HAVE_WEAKREFS | \
+                             Py_TPFLAGS_HAVE_ITER | \
+                             Py_TPFLAGS_HAVE_CLASS | \
+                             Py_TPFLAGS_HAVE_STACKLESS_EXTENSION | \
+                             Py_TPFLAGS_HAVE_INDEX | \
+                             0)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_DEFAULT_CORE</name></cpp:macro> <cpp:value>(Py_TPFLAGS_DEFAULT_EXTERNAL | \
+                                 Py_TPFLAGS_HAVE_VERSION_TAG)</cpp:value></cpp:define>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>Py_BUILD_CORE</name></cpp:ifdef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_DEFAULT</name></cpp:macro> <cpp:value>Py_TPFLAGS_DEFAULT_CORE</cpp:value></cpp:define>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TPFLAGS_DEFAULT</name></cpp:macro> <cpp:value>Py_TPFLAGS_DEFAULT_EXTERNAL</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyType_HasFeature</name><parameter_list>(<param><type><name>t</name></type></param>,<param><type><name>f</name></type></param>)</parameter_list></cpp:macro>  <cpp:value>(((t)-&gt;tp_flags &amp; (f)) != 0)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyType_FastSubclass</name><parameter_list>(<param><type><name>t</name></type></param>,<param><type><name>f</name></type></param>)</parameter_list></cpp:macro>  <cpp:value>PyType_HasFeature(t,f)</cpp:value></cpp:define>
+
+
+<comment type="block">/*
+The macros Py_INCREF(op) and Py_DECREF(op) are used to increment or decrement
+reference counts.  Py_DECREF calls the object's deallocator function when
+the refcount falls to 0; for
+objects that don't contain references to other objects or heap memory
+this can be the standard function free().  Both macros can be used
+wherever a void expression is allowed.  The argument must not be a
+NULL pointer.  If it may be NULL, use Py_XINCREF/Py_XDECREF instead.
+The macro _Py_NewReference(op) initialize reference counts to 1, and
+in special builds (Py_REF_DEBUG, Py_TRACE_REFS) performs additional
+bookkeeping appropriate to the special build.
+
+We assume that the reference count field can never overflow; this can
+be proven when the size of the field is the same as the pointer size, so
+we ignore the possibility.  Provided a C int is at least 32 bits (which
+is implicitly assumed in many parts of this code), that's enough for
+about 2**31 references to an object.
+
+XXX The following became out of date in Python 2.2, but I'm not sure
+XXX what the full truth is now.  Certainly, heap-allocated type objects
+XXX can and should be deallocated.
+Type objects should never be deallocated; the type pointer in an object
+is not considered to be a reference to the type object, to save
+complications in the deallocation function.  (This is actually a
+decision that's up to the implementer of each new type so if you want,
+you can count such references to the type object.)
+
+*** WARNING*** The Py_DECREF macro must have a side-effect-free argument
+since it may evaluate its argument multiple times.  (The alternative
+would be to mace it a proper function or assign it to a global temporary
+variable first, both of which are slower; and in a multi-threaded
+environment the global variable trick is not safe.)
+*/</comment>
+
+<comment type="block">/* First define a pile of simple helper macros, one set per special
+ * build symbol.  These either expand to the obvious things, or to
+ * nothing at all when the special mode isn't in effect.  The main
+ * macros can later be defined just once then, yet expand to different
+ * things depending on which special build options are and aren't in effect.
+ * Trust me &lt;wink&gt;:  while painful, this is 20x easier to understand than,
+ * e.g, defining _Py_NewReference five different times in a maze of nested
+ * #ifdefs (we used to do that -- it was impenetrable).
+ */</comment>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>Py_REF_DEBUG</name></cpp:ifdef>
+<macro><name>PyAPI_DATA</name><argument_list>(<argument>Py_ssize_t</argument>)</argument_list></macro> <expr_stmt><expr><name>_Py_RefTotal</name></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>void</argument>)</argument_list></macro> <macro><name>_Py_NegativeRefcount</name><argument_list>(<argument>const char *fname</argument>,
+					    <argument>int lineno</argument>, <argument>PyObject *op</argument>)</argument_list></macro><empty_stmt>;</empty_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>PyObject *</argument>)</argument_list></macro> <expr_stmt><expr><call><name>_PyDict_Dummy</name><argument_list>(<argument><expr><name>void</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>PyObject *</argument>)</argument_list></macro> <expr_stmt><expr><call><name>_PySet_Dummy</name><argument_list>(<argument><expr><name>void</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>Py_ssize_t</argument>)</argument_list></macro> <expr_stmt><expr><call><name>_Py_GetRefTotal</name><argument_list>(<argument><expr><name>void</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>_Py_INC_REFTOTAL</name></cpp:macro>	<cpp:value>_Py_RefTotal++</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>_Py_DEC_REFTOTAL</name></cpp:macro>	<cpp:value>_Py_RefTotal--</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>_Py_REF_DEBUG_COMMA</name></cpp:macro>	<cpp:value>,</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>_Py_CHECK_REFCNT</name><parameter_list>(<param><type><name>OP</name></type></param>)</parameter_list></cpp:macro>					\
+<cpp:value>{	if (((PyObject*)OP)-&gt;ob_refcnt &lt; 0)				\
+		_Py_NegativeRefcount(__FILE__, __LINE__,	\
+				     (PyObject *)(OP));		\
+}</cpp:value></cpp:define>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>_Py_INC_REFTOTAL</name></cpp:macro></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>_Py_DEC_REFTOTAL</name></cpp:macro></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>_Py_REF_DEBUG_COMMA</name></cpp:macro></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>_Py_CHECK_REFCNT</name><parameter_list>(<param><type><name>OP</name></type></param>)</parameter_list></cpp:macro>	<comment type="block">/* a semicolon */</comment><cpp:value>;</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* Py_REF_DEBUG */</comment>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>COUNT_ALLOCS</name></cpp:ifdef>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>void</argument>)</argument_list></macro> <expr_stmt><expr><call><name>inc_count</name><argument_list>(<argument><expr><name>PyTypeObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>void</argument>)</argument_list></macro> <expr_stmt><expr><call><name>dec_count</name><argument_list>(<argument><expr><name>PyTypeObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>_Py_INC_TPALLOCS</name><parameter_list>(<param><type><name>OP</name></type></param>)</parameter_list></cpp:macro>	<cpp:value>inc_count(Py_TYPE(OP))</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>_Py_INC_TPFREES</name><parameter_list>(<param><type><name>OP</name></type></param>)</parameter_list></cpp:macro>	<cpp:value>dec_count(Py_TYPE(OP))</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>_Py_DEC_TPFREES</name><parameter_list>(<param><type><name>OP</name></type></param>)</parameter_list></cpp:macro>	<cpp:value>Py_TYPE(OP)-&gt;tp_frees--</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>_Py_COUNT_ALLOCS_COMMA</name></cpp:macro>	<cpp:value>,</cpp:value></cpp:define>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>_Py_INC_TPALLOCS</name><parameter_list>(<param><type><name>OP</name></type></param>)</parameter_list></cpp:macro></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>_Py_INC_TPFREES</name><parameter_list>(<param><type><name>OP</name></type></param>)</parameter_list></cpp:macro></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>_Py_DEC_TPFREES</name><parameter_list>(<param><type><name>OP</name></type></param>)</parameter_list></cpp:macro></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>_Py_COUNT_ALLOCS_COMMA</name></cpp:macro></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* COUNT_ALLOCS */</comment>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>Py_TRACE_REFS</name></cpp:ifdef>
+<comment type="block">/* Py_TRACE_REFS is such major surgery that we call external routines. */</comment>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>void</argument>)</argument_list></macro> <expr_stmt><expr><call><name>_Py_NewReference</name><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>void</argument>)</argument_list></macro> <expr_stmt><expr><call><name>_Py_ForgetReference</name><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>void</argument>)</argument_list></macro> <expr_stmt><expr><call><name>_Py_Dealloc</name><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>void</argument>)</argument_list></macro> <expr_stmt><expr><call><name>_Py_PrintReferences</name><argument_list>(<argument><expr><name>FILE</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>void</argument>)</argument_list></macro> <expr_stmt><expr><call><name>_Py_PrintReferenceAddresses</name><argument_list>(<argument><expr><name>FILE</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>void</argument>)</argument_list></macro> <macro><name>_Py_AddToAllObjects</name><argument_list>(<argument>PyObject *</argument>, <argument>int force</argument>)</argument_list></macro><empty_stmt>;</empty_stmt>
+
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+<comment type="block">/* Without Py_TRACE_REFS, there's little enough to do that we expand code
+ * inline.
+ */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>_Py_NewReference</name><parameter_list>(<param><type><name>op</name></type></param>)</parameter_list></cpp:macro> <cpp:value>(				\
+	_Py_INC_TPALLOCS(op) _Py_COUNT_ALLOCS_COMMA	\
+	_Py_INC_REFTOTAL  _Py_REF_DEBUG_COMMA		\
+	Py_REFCNT(op) = 1)</cpp:value></cpp:define>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>_Py_ForgetReference</name><parameter_list>(<param><type><name>op</name></type></param>)</parameter_list></cpp:macro> <cpp:value>_Py_INC_TPFREES(op)</cpp:value></cpp:define>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>_Py_Dealloc</name><parameter_list>(<param><type><name>op</name></type></param>)</parameter_list></cpp:macro> <cpp:value>(				\
+	_Py_INC_TPFREES(op) _Py_COUNT_ALLOCS_COMMA	\
+	(*Py_TYPE(op)-&gt;tp_dealloc)((PyObject *)(op)))</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* !Py_TRACE_REFS */</comment>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_INCREF</name><parameter_list>(<param><type><name>op</name></type></param>)</parameter_list></cpp:macro> <cpp:value>(				\
+	_Py_INC_REFTOTAL  _Py_REF_DEBUG_COMMA	\
+	((PyObject*)(op))-&gt;ob_refcnt++)</cpp:value></cpp:define>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_DECREF</name><parameter_list>(<param><type><name>op</name></type></param>)</parameter_list></cpp:macro>					\
+	<cpp:value>if (_Py_DEC_REFTOTAL  _Py_REF_DEBUG_COMMA	\
+	    --((PyObject*)(op))-&gt;ob_refcnt != 0)		\
+		_Py_CHECK_REFCNT(op)			\
+	else						\
+		_Py_Dealloc((PyObject *)(op))</cpp:value></cpp:define>
+
+<comment type="block">/* Safely decref `op` and set `op` to NULL, especially useful in tp_clear
+ * and tp_dealloc implementatons.
+ *
+ * Note that "the obvious" code can be deadly:
+ *
+ *     Py_XDECREF(op);
+ *     op = NULL;
+ *
+ * Typically, `op` is something like self-&gt;containee, and `self` is done
+ * using its `containee` member.  In the code sequence above, suppose
+ * `containee` is non-NULL with a refcount of 1.  Its refcount falls to
+ * 0 on the first line, which can trigger an arbitrary amount of code,
+ * possibly including finalizers (like __del__ methods or weakref callbacks)
+ * coded in Python, which in turn can release the GIL and allow other threads
+ * to run, etc.  Such code may even invoke methods of `self` again, or cause
+ * cyclic gc to trigger, but-- oops! --self-&gt;containee still points to the
+ * object being torn down, and it may be in an insane state while being torn
+ * down.  This has in fact been a rich historic source of miserable (rare &amp;
+ * hard-to-diagnose) segfaulting (and other) bugs.
+ *
+ * The safe way is:
+ *
+ *      Py_CLEAR(op);
+ *
+ * That arranges to set `op` to NULL _before_ decref'ing, so that any code
+ * triggered as a side-effect of `op` getting torn down no longer believes
+ * `op` points to a valid object.
+ *
+ * There are cases where it's safe to use the naive code, but they're brittle.
+ * For example, if `op` points to a Python integer, you know that destroying
+ * one of those can't cause problems -- but in part that relies on that
+ * Python integers aren't currently weakly referencable.  Best practice is
+ * to use Py_CLEAR() even if you can't think of a reason for why you need to.
+ */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_CLEAR</name><parameter_list>(<param><type><name>op</name></type></param>)</parameter_list></cpp:macro>				\
+        <cpp:value>do {                            	\
+                if (op) {			\
+                        PyObject *_py_tmp = (PyObject *)(op);	\
+                        (op) = NULL;		\
+                        Py_DECREF(_py_tmp);	\
+                }				\
+        } while (0)</cpp:value></cpp:define>
+
+<comment type="block">/* Macros to use in case the object pointer may be NULL: */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_XINCREF</name><parameter_list>(<param><type><name>op</name></type></param>)</parameter_list></cpp:macro> <cpp:value>if ((op) == NULL) ; else Py_INCREF(op)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_XDECREF</name><parameter_list>(<param><type><name>op</name></type></param>)</parameter_list></cpp:macro> <cpp:value>if ((op) == NULL) ; else Py_DECREF(op)</cpp:value></cpp:define>
+
+<comment type="block">/*
+These are provided as conveniences to Python runtime embedders, so that
+they can have object code that is not dependent on Python compilation flags.
+*/</comment>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>void</argument>)</argument_list></macro> <expr_stmt><expr><call><name>Py_IncRef</name><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>void</argument>)</argument_list></macro> <expr_stmt><expr><call><name>Py_DecRef</name><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<comment type="block">/*
+_Py_NoneStruct is an object of undefined type which can be used in contexts
+where NULL (nil) is not suitable (since NULL often means 'error').
+
+Don't forget to apply Py_INCREF() when returning this value!!!
+*/</comment>
+<macro><name>PyAPI_DATA</name><argument_list>(<argument>PyObject</argument>)</argument_list></macro> <expr_stmt><expr><name>_Py_NoneStruct</name></expr>;</expr_stmt> <comment type="block">/* Don't use this directly */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_None</name></cpp:macro> <cpp:value>(&amp;_Py_NoneStruct)</cpp:value></cpp:define>
+
+<comment type="block">/* Macro for returning Py_None from a function */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_RETURN_NONE</name></cpp:macro> <cpp:value>return Py_INCREF(Py_None), Py_None</cpp:value></cpp:define>
+
+<comment type="block">/*
+Py_NotImplemented is a singleton used to signal that an operation is
+not implemented for a given type combination.
+*/</comment>
+<macro><name>PyAPI_DATA</name><argument_list>(<argument>PyObject</argument>)</argument_list></macro> <expr_stmt><expr><name>_Py_NotImplementedStruct</name></expr>;</expr_stmt> <comment type="block">/* Don't use this directly */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_NotImplemented</name></cpp:macro> <cpp:value>(&amp;_Py_NotImplementedStruct)</cpp:value></cpp:define>
+
+<comment type="block">/* Rich comparison opcodes */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_LT</name></cpp:macro> <cpp:value>0</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_LE</name></cpp:macro> <cpp:value>1</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_EQ</name></cpp:macro> <cpp:value>2</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_NE</name></cpp:macro> <cpp:value>3</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_GT</name></cpp:macro> <cpp:value>4</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_GE</name></cpp:macro> <cpp:value>5</cpp:value></cpp:define>
+
+<comment type="block">/* Maps Py_LT to Py_GT, ..., Py_GE to Py_LE.
+ * Defined in object.c.
+ */</comment>
+<macro><name>PyAPI_DATA</name><argument_list>(<argument>int</argument>)</argument_list></macro> <expr_stmt><expr><name><name>_Py_SwappedOp</name><index>[]</index></name></expr>;</expr_stmt>
+
+<comment type="block">/*
+Define staticforward and statichere for source compatibility with old
+C extensions.
+
+The staticforward define was needed to support certain broken C
+compilers (notably SCO ODT 3.0, perhaps early AIX as well) botched the
+static keyword when it was used with a forward declaration of a static
+initialized structure.  Standard C allows the forward declaration with
+static, and we've decided to stop catering to broken C compilers.
+(In fact, we expect that the compilers are all fixed eight years later.)
+*/</comment>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>staticforward</name></cpp:macro> <cpp:value>static</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>statichere</name></cpp:macro> <cpp:value>static</cpp:value></cpp:define>
+
+
+<comment type="block">/*
+More conventions
+================
+
+Argument Checking
+-----------------
+
+Functions that take objects as arguments normally don't check for nil
+arguments, but they do check the type of the argument, and return an
+error if the function doesn't apply to the type.
+
+Failure Modes
+-------------
+
+Functions may fail for a variety of reasons, including running out of
+memory.  This is communicated to the caller in two ways: an error string
+is set (see errors.h), and the function result differs: functions that
+normally return a pointer return NULL for failure, functions returning
+an integer return -1 (which could be a legal return value too!), and
+other functions return 0 for success and -1 for failure.
+Callers should always check for errors before using the result.  If
+an error was set, the caller must either explicitly clear it, or pass
+the error on to its caller.
+
+Reference Counts
+----------------
+
+It takes a while to get used to the proper usage of reference counts.
+
+Functions that create an object set the reference count to 1; such new
+objects must be stored somewhere or destroyed again with Py_DECREF().
+Some functions that 'store' objects, such as PyTuple_SetItem() and
+PyList_SetItem(),
+don't increment the reference count of the object, since the most
+frequent use is to store a fresh object.  Functions that 'retrieve'
+objects, such as PyTuple_GetItem() and PyDict_GetItemString(), also
+don't increment
+the reference count, since most frequently the object is only looked at
+quickly.  Thus, to retrieve an object and store it again, the caller
+must call Py_INCREF() explicitly.
+
+NOTE: functions that 'consume' a reference count, like
+PyList_SetItem(), consume the reference even if the object wasn't
+successfully stored, to simplify error handling.
+
+It seems attractive to make other functions that take an object as
+argument consume a reference count; however, this may quickly get
+confusing (even the current practice is already confusing).  Consider
+it carefully, it may save lots of calls to Py_INCREF() and Py_DECREF() at
+times.
+*/</comment>
+
+
+<comment type="block">/* Trashcan mechanism, thanks to Christian Tismer.
+
+When deallocating a container object, it's possible to trigger an unbounded
+chain of deallocations, as each Py_DECREF in turn drops the refcount on "the
+next" object in the chain to 0.  This can easily lead to stack faults, and
+especially in threads (which typically have less stack space to work with).
+
+A container object that participates in cyclic gc can avoid this by
+bracketing the body of its tp_dealloc function with a pair of macros:
+
+static void
+mytype_dealloc(mytype *p)
+{
+        ... declarations go here ...
+
+ 	PyObject_GC_UnTrack(p);	   // must untrack first
+	Py_TRASHCAN_SAFE_BEGIN(p)
+	... The body of the deallocator goes here, including all calls ...
+	... to Py_DECREF on contained objects.                         ...
+	Py_TRASHCAN_SAFE_END(p)
+}
+
+CAUTION:  Never return from the middle of the body!  If the body needs to
+"get out early", put a label immediately before the Py_TRASHCAN_SAFE_END
+call, and goto it.  Else the call-depth counter (see below) will stay
+above 0 forever, and the trashcan will never get emptied.
+
+How it works:  The BEGIN macro increments a call-depth counter.  So long
+as this counter is small, the body of the deallocator is run directly without
+further ado.  But if the counter gets large, it instead adds p to a list of
+objects to be deallocated later, skips the body of the deallocator, and
+resumes execution after the END macro.  The tp_dealloc routine then returns
+without deallocating anything (and so unbounded call-stack depth is avoided).
+
+When the call stack finishes unwinding again, code generated by the END macro
+notices this, and calls another routine to deallocate all the objects that
+may have been added to the list of deferred deallocations.  In effect, a
+chain of N deallocations is broken into N / PyTrash_UNWIND_LEVEL pieces,
+with the call stack never exceeding a depth of PyTrash_UNWIND_LEVEL.
+*/</comment>
+
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>void</argument>)</argument_list></macro> <expr_stmt><expr><call><name>_PyTrash_deposit_object</name><argument_list>(<argument><expr><name>PyObject</name>*</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_FUNC</name><argument_list>(<argument>void</argument>)</argument_list></macro> <expr_stmt><expr><call><name>_PyTrash_destroy_chain</name><argument_list>(<argument><expr><name>void</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<macro><name>PyAPI_DATA</name><argument_list>(<argument>int</argument>)</argument_list></macro> <expr_stmt><expr><name>_PyTrash_delete_nesting</name></expr>;</expr_stmt>
+<macro><name>PyAPI_DATA</name><argument_list>(<argument>PyObject *</argument>)</argument_list></macro> <expr_stmt><expr><name>_PyTrash_delete_later</name></expr>;</expr_stmt>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyTrash_UNWIND_LEVEL</name></cpp:macro> <cpp:value>50</cpp:value></cpp:define>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TRASHCAN_SAFE_BEGIN</name><parameter_list>(<param><type><name>op</name></type></param>)</parameter_list></cpp:macro> \
+	<cpp:value>if (_PyTrash_delete_nesting &lt; PyTrash_UNWIND_LEVEL) { \
+		++_PyTrash_delete_nesting;</cpp:value></cpp:define>
+		<comment type="block">/* The body of the deallocator is here. */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>Py_TRASHCAN_SAFE_END</name><parameter_list>(<param><type><name>op</name></type></param>)</parameter_list></cpp:macro> \
+		<cpp:value>--_PyTrash_delete_nesting; \
+		if (_PyTrash_delete_later &amp;&amp; _PyTrash_delete_nesting &lt;= 0) \
+			_PyTrash_destroy_chain(); \
+	} \
+	else \
+		_PyTrash_deposit_object((PyObject*)op);</cpp:value></cpp:define>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>__cplusplus</name></cpp:ifdef>
+}</block></extern>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* !Py_OBJECT_H */</comment>
+</unit>

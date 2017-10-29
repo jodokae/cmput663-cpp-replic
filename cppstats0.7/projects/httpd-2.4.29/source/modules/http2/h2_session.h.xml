@@ -1,0 +1,226 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/httpd-2.4.29/modules/http2/h2_session.h"><comment type="block">/* Copyright 2015 greenbytes GmbH (https://www.greenbytes.de)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */</comment>
+
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>__mod_h2__h2_session__</name></cpp:ifndef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>__mod_h2__h2_session__</name></cpp:macro></cpp:define>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"h2_conn_io.h"</cpp:file></cpp:include>
+
+<comment type="block">/**
+ * A HTTP/2 connection, a session with a specific client.
+ * 
+ * h2_session sits on top of a httpd conn_rec* instance and takes complete
+ * control of the connection data. It receives protocol frames from the
+ * client. For new HTTP/2 streams it creates h2_task(s) that are sent
+ * via callback to a dispatcher (see h2_conn.c).
+ * h2_session keeps h2_io's for each ongoing stream which buffer the
+ * payload for that stream.
+ *
+ * New incoming HEADER frames are converted into a h2_stream+h2_task instance
+ * that both represent a HTTP/2 stream, but may have separate lifetimes. This
+ * allows h2_task to be scheduled in other threads without semaphores
+ * all over the place. It allows task memory to be freed independent of
+ * session lifetime and sessions may close down while tasks are still running.
+ *
+ *
+ */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"h2.h"</cpp:file></cpp:include>
+
+<struct_decl>struct <name>apr_thread_mutext_t</name>;</struct_decl>
+<struct_decl>struct <name>apr_thread_cond_t</name>;</struct_decl>
+<struct_decl>struct <name>h2_ctx</name>;</struct_decl>
+<struct_decl>struct <name>h2_config</name>;</struct_decl>
+<struct_decl>struct <name>h2_filter_cin</name>;</struct_decl>
+<struct_decl>struct <name>h2_ihash_t</name>;</struct_decl>
+<struct_decl>struct <name>h2_mplx</name>;</struct_decl>
+<struct_decl>struct <name>h2_priority</name>;</struct_decl>
+<struct_decl>struct <name>h2_push</name>;</struct_decl>
+<struct_decl>struct <name>h2_push_diary</name>;</struct_decl>
+<struct_decl>struct <name>h2_session</name>;</struct_decl>
+<struct_decl>struct <name>h2_stream</name>;</struct_decl>
+<struct_decl>struct <name>h2_stream_monitor</name>;</struct_decl>
+<struct_decl>struct <name>h2_task</name>;</struct_decl>
+<struct_decl>struct <name>h2_workers</name>;</struct_decl>
+
+<struct_decl>struct <name>nghttp2_session</name>;</struct_decl>
+
+<typedef>typedef <type><enum>enum <block>{
+    <decl><name>H2_SESSION_EV_INIT</name></decl>,             <comment type="block">/* session was initialized */</comment>
+    <decl><name>H2_SESSION_EV_LOCAL_GOAWAY</name></decl>,     <comment type="block">/* we send a GOAWAY */</comment>
+    <decl><name>H2_SESSION_EV_REMOTE_GOAWAY</name></decl>,    <comment type="block">/* remote send us a GOAWAY */</comment>
+    <decl><name>H2_SESSION_EV_CONN_ERROR</name></decl>,       <comment type="block">/* connection error */</comment>
+    <decl><name>H2_SESSION_EV_PROTO_ERROR</name></decl>,      <comment type="block">/* protocol error */</comment>
+    <decl><name>H2_SESSION_EV_CONN_TIMEOUT</name></decl>,     <comment type="block">/* connection timeout */</comment>
+    <decl><name>H2_SESSION_EV_NO_IO</name></decl>,            <comment type="block">/* nothing has been read or written */</comment>
+    <decl><name>H2_SESSION_EV_DATA_READ</name></decl>,        <comment type="block">/* connection data has been read */</comment>
+    <decl><name>H2_SESSION_EV_NGH2_DONE</name></decl>,        <comment type="block">/* nghttp2 wants neither read nor write anything */</comment>
+    <decl><name>H2_SESSION_EV_MPM_STOPPING</name></decl>,     <comment type="block">/* the process is stopping */</comment>
+    <decl><name>H2_SESSION_EV_PRE_CLOSE</name></decl>,        <comment type="block">/* connection will close after this */</comment>
+}</block></enum></type> <name>h2_session_event_t</name>;</typedef>
+
+<typedef>typedef <type><struct>struct <name>h2_session</name> <block>{
+    <decl_stmt><decl><type><name>long</name></type> <name>id</name></decl>;</decl_stmt>                        <comment type="block">/* identifier of this session, unique
+                                     * inside a httpd process */</comment>
+    <decl_stmt><decl><type><name>conn_rec</name> *</type><name>c</name></decl>;</decl_stmt>                    <comment type="block">/* the connection this session serves */</comment>
+    <decl_stmt><decl><type><name>request_rec</name> *</type><name>r</name></decl>;</decl_stmt>                 <comment type="block">/* the request that started this in case
+                                     * of 'h2c', NULL otherwise */</comment>
+    <decl_stmt><decl><type><name>server_rec</name> *</type><name>s</name></decl>;</decl_stmt>                  <comment type="block">/* server/vhost we're starting on */</comment>
+    <decl_stmt><decl><type><specifier>const</specifier> struct <name>h2_config</name> *</type><name>config</name></decl>;</decl_stmt> <comment type="block">/* Relevant config for this session */</comment>
+    <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl>;</decl_stmt>               <comment type="block">/* pool to use in session */</comment>
+    <decl_stmt><decl><type>struct <name>h2_mplx</name> *</type><name>mplx</name></decl>;</decl_stmt>           <comment type="block">/* multiplexer for stream data */</comment>
+    <decl_stmt><decl><type>struct <name>h2_workers</name> *</type><name>workers</name></decl>;</decl_stmt>     <comment type="block">/* for executing stream tasks */</comment>
+    <decl_stmt><decl><type>struct <name>h2_filter_cin</name> *</type><name>cin</name></decl>;</decl_stmt>      <comment type="block">/* connection input filter context */</comment>
+    <decl_stmt><decl><type><name>h2_conn_io</name></type> <name>io</name></decl>;</decl_stmt>                  <comment type="block">/* io on httpd conn filters */</comment>
+    <decl_stmt><decl><type>struct <name>nghttp2_session</name> *</type><name>ngh2</name></decl>;</decl_stmt>   <comment type="block">/* the nghttp2 session (internal use) */</comment>
+
+    <decl_stmt><decl><type><name>h2_session_state</name></type> <name>state</name></decl>;</decl_stmt>         <comment type="block">/* state session is in */</comment>
+    
+    <decl_stmt><decl><type><name>h2_session_props</name></type> <name>local</name></decl>;</decl_stmt>         <comment type="block">/* properties of local session */</comment>
+    <decl_stmt><decl><type><name>h2_session_props</name></type> <name>remote</name></decl>;</decl_stmt>        <comment type="block">/* properites of remote session */</comment>
+    
+    <expr_stmt><expr><name>unsigned</name> <name>int</name> <name>reprioritize</name>  : 1</expr>;</expr_stmt> <comment type="block">/* scheduled streams priority changed */</comment>
+    <expr_stmt><expr><name>unsigned</name> <name>int</name> <name>flush</name>         : 1</expr>;</expr_stmt> <comment type="block">/* flushing output necessary */</comment>
+    <expr_stmt><expr><name>unsigned</name> <name>int</name> <name>have_read</name>     : 1</expr>;</expr_stmt> <comment type="block">/* session has read client data */</comment>
+    <expr_stmt><expr><name>unsigned</name> <name>int</name> <name>have_written</name>  : 1</expr>;</expr_stmt> <comment type="block">/* session did write data to client */</comment>
+    <decl_stmt><decl><type><name>apr_interval_time_t</name></type>  <name>wait_us</name></decl>;</decl_stmt>   <comment type="block">/* timeout during BUSY_WAIT state, micro secs */</comment>
+    
+    <decl_stmt><decl><type>struct <name>h2_push_diary</name> *</type><name>push_diary</name></decl>;</decl_stmt> <comment type="block">/* remember pushes, avoid duplicates */</comment>
+    
+    <decl_stmt><decl><type>struct <name>h2_stream_monitor</name> *</type><name>monitor</name></decl>;</decl_stmt><comment type="block">/* monitor callbacks for streams */</comment>
+    <decl_stmt><decl><type><name>int</name></type> <name>open_streams</name></decl>;</decl_stmt>               <comment type="block">/* number of client streams open */</comment>
+    <decl_stmt><decl><type><name>int</name></type> <name>unsent_submits</name></decl>;</decl_stmt>             <comment type="block">/* number of submitted, but not yet written responses. */</comment>
+    <decl_stmt><decl><type><name>int</name></type> <name>unsent_promises</name></decl>;</decl_stmt>            <comment type="block">/* number of submitted, but not yet written push promises */</comment>
+                                         
+    <decl_stmt><decl><type><name>int</name></type> <name>responses_submitted</name></decl>;</decl_stmt>        <comment type="block">/* number of http/2 responses submitted */</comment>
+    <decl_stmt><decl><type><name>int</name></type> <name>streams_reset</name></decl>;</decl_stmt>              <comment type="block">/* number of http/2 streams reset by client */</comment>
+    <decl_stmt><decl><type><name>int</name></type> <name>pushes_promised</name></decl>;</decl_stmt>            <comment type="block">/* number of http/2 push promises submitted */</comment>
+    <decl_stmt><decl><type><name>int</name></type> <name>pushes_submitted</name></decl>;</decl_stmt>           <comment type="block">/* number of http/2 pushed responses submitted */</comment>
+    <decl_stmt><decl><type><name>int</name></type> <name>pushes_reset</name></decl>;</decl_stmt>               <comment type="block">/* number of http/2 pushed reset by client */</comment>
+    
+    <decl_stmt><decl><type><name>apr_size_t</name></type> <name>frames_received</name></decl>;</decl_stmt>     <comment type="block">/* number of http/2 frames received */</comment>
+    <decl_stmt><decl><type><name>apr_size_t</name></type> <name>frames_sent</name></decl>;</decl_stmt>         <comment type="block">/* number of http/2 frames sent */</comment>
+    
+    <decl_stmt><decl><type><name>apr_size_t</name></type> <name>max_stream_count</name></decl>;</decl_stmt>    <comment type="block">/* max number of open streams */</comment>
+    <decl_stmt><decl><type><name>apr_size_t</name></type> <name>max_stream_mem</name></decl>;</decl_stmt>      <comment type="block">/* max buffer memory for a single stream */</comment>
+    
+    <decl_stmt><decl><type><name>apr_time_t</name></type> <name>idle_until</name></decl>;</decl_stmt>          <comment type="block">/* Time we shut down due to sheer boredom */</comment>
+    <decl_stmt><decl><type><name>apr_time_t</name></type> <name>keep_sync_until</name></decl>;</decl_stmt>     <comment type="block">/* Time we sync wait until passing to async mpm */</comment>
+    
+    <decl_stmt><decl><type><name>apr_bucket_brigade</name> *</type><name>bbtmp</name></decl>;</decl_stmt>      <comment type="block">/* brigade for keeping temporary data */</comment>
+    <decl_stmt><decl><type>struct <name>apr_thread_cond_t</name> *</type><name>iowait</name></decl>;</decl_stmt> <comment type="block">/* our cond when trywaiting for data */</comment>
+    
+    <decl_stmt><decl><type><name>char</name></type> <name><name>status</name><index>[<expr>64</expr>]</index></name></decl>;</decl_stmt>                <comment type="block">/* status message for scoreboard */</comment>
+    <decl_stmt><decl><type><name>int</name></type> <name>last_status_code</name></decl>;</decl_stmt>           <comment type="block">/* the one already reported */</comment>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>last_status_msg</name></decl>;</decl_stmt>    <comment type="block">/* the one already reported */</comment>
+    
+    <decl_stmt><decl><type>struct <name>h2_iqueue</name> *</type><name>in_pending</name></decl>;</decl_stmt>   <comment type="block">/* all streams with input pending */</comment>
+    <decl_stmt><decl><type>struct <name>h2_iqueue</name> *</type><name>in_process</name></decl>;</decl_stmt>   <comment type="block">/* all streams ready for processing on slave */</comment>
+
+}</block></struct></type> <name>h2_session</name>;</typedef>
+
+<function_decl><type><specifier>const</specifier> <name>char</name> *</type><name>h2_session_state_str</name><parameter_list>(<param><decl><type><name>h2_session_state</name></type> <name>state</name></decl></param>)</parameter_list>;</function_decl>
+
+<comment type="block">/**
+ * Create a new h2_session for the given connection.
+ * The session will apply the configured parameter.
+ * @param psession pointer receiving the created session on success or NULL
+ * @param c       the connection to work on
+ * @param cfg     the module config to apply
+ * @param workers the worker pool to use
+ * @return the created session
+ */</comment>
+<function_decl><type><name>apr_status_t</name></type> <name>h2_session_create</name><parameter_list>(<param><decl><type><name>h2_session</name> **</type><name>psession</name></decl></param>,
+                               <param><decl><type><name>conn_rec</name> *</type><name>c</name></decl></param>, <param><decl><type>struct <name>h2_ctx</name> *</type><name>ctx</name></decl></param>, 
+                               <param><decl><type>struct <name>h2_workers</name> *</type><name>workers</name></decl></param>)</parameter_list>;</function_decl>
+
+<comment type="block">/**
+ * Create a new h2_session for the given request.
+ * The session will apply the configured parameter.
+ * @param psession pointer receiving the created session on success or NULL
+ * @param r       the request that was upgraded
+ * @param cfg     the module config to apply
+ * @param workers the worker pool to use
+ * @return the created session
+ */</comment>
+<function_decl><type><name>apr_status_t</name></type> <name>h2_session_rcreate</name><parameter_list>(<param><decl><type><name>h2_session</name> **</type><name>psession</name></decl></param>,
+                                <param><decl><type><name>request_rec</name> *</type><name>r</name></decl></param>, <param><decl><type>struct <name>h2_ctx</name> *</type><name>ctx</name></decl></param>,
+                                <param><decl><type>struct <name>h2_workers</name> *</type><name>workers</name></decl></param>)</parameter_list>;</function_decl>
+
+<function_decl><type><name>void</name></type> <name>h2_session_event</name><parameter_list>(<param><decl><type><name>h2_session</name> *</type><name>session</name></decl></param>, <param><decl><type><name>h2_session_event_t</name></type> <name>ev</name></decl></param>, 
+                             <param><decl><type><name>int</name></type> <name>err</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>msg</name></decl></param>)</parameter_list>;</function_decl>
+
+<comment type="block">/**
+ * Process the given HTTP/2 session until it is ended or a fatal
+ * error occurred.
+ *
+ * @param session the sessionm to process
+ */</comment>
+<function_decl><type><name>apr_status_t</name></type> <name>h2_session_process</name><parameter_list>(<param><decl><type><name>h2_session</name> *</type><name>session</name></decl></param>, <param><decl><type><name>int</name></type> <name>async</name></decl></param>)</parameter_list>;</function_decl>
+
+<comment type="block">/**
+ * Last chance to do anything before the connection is closed.
+ */</comment>
+<function_decl><type><name>apr_status_t</name></type> <name>h2_session_pre_close</name><parameter_list>(<param><decl><type><name>h2_session</name> *</type><name>session</name></decl></param>, <param><decl><type><name>int</name></type> <name>async</name></decl></param>)</parameter_list>;</function_decl>
+
+<comment type="block">/**
+ * Called when a serious error occurred and the session needs to terminate
+ * without further connection io.
+ * @param session the session to abort
+ * @param reason  the apache status that caused the abort
+ */</comment>
+<function_decl><type><name>void</name></type> <name>h2_session_abort</name><parameter_list>(<param><decl><type><name>h2_session</name> *</type><name>session</name></decl></param>, <param><decl><type><name>apr_status_t</name></type> <name>reason</name></decl></param>)</parameter_list>;</function_decl>
+
+<comment type="block">/**
+ * Close and deallocate the given session.
+ */</comment>
+<function_decl><type><name>void</name></type> <name>h2_session_close</name><parameter_list>(<param><decl><type><name>h2_session</name> *</type><name>session</name></decl></param>)</parameter_list>;</function_decl>
+
+<comment type="block">/**
+ * Returns if client settings have push enabled.
+ * @param != 0 iff push is enabled in client settings
+ */</comment>
+<function_decl><type><name>int</name></type> <name>h2_session_push_enabled</name><parameter_list>(<param><decl><type><name>h2_session</name> *</type><name>session</name></decl></param>)</parameter_list>;</function_decl>
+
+<comment type="block">/**
+ * Look up the stream in this session with the given id.
+ */</comment>
+<function_decl><type>struct <name>h2_stream</name> *</type><name>h2_session_stream_get</name><parameter_list>(<param><decl><type><name>h2_session</name> *</type><name>session</name></decl></param>, <param><decl><type><name>int</name></type> <name>stream_id</name></decl></param>)</parameter_list>;</function_decl>
+
+<comment type="block">/**
+ * Submit a push promise on the stream and schedule the new steam for
+ * processing..
+ * 
+ * @param session the session to work in
+ * @param is the stream initiating the push
+ * @param push the push to promise
+ * @return the new promised stream or NULL
+ */</comment>
+<function_decl><type>struct <name>h2_stream</name> *</type><name>h2_session_push</name><parameter_list>(<param><decl><type><name>h2_session</name> *</type><name>session</name></decl></param>, 
+                                  <param><decl><type>struct <name>h2_stream</name> *</type><name>is</name></decl></param>, <param><decl><type>struct <name>h2_push</name> *</type><name>push</name></decl></param>)</parameter_list>;</function_decl>
+
+<function_decl><type><name>apr_status_t</name></type> <name>h2_session_set_prio</name><parameter_list>(<param><decl><type><name>h2_session</name> *</type><name>session</name></decl></param>, 
+                                 <param><decl><type>struct <name>h2_stream</name> *</type><name>stream</name></decl></param>, 
+                                 <param><decl><type><specifier>const</specifier> struct <name>h2_priority</name> *</type><name>prio</name></decl></param>)</parameter_list>;</function_decl>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>H2_SSSN_MSG</name><parameter_list>(<param><type><name>s</name></type></param>, <param><type><name>msg</name></type></param>)</parameter_list></cpp:macro>     \
+    <cpp:value>"h2_session(%ld,%s,%d): "msg, s-&gt;id, h2_session_state_str(s-&gt;state), \
+                            s-&gt;open_streams</cpp:value></cpp:define>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>H2_SSSN_LOG</name><parameter_list>(<param><type><name>aplogno</name></type></param>, <param><type><name>s</name></type></param>, <param><type><name>msg</name></type></param>)</parameter_list></cpp:macro>    <cpp:value>aplogno H2_SSSN_MSG(s, msg)</cpp:value></cpp:define>
+
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* defined(__mod_h2__h2_session__) */</comment>
+</unit>

@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="server/util_xml.c"><cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_xml.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"httpd.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_protocol.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_log.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_core.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"util_charset.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"util_xml.h"</cpp:file></cpp:include>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>READ_BLOCKSIZE</name></cpp:macro> <cpp:value>2048</cpp:value></cpp:define>
+<cpp:undef>#<cpp:directive>undef</cpp:directive> <name>APLOG_MODULE_INDEX</name></cpp:undef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>APLOG_MODULE_INDEX</name></cpp:macro> <cpp:value>AP_CORE_MODULE_INDEX</cpp:value></cpp:define>
+<macro><name>AP_DECLARE</name><argument_list>(<argument>int</argument>)</argument_list></macro> <macro><name>ap_xml_parse_input</name><argument_list>(<argument>request_rec * r</argument>, <argument>apr_xml_doc **pdoc</argument>)</argument_list></macro> <block>{
+<decl_stmt><decl><type><name>apr_xml_parser</name> *</type><name>parser</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_bucket_brigade</name> *</type><name>brigade</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>seen_eos</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_status_t</name></type> <name>status</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>char</name></type> <name><name>errbuf</name><index>[<expr>200</expr>]</index></name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_size_t</name></type> <name>total_read</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_size_t</name></type> <name>limit_xml_body</name> <init>= <expr><call><name>ap_get_limit_xml_body</name><argument_list>(<argument><expr><name>r</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>result</name> <init>= <expr><name>HTTP_BAD_REQUEST</name></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><name>parser</name> = <call><name>apr_xml_parser_create</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>brigade</name> = <call><name>apr_brigade_create</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>connection</name>-&gt;<name>bucket_alloc</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>seen_eos</name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><name>total_read</name> = 0</expr>;</expr_stmt>
+<do>do <block>{
+<decl_stmt><decl><type><name>apr_bucket</name> *</type><name>bucket</name></decl>;</decl_stmt>
+<expr_stmt><expr><name>status</name> = <call><name>ap_get_brigade</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>input_filters</name></name></expr></argument>, <argument><expr><name>brigade</name></expr></argument>,
+<argument><expr><name>AP_MODE_READBYTES</name></expr></argument>, <argument><expr><name>APR_BLOCK_READ</name></expr></argument>,
+<argument><expr><name>READ_BLOCKSIZE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>status</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>result</name> = <call><name>ap_map_http_request_error</name><argument_list>(<argument><expr><name>status</name></expr></argument>, <argument><expr><name>HTTP_BAD_REQUEST</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<goto>goto <name>read_error</name>;</goto>
+}</block></then></if>
+<for>for (<init><expr><name>bucket</name> = <call><name>APR_BRIGADE_FIRST</name><argument_list>(<argument><expr><name>brigade</name></expr></argument>)</argument_list></call></expr>;</init>
+<condition><expr><name>bucket</name> != <call><name>APR_BRIGADE_SENTINEL</name><argument_list>(<argument><expr><name>brigade</name></expr></argument>)</argument_list></call></expr>;</condition>
+<incr><expr><name>bucket</name> = <call><name>APR_BUCKET_NEXT</name><argument_list>(<argument><expr><name>bucket</name></expr></argument>)</argument_list></call></expr></incr>) <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>data</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_size_t</name></type> <name>len</name></decl>;</decl_stmt>
+<if>if <condition>(<expr><call><name>APR_BUCKET_IS_EOS</name><argument_list>(<argument><expr><name>bucket</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>seen_eos</name> = 1</expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<if>if <condition>(<expr><call><name>APR_BUCKET_IS_METADATA</name><argument_list>(<argument><expr><name>bucket</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<continue>continue;</continue>
+}</block></then></if>
+<expr_stmt><expr><name>status</name> = <call><name>apr_bucket_read</name><argument_list>(<argument><expr><name>bucket</name></expr></argument>, <argument><expr>&amp;<name>data</name></expr></argument>, <argument><expr>&amp;<name>len</name></expr></argument>, <argument><expr><name>APR_BLOCK_READ</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>status</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<goto>goto <name>read_error</name>;</goto>
+}</block></then></if>
+<expr_stmt><expr><name>total_read</name> += <name>len</name></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>limit_xml_body</name> &amp;&amp; <name>total_read</name> &gt; <name>limit_xml_body</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>ap_log_rerror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_ERR</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>r</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00539</expr></argument>)</argument_list></call>
+"XML request body is larger than the configured "
+"limit of %lu"</expr></argument>, <argument><expr>(<name>unsigned</name> <name>long</name>)<name>limit_xml_body</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>result</name> = <name>HTTP_REQUEST_ENTITY_TOO_LARGE</name></expr>;</expr_stmt>
+<goto>goto <name>read_error</name>;</goto>
+}</block></then></if>
+<expr_stmt><expr><name>status</name> = <call><name>apr_xml_parser_feed</name><argument_list>(<argument><expr><name>parser</name></expr></argument>, <argument><expr><name>data</name></expr></argument>, <argument><expr><name>len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>status</name></expr>)</condition><then> <block>{
+<goto>goto <name>parser_error</name>;</goto>
+}</block></then></if>
+}</block></for>
+<expr_stmt><expr><call><name>apr_brigade_cleanup</name><argument_list>(<argument><expr><name>brigade</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block> while <condition>(<expr>!<name>seen_eos</name></expr>)</condition>;</do>
+<expr_stmt><expr><call><name>apr_brigade_destroy</name><argument_list>(<argument><expr><name>brigade</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>status</name> = <call><name>apr_xml_parser_done</name><argument_list>(<argument><expr><name>parser</name></expr></argument>, <argument><expr><name>pdoc</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>status</name></expr>)</condition><then> <block>{
+<if>if <condition>(<expr>!<name>total_read</name></expr>)</condition><then> <block>{
+<expr_stmt><expr>*<name>pdoc</name> = <name>NULL</name></expr>;</expr_stmt>
+<return>return <expr><name>OK</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><call><name>ap_log_rerror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_ERR</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>r</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00540</expr></argument>)</argument_list></call>
+"XML parser error (at end). status=%d"</expr></argument>, <argument><expr><name>status</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>HTTP_BAD_REQUEST</name></expr>;</return>
+}</block></then></if>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_CHARSET_EBCDIC</name></expr></cpp:if>
+<expr_stmt><expr><call><name>apr_xml_parser_convert_doc</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>*<name>pdoc</name></expr></argument>, <argument><expr><name>ap_hdrs_from_ascii</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<return>return <expr><name>OK</name></expr>;</return>
+<label><name>parser_error</name>:</label>
+<expr_stmt><expr>(<name>void</name>) <call><name>apr_xml_parser_geterror</name><argument_list>(<argument><expr><name>parser</name></expr></argument>, <argument><expr><name>errbuf</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>errbuf</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>ap_log_rerror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_ERR</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>r</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00541</expr></argument>)</argument_list></call>
+"XML Parser Error: %s"</expr></argument>, <argument><expr><name>errbuf</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<label><name>read_error</name>:</label>
+<expr_stmt><expr>(<name>void</name>) <call><name>apr_xml_parser_done</name><argument_list>(<argument><expr><name>parser</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>apr_brigade_destroy</name><argument_list>(<argument><expr><name>brigade</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>result</name></expr>;</return>
+}</block>
+</unit>

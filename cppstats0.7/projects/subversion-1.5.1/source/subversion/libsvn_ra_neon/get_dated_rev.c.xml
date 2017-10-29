@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/subversion-1.5.1/source/subversion/libsvn_ra_neon/get_dated_rev.c"><comment type="block">/*
+ * date_rev.c :  RA get-dated-revision API implementation
+ *
+ * ====================================================================
+ * Copyright (c) 2000-2007 CollabNet.  All rights reserved.
+ *
+ * This software is licensed as described in the file COPYING, which
+ * you should have received as part of this distribution.  The terms
+ * are also available at http://subversion.tigris.org/license-1.html.
+ * If newer versions of this license are posted there, you may use a
+ * newer version instead, at your option.
+ *
+ * This software consists of voluntary contributions made by many
+ * individuals.  For exact contribution history, see the revision
+ * history and logs, available at http://subversion.tigris.org/.
+ * ====================================================================
+ */</comment>
+
+
+<escape char="0xc"/>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>APR_WANT_STRFUNC</name></cpp:macro></cpp:define>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_want.h&gt;</cpp:file></cpp:include> <comment type="block">/* for strcmp() */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_pools.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_tables.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_strings.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_md5.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_xml.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;ne_basic.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_error.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_pools.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_ra.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"../libsvn_ra/ra_loader.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_path.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_xml.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_dav.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_time.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"private/svn_dav_protocol.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_private_config.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"ra_neon.h"</cpp:file></cpp:include>
+
+
+<comment type="block">/* -------------------------------------------------------------------------
+**
+** DATED REV REPORT HANDLING
+**
+** DeltaV provides no mechanism for mapping a date to a revision, so
+** we use a custom report, S:dated-rev-report.  The request contains a
+** DAV:creationdate element giving the requested date; the response
+** contains a DAV:version-name element giving the most recent revision
+** as of that date.
+**
+** Since this report is so simple, we don't bother with validation or
+** baton structures or anything; we just set the revision number in
+** the end-element handler for DAV:version-name.
+*/</comment>
+
+<comment type="block">/* Elements used in a dated-rev-report response */</comment>
+<decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>svn_ra_neon__xml_elm_t</name></type> <name><name>drev_report_elements</name><index>[]</index></name> <init>=
+<expr><block>{
+  <expr><block>{ <expr><name>SVN_XML_NAMESPACE</name></expr>, <expr>"dated-rev-report"</expr>, <expr><name>ELEM_dated_rev_report</name></expr>, <expr>0</expr> }</block></expr>,
+  <expr><block>{ <expr>"DAV:"</expr>, <expr>"version-name"</expr>, <expr><name>ELEM_version_name</name></expr>, <expr><name>SVN_RA_NEON__XML_CDATA</name></expr> }</block></expr>,
+  <expr><block>{ <expr><name>NULL</name></expr> }</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+
+<typedef>typedef <type><struct>struct
+<block>{
+  <decl_stmt><decl><type><name>svn_stringbuf_t</name> *</type><name>cdata</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_revnum_t</name></type> <name>revision</name></decl>;</decl_stmt>
+}</block></struct></type> <name>drev_baton_t</name>;</typedef>
+
+
+<comment type="block">/* This implements the `svn_ra_neon__xml_startelm_cb' prototype. */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>drev_start_element</name><parameter_list>(<param><decl><type><name>int</name> *</type><name>elem</name></decl></param>, <param><decl><type><name>void</name> *</type><name>baton</name></decl></param>, <param><decl><type><name>int</name></type> <name>parent</name></decl></param>,
+                   <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>nspace</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>name</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>atts</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>svn_ra_neon__xml_elm_t</name> *</type><name>elm</name> <init>=
+    <expr><call><name>svn_ra_neon__lookup_xml_elem</name><argument_list>(<argument><expr><name>drev_report_elements</name></expr></argument>, <argument><expr><name>nspace</name></expr></argument>, <argument><expr><name>name</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>drev_baton_t</name> *</type><name>b</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+
+  <expr_stmt><expr>*<name>elem</name> = <name>elm</name> ? <name><name>elm</name>-&gt;<name>id</name></name> : <name>SVN_RA_NEON__XML_DECLINE</name></expr>;</expr_stmt>
+  <if>if <condition>(<expr>!<name>elm</name></expr>)</condition><then>
+    <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return></then></if>
+
+  <if>if <condition>(<expr><name><name>elm</name>-&gt;<name>id</name></name> == <name>ELEM_version_name</name></expr>)</condition><then>
+    <expr_stmt><expr><name><name>b</name>-&gt;<name>cdata</name></name> = <call><name>svn_stringbuf_create</name><argument_list>(<argument><expr>""</expr></argument>, <argument><expr><name><name>b</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* This implements the `svn_ra_neon__xml_endelm_cb' prototype. */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>drev_end_element</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>, <param><decl><type><name>int</name></type> <name>state</name></decl></param>,
+                 <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>nspace</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>name</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>drev_baton_t</name> *</type><name>b</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr><name>state</name> == <name>ELEM_version_name</name> &amp;&amp; <name><name>b</name>-&gt;<name>cdata</name></name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><name><name>b</name>-&gt;<name>revision</name></name> = <call><name>SVN_STR_TO_REV</name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>cdata</name>-&gt;<name>data</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>b</name>-&gt;<name>cdata</name></name> = <name>NULL</name></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type><name>svn_ra_neon__get_dated_revision</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                                             <param><decl><type><name>svn_revnum_t</name> *</type><name>revision</name></decl></param>,
+                                             <param><decl><type><name>apr_time_t</name></type> <name>timestamp</name></decl></param>,
+                                             <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_neon__session_t</name> *</type><name>ras</name> <init>= <expr><name><name>session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>body</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>vcc_url</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>drev_baton_t</name> *</type><name>b</name> <init>= <expr><call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>b</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>pool</name></name> = <name>pool</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>cdata</name></name> = <name>NULL</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>revision</name></name> = <name>SVN_INVALID_REVNUM</name></expr>;</expr_stmt>
+
+  <comment type="block">/* Run the 'dated-rev-report' on the VCC url, which is always
+     guaranteed to exist.   */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_ra_neon__get_vcc</name><argument_list>(<argument><expr>&amp;<name>vcc_url</name></expr></argument>, <argument><expr><name>ras</name></expr></argument>, <argument><expr><name><name>ras</name>-&gt;<name>root</name>.<name>path</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name>body</name> = <call><name>apr_psprintf</name><argument_list>(<argument><expr><name>pool</name></expr></argument>,
+                      <argument><expr>"&lt;?xml version=\"1.0\" encoding=\"utf-8\"?&gt;"
+                      "&lt;S:dated-rev-report xmlns:S=\"" <name>SVN_XML_NAMESPACE</name> "\" "
+                      "xmlns:D=\"DAV:\"&gt;"
+                      "&lt;D:" <name>SVN_DAV__CREATIONDATE</name> "&gt;%s&lt;/D:"
+                      <name>SVN_DAV__CREATIONDATE</name> "&gt;&lt;/S:dated-rev-report&gt;"</expr></argument>,
+                      <argument><expr><call><name>svn_time_to_cstring</name><argument_list>(<argument><expr><name>timestamp</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name>err</name> = <call><name>svn_ra_neon__parsed_request</name><argument_list>(<argument><expr><name>ras</name></expr></argument>, <argument><expr>"REPORT"</expr></argument>,
+                                    <argument><expr><name>vcc_url</name></expr></argument>, <argument><expr><name>body</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                    <argument><expr><name>drev_start_element</name></expr></argument>,
+                                    <argument><expr><name>svn_ra_neon__xml_collect_cdata</name></expr></argument>,
+                                    <argument><expr><name>drev_end_element</name></expr></argument>,
+                                    <argument><expr><name>b</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>err</name> &amp;&amp; <name><name>err</name>-&gt;<name>apr_err</name></name> == <name>SVN_ERR_UNSUPPORTED_FEATURE</name></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_quick_wrap</name><argument_list>(<argument><expr><name>err</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Server does not support date-based "
+                                       "operations"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then>
+  <else>else <if>if <condition>(<expr><name>err</name></expr>)</condition><then>
+    <return>return <expr><name>err</name></expr>;</return></then></if></else></if>
+
+  <if>if <condition>(<expr><name><name>b</name>-&gt;<name>revision</name></name> == <name>SVN_INVALID_REVNUM</name></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_INCOMPLETE_DATA</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                            <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Invalid server response to dated-rev request"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <expr_stmt><expr>*<name>revision</name> = <name><name>b</name>-&gt;<name>revision</name></name></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+</unit>

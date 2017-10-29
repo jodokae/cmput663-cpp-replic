@@ -1,0 +1,641 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/httpd-2.4.29/include/util_filter.h"><comment type="block">/* Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */</comment>
+
+<comment type="block">/**
+ * @file util_filter.h
+ * @brief Apache filter library
+ */</comment>
+
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>AP_FILTER_H</name></cpp:ifndef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>AP_FILTER_H</name></cpp:macro></cpp:define>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_buckets.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"httpd.h"</cpp:file></cpp:include>
+
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_HAVE_STDARG_H</name></expr></cpp:if>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;stdarg.h&gt;</cpp:file></cpp:include>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>__cplusplus</name></cpp:ifdef>
+<extern>extern "C" <block>{
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<comment type="block">/**
+ * @brief input filtering modes
+ */</comment>
+<typedef>typedef <type><enum>enum <block>{
+    <comment type="block">/** The filter should return at most readbytes data. */</comment>
+    <decl><name>AP_MODE_READBYTES</name></decl>,
+    <comment type="block">/** The filter should return at most one line of CRLF data.
+     *  (If a potential line is too long or no CRLF is found, the
+     *   filter may return partial data).
+     */</comment>
+    <decl><name>AP_MODE_GETLINE</name></decl>,
+    <comment type="block">/** The filter should implicitly eat any CRLF pairs that it sees. */</comment>
+    <decl><name>AP_MODE_EATCRLF</name></decl>,
+    <comment type="block">/** The filter read should be treated as speculative and any returned
+     *  data should be stored for later retrieval in another mode. */</comment>
+    <decl><name>AP_MODE_SPECULATIVE</name></decl>,
+    <comment type="block">/** The filter read should be exhaustive and read until it can not
+     *  read any more.
+     *  Use this mode with extreme caution.
+     */</comment>
+    <decl><name>AP_MODE_EXHAUSTIVE</name></decl>,
+    <comment type="block">/** The filter should initialize the connection if needed,
+     *  NNTP or FTP over SSL for example.
+     */</comment>
+    <decl><name>AP_MODE_INIT</name></decl>
+}</block></enum></type> <name>ap_input_mode_t</name>;</typedef>
+
+<comment type="block">/**
+ * @defgroup APACHE_CORE_FILTER Filter Chain
+ * @ingroup  APACHE_CORE
+ *
+ * Filters operate using a "chaining" mechanism. The filters are chained
+ * together into a sequence. When output is generated, it is passed through
+ * each of the filters on this chain, until it reaches the end (or "bottom")
+ * and is placed onto the network.
+ *
+ * The top of the chain, the code generating the output, is typically called
+ * a "content generator." The content generator's output is fed into the
+ * filter chain using the standard Apache output mechanisms: ap_rputs(),
+ * ap_rprintf(), ap_rwrite(), etc.
+ *
+ * Each filter is defined by a callback. This callback takes the output from
+ * the previous filter (or the content generator if there is no previous
+ * filter), operates on it, and passes the result to the next filter in the
+ * chain. This pass-off is performed using the ap_fc_* functions, such as
+ * ap_fc_puts(), ap_fc_printf(), ap_fc_write(), etc.
+ *
+ * When content generation is complete, the system will pass an "end of
+ * stream" marker into the filter chain. The filters will use this to flush
+ * out any internal state and to detect incomplete syntax (for example, an
+ * unterminated SSI directive).
+ *
+ * @{
+ */</comment>
+
+<comment type="block">/* forward declare the filter type */</comment>
+<typedef>typedef <type>struct <name>ap_filter_t</name></type> <name>ap_filter_t</name>;</typedef>
+
+<comment type="block">/**
+ * @name Filter callbacks
+ *
+ * This function type is used for filter callbacks. It will be passed a
+ * pointer to "this" filter, and a "bucket brigade" containing the content
+ * to be filtered.
+ *
+ * In filter-&gt;ctx, the callback will find its context. This context is
+ * provided here, so that a filter may be installed multiple times, each
+ * receiving its own per-install context pointer.
+ *
+ * Callbacks are associated with a filter definition, which is specified
+ * by name. See ap_register_input_filter() and ap_register_output_filter()
+ * for setting the association between a name for a filter and its
+ * associated callback (and other information).
+ *
+ * If the initialization function argument passed to the registration
+ * functions is non-NULL, it will be called iff the filter is in the input
+ * or output filter chains and before any data is generated to allow the
+ * filter to prepare for processing.
+ *
+ * The bucket brigade always belongs to the caller, but the filter
+ * is free to use the buckets within it as it sees fit. Normally,
+ * the brigade will be returned empty. Buckets *may not* be retained
+ * between successive calls to the filter unless they have been
+ * "set aside" with a call apr_bucket_setaside. Typically this will
+ * be done with ap_save_brigade(). Buckets removed from the brigade
+ * become the responsibility of the filter, which must arrange for
+ * them to be deleted, either by doing so directly or by inserting
+ * them in a brigade which will subsequently be destroyed.
+ *
+ * For the input and output filters, the return value of a filter should be
+ * an APR status value.  For the init function, the return value should
+ * be an HTTP error code or OK if it was successful.
+ *
+ * @ingroup filter
+ * @{
+ */</comment>
+<typedef>typedef <function_decl><type><name>apr_status_t</name></type> (*<name>ap_out_filter_func</name>)<parameter_list>(<param><decl><type><name>ap_filter_t</name> *</type><name>f</name></decl></param>,
+                                           <param><decl><type><name>apr_bucket_brigade</name> *</type><name>b</name></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>apr_status_t</name></type> (*<name>ap_in_filter_func</name>)<parameter_list>(<param><decl><type><name>ap_filter_t</name> *</type><name>f</name></decl></param>,
+                                          <param><decl><type><name>apr_bucket_brigade</name> *</type><name>b</name></decl></param>,
+                                          <param><decl><type><name>ap_input_mode_t</name></type> <name>mode</name></decl></param>,
+                                          <param><decl><type><name>apr_read_type_e</name></type> <name>block</name></decl></param>,
+                                          <param><decl><type><name>apr_off_t</name></type> <name>readbytes</name></decl></param>)</parameter_list>;</function_decl></typedef>
+<typedef>typedef <function_decl><type><name>int</name></type> (*<name>ap_init_filter_func</name>)<parameter_list>(<param><decl><type><name>ap_filter_t</name> *</type><name>f</name></decl></param>)</parameter_list>;</function_decl></typedef>
+
+<typedef>typedef <type><union>union <name>ap_filter_func</name> <block>{
+    <decl_stmt><decl><type><name>ap_out_filter_func</name></type> <name>out_func</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>ap_in_filter_func</name></type> <name>in_func</name></decl>;</decl_stmt>
+}</block></union></type> <name>ap_filter_func</name>;</typedef>
+
+<comment type="block">/** @} */</comment>
+
+<comment type="block">/**
+ * Filters have different types/classifications. These are used to group
+ * and sort the filters to properly sequence their operation.
+ *
+ * The types have a particular sort order, which allows us to insert them
+ * into the filter chain in a determistic order. Within a particular grouping,
+ * the ordering is equivalent to the order of calls to ap_add_*_filter().
+ */</comment>
+<typedef>typedef <type><enum>enum <block>{
+    <comment type="block">/** These filters are used to alter the content that is passed through
+     *  them. Examples are SSI or PHP. */</comment>
+    <decl><name>AP_FTYPE_RESOURCE</name>     <init>= <expr>10</expr></init></decl>,
+    <comment type="block">/** These filters are used to alter the content as a whole, but after all
+     *  AP_FTYPE_RESOURCE filters are executed.  These filters should not
+     *  change the content-type.  An example is deflate.  */</comment>
+    <decl><name>AP_FTYPE_CONTENT_SET</name>  <init>= <expr>20</expr></init></decl>,
+    <comment type="block">/** These filters are used to handle the protocol between server and
+     *  client.  Examples are HTTP and POP. */</comment>
+    <decl><name>AP_FTYPE_PROTOCOL</name>     <init>= <expr>30</expr></init></decl>,
+    <comment type="block">/** These filters implement transport encodings (e.g., chunking). */</comment>
+    <decl><name>AP_FTYPE_TRANSCODE</name>    <init>= <expr>40</expr></init></decl>,
+    <comment type="block">/** These filters will alter the content, but in ways that are
+     *  more strongly associated with the connection.  Examples are
+     *  splitting an HTTP connection into multiple requests and
+     *  buffering HTTP responses across multiple requests.
+     *
+     *  It is important to note that these types of filters are not
+     *  allowed in a sub-request. A sub-request's output can certainly
+     *  be filtered by ::AP_FTYPE_RESOURCE filters, but all of the "final
+     *  processing" is determined by the main request. */</comment>
+    <decl><name>AP_FTYPE_CONNECTION</name>  <init>= <expr>50</expr></init></decl>,
+    <comment type="block">/** These filters don't alter the content.  They are responsible for
+     *  sending/receiving data to/from the client. */</comment>
+    <decl><name>AP_FTYPE_NETWORK</name>     <init>= <expr>60</expr></init></decl>
+}</block></enum></type> <name>ap_filter_type</name>;</typedef>
+
+<comment type="block">/**
+ * This is the request-time context structure for an installed filter (in
+ * the output filter chain). It provides the callback to use for filtering,
+ * the request this filter is associated with (which is important when
+ * an output chain also includes sub-request filters), the context for this
+ * installed filter, and the filter ordering/chaining fields.
+ *
+ * Filter callbacks are free to use -&gt;ctx as they please, to store context
+ * during the filter process. Generally, this is superior over associating
+ * the state directly with the request. A callback should not change any of
+ * the other fields.
+ */</comment>
+
+<typedef>typedef <type>struct <name>ap_filter_rec_t</name></type> <name>ap_filter_rec_t</name>;</typedef>
+<typedef>typedef <type>struct <name>ap_filter_provider_t</name></type> <name>ap_filter_provider_t</name>;</typedef>
+
+<comment type="block">/**
+ * @brief This structure is used for recording information about the
+ * registered filters. It associates a name with the filter's callback
+ * and filter type.
+ *
+ * At the moment, these are simply linked in a chain, so a -&gt;next pointer
+ * is available.
+ *
+ * It is used for any filter that can be inserted in the filter chain.
+ * This may be either a httpd-2.0 filter or a mod_filter harness.
+ * In the latter case it contains dispatch, provider and protocol information.
+ * In the former case, the new fields (from dispatch) are ignored.
+ */</comment>
+<struct>struct <name>ap_filter_rec_t</name> <block>{
+    <comment type="block">/** The registered name for this filter */</comment>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>name</name></decl>;</decl_stmt>
+
+    <comment type="block">/** The function to call when this filter is invoked. */</comment>
+    <decl_stmt><decl><type><name>ap_filter_func</name></type> <name>filter_func</name></decl>;</decl_stmt>
+
+    <comment type="block">/** The function to call directly before the handlers are invoked
+     * for a request.  The init function is called once directly
+     * before running the handlers for a request or subrequest.  The
+     * init function is never called for a connection filter (with
+     * ftype &gt;= AP_FTYPE_CONNECTION).  Any use of this function for
+     * filters for protocols other than HTTP is specified by the
+     * module supported that protocol.
+     */</comment>
+    <decl_stmt><decl><type><name>ap_init_filter_func</name></type> <name>filter_init_func</name></decl>;</decl_stmt>
+
+    <comment type="block">/** The next filter_rec in the list */</comment>
+    <decl_stmt><decl><type>struct <name>ap_filter_rec_t</name> *</type><name>next</name></decl>;</decl_stmt>
+
+    <comment type="block">/** Providers for this filter */</comment>
+    <decl_stmt><decl><type><name>ap_filter_provider_t</name> *</type><name>providers</name></decl>;</decl_stmt>
+
+    <comment type="block">/** The type of filter, either AP_FTYPE_CONTENT or AP_FTYPE_CONNECTION.
+     * An AP_FTYPE_CONTENT filter modifies the data based on information
+     * found in the content.  An AP_FTYPE_CONNECTION filter modifies the
+     * data based on the type of connection.
+     */</comment>
+    <decl_stmt><decl><type><name>ap_filter_type</name></type> <name>ftype</name></decl>;</decl_stmt>
+
+    <comment type="block">/** Trace level for this filter */</comment>
+    <decl_stmt><decl><type><name>int</name></type> <name>debug</name></decl>;</decl_stmt>
+
+    <comment type="block">/** Protocol flags for this filter */</comment>
+    <decl_stmt><decl><type><name>unsigned</name> <name>int</name></type> <name>proto_flags</name></decl>;</decl_stmt>
+}</block>;</struct>
+
+<comment type="block">/**
+ * @brief The representation of a filter chain.
+ *
+ * Each request has a list
+ * of these structures which are called in turn to filter the data.  Sub
+ * requests get an exact copy of the main requests filter chain.
+ */</comment>
+<struct>struct <name>ap_filter_t</name> <block>{
+    <comment type="block">/** The internal representation of this filter.  This includes
+     *  the filter's name, type, and the actual function pointer.
+     */</comment>
+    <decl_stmt><decl><type><name>ap_filter_rec_t</name> *</type><name>frec</name></decl>;</decl_stmt>
+
+    <comment type="block">/** A place to store any data associated with the current filter */</comment>
+    <decl_stmt><decl><type><name>void</name> *</type><name>ctx</name></decl>;</decl_stmt>
+
+    <comment type="block">/** The next filter in the chain */</comment>
+    <decl_stmt><decl><type><name>ap_filter_t</name> *</type><name>next</name></decl>;</decl_stmt>
+
+    <comment type="block">/** The request_rec associated with the current filter.  If a sub-request
+     *  adds filters, then the sub-request is the request associated with the
+     *  filter.
+     */</comment>
+    <decl_stmt><decl><type><name>request_rec</name> *</type><name>r</name></decl>;</decl_stmt>
+
+    <comment type="block">/** The conn_rec associated with the current filter.  This is analogous
+     *  to the request_rec, except that it is used for connection filters.
+     */</comment>
+    <decl_stmt><decl><type><name>conn_rec</name> *</type><name>c</name></decl>;</decl_stmt>
+}</block>;</struct>
+
+<comment type="block">/**
+ * Get the current bucket brigade from the next filter on the filter
+ * stack.  The filter returns an apr_status_t value.  If the bottom-most
+ * filter doesn't read from the network, then ::AP_NOBODY_READ is returned.
+ * The bucket brigade will be empty when there is nothing left to get.
+ * @param filter The next filter in the chain
+ * @param bucket The current bucket brigade.  The original brigade passed
+ *               to ap_get_brigade() must be empty.
+ * @param mode   The way in which the data should be read
+ * @param block  How the operations should be performed
+ *               ::APR_BLOCK_READ, ::APR_NONBLOCK_READ
+ * @param readbytes How many bytes to read from the next filter.
+ */</comment>
+<macro><name>AP_DECLARE</name><argument_list>(<argument>apr_status_t</argument>)</argument_list></macro> <macro><name>ap_get_brigade</name><argument_list>(<argument>ap_filter_t *filter</argument>,
+                                        <argument>apr_bucket_brigade *bucket</argument>,
+                                        <argument>ap_input_mode_t mode</argument>,
+                                        <argument>apr_read_type_e block</argument>,
+                                        <argument>apr_off_t readbytes</argument>)</argument_list></macro><empty_stmt>;</empty_stmt>
+
+<comment type="block">/**
+ * Pass the current bucket brigade down to the next filter on the filter
+ * stack.  The filter returns an apr_status_t value.  If the bottom-most
+ * filter doesn't write to the network, then ::AP_NOBODY_WROTE is returned.
+ * @param filter The next filter in the chain
+ * @param bucket The current bucket brigade
+ *
+ * @remark Ownership of the brigade is retained by the caller. On return,
+ *         the contents of the brigade are UNDEFINED, and the caller must
+ *         either call apr_brigade_cleanup or apr_brigade_destroy on
+ *         the brigade.
+ */</comment>
+<macro><name>AP_DECLARE</name><argument_list>(<argument>apr_status_t</argument>)</argument_list></macro> <expr_stmt><expr><call><name>ap_pass_brigade</name><argument_list>(<argument><expr><name>ap_filter_t</name> *<name>filter</name></expr></argument>,
+                                         <argument><expr><name>apr_bucket_brigade</name> *<name>bucket</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<comment type="block">/**
+ * Pass the current bucket brigade down to the next filter on the filter
+ * stack checking for filter errors.  The filter returns an apr_status_t value.
+ * Returns ::OK if the brigade is successfully passed
+ *         ::AP_FILTER_ERROR on a filter error
+ *         ::HTTP_INTERNAL_SERVER_ERROR on all other errors
+ * @param r      The request rec
+ * @param bucket The current bucket brigade
+ * @param fmt The format string. If NULL defaults to "ap_pass_brigade returned"
+ * @param ... The arguments to use to fill out the format string
+ * @remark Ownership of the brigade is retained by the caller. On return,
+ *         the contents of the brigade are UNDEFINED, and the caller must
+ *         either call apr_brigade_cleanup or apr_brigade_destroy on
+ *         the brigade.
+ */</comment>
+<macro><name>AP_DECLARE</name><argument_list>(<argument>apr_status_t</argument>)</argument_list></macro> <macro><name>ap_pass_brigade_fchk</name><argument_list>(<argument>request_rec *r</argument>,
+                                              <argument>apr_bucket_brigade *bucket</argument>,
+                                              <argument>const char *fmt</argument>,
+                                              <argument>...</argument>)</argument_list></macro>
+                                              <expr_stmt><expr><call><name>__attribute__</name><argument_list>(<argument><expr>(<call><name>format</name><argument_list>(<argument><expr><name>printf</name></expr></argument>,<argument><expr>3</expr></argument>,<argument><expr>4</expr></argument>)</argument_list></call>)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<comment type="block">/**
+ * This function is used to register an input filter with the system.
+ * After this registration is performed, then a filter may be added
+ * into the filter chain by using ap_add_input_filter() and simply
+ * specifying the name.
+ *
+ * @param name The name to attach to the filter function
+ * @param filter_func The filter function to name
+ * @param filter_init The function to call before the filter handlers
+                      are invoked
+ * @param ftype The type of filter function, either ::AP_FTYPE_CONTENT_SET or
+ *              ::AP_FTYPE_CONNECTION
+ * @see add_input_filter()
+ */</comment>
+<macro><name>AP_DECLARE</name><argument_list>(<argument>ap_filter_rec_t *</argument>)</argument_list></macro> <macro><name>ap_register_input_filter</name><argument_list>(<argument>const char *name</argument>,
+                                          <argument>ap_in_filter_func filter_func</argument>,
+                                          <argument>ap_init_filter_func filter_init</argument>,
+                                          <argument>ap_filter_type ftype</argument>)</argument_list></macro><empty_stmt>;</empty_stmt>
+
+<comment type="block">/** @deprecated @see ap_register_output_filter_protocol */</comment>
+<macro><name>AP_DECLARE</name><argument_list>(<argument>ap_filter_rec_t *</argument>)</argument_list></macro> <macro><name>ap_register_output_filter</name><argument_list>(<argument>const char *name</argument>,
+                                            <argument>ap_out_filter_func filter_func</argument>,
+                                            <argument>ap_init_filter_func filter_init</argument>,
+                                            <argument>ap_filter_type ftype</argument>)</argument_list></macro><empty_stmt>;</empty_stmt>
+
+<comment type="block">/* For httpd-?.? I suggest replacing the above with
+#define ap_register_output_filter(name,ffunc,init,ftype) \
+             ap_register_output_filter_protocol(name,ffunc,init,ftype,0)
+*/</comment>
+
+<comment type="block">/**
+ * This function is used to register an output filter with the system.
+ * After this registration is performed, then a filter may be added
+ * directly to the filter chain by using ap_add_output_filter() and
+ * simply specifying the name, or as a provider under mod_filter.
+ *
+ * @param name The name to attach to the filter function
+ * @param filter_func The filter function to name
+ * @param filter_init The function to call before the filter handlers
+ *                    are invoked
+ * @param ftype The type of filter function, either ::AP_FTYPE_CONTENT_SET or
+ *              ::AP_FTYPE_CONNECTION
+ * @param proto_flags Protocol flags: logical OR of AP_FILTER_PROTO_* bits
+ * @return the filter rec
+ * @see ap_add_output_filter()
+ */</comment>
+<macro><name>AP_DECLARE</name><argument_list>(<argument>ap_filter_rec_t *</argument>)</argument_list></macro> <macro><name>ap_register_output_filter_protocol</name><argument_list>(
+                                            <argument>const char *name</argument>,
+                                            <argument>ap_out_filter_func filter_func</argument>,
+                                            <argument>ap_init_filter_func filter_init</argument>,
+                                            <argument>ap_filter_type ftype</argument>,
+                                            <argument>unsigned int proto_flags</argument>)</argument_list></macro><empty_stmt>;</empty_stmt>
+
+<comment type="block">/**
+ * Adds a named filter into the filter chain on the specified request record.
+ * The filter will be installed with the specified context pointer.
+ *
+ * Filters added in this way will always be placed at the end of the filters
+ * that have the same type (thus, the filters have the same order as the
+ * calls to ap_add_filter). If the current filter chain contains filters
+ * from another request, then this filter will be added before those other
+ * filters.
+ *
+ * To re-iterate that last comment.  This function is building a FIFO
+ * list of filters.  Take note of that when adding your filter to the chain.
+ *
+ * @param name The name of the filter to add
+ * @param ctx Context data to provide to the filter
+ * @param r The request to add this filter for (or NULL if it isn't associated with a request)
+ * @param c The connection to add the fillter for
+ */</comment>
+<macro><name>AP_DECLARE</name><argument_list>(<argument>ap_filter_t *</argument>)</argument_list></macro> <expr_stmt><expr><call><name>ap_add_input_filter</name><argument_list>(<argument><expr>const <name>char</name> *<name>name</name></expr></argument>, <argument><expr><name>void</name> *<name>ctx</name></expr></argument>,
+                                              <argument><expr><name>request_rec</name> *<name>r</name></expr></argument>, <argument><expr><name>conn_rec</name> *<name>c</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<comment type="block">/**
+ * Variant of ap_add_input_filter() that accepts a registered filter handle
+ * (as returned by ap_register_input_filter()) rather than a filter name
+ *
+ * @param f The filter handle to add
+ * @param ctx Context data to provide to the filter
+ * @param r The request to add this filter for (or NULL if it isn't associated with a request)
+ * @param c The connection to add the fillter for
+ */</comment>
+<macro><name>AP_DECLARE</name><argument_list>(<argument>ap_filter_t *</argument>)</argument_list></macro> <expr_stmt><expr><call><name>ap_add_input_filter_handle</name><argument_list>(<argument><expr><name>ap_filter_rec_t</name> *<name>f</name></expr></argument>,
+                                                     <argument><expr><name>void</name> *<name>ctx</name></expr></argument>,
+                                                     <argument><expr><name>request_rec</name> *<name>r</name></expr></argument>,
+                                                     <argument><expr><name>conn_rec</name> *<name>c</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<comment type="block">/**
+ * Returns the filter handle for use with ap_add_input_filter_handle.
+ *
+ * @param name The filter name to look up
+ */</comment>
+<macro><name>AP_DECLARE</name><argument_list>(<argument>ap_filter_rec_t *</argument>)</argument_list></macro> <expr_stmt><expr><call><name>ap_get_input_filter_handle</name><argument_list>(<argument><expr>const <name>char</name> *<name>name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<comment type="block">/**
+ * Add a filter to the current request.  Filters are added in a FIFO manner.
+ * The first filter added will be the first filter called.
+ * @param name The name of the filter to add
+ * @param ctx Context data to set in the filter
+ * @param r The request to add this filter for (or NULL if it isn't associated with a request)
+ * @param c The connection to add this filter for
+ * @note If adding a connection-level output filter (i.e. where the type
+ * is &gt;= AP_FTYPE_CONNECTION) during processing of a request, the request
+ * object r must be passed in to ensure the filter chains are modified
+ * correctly.  f-&gt;r will still be initialized as NULL in the new filter.
+ */</comment>
+<macro><name>AP_DECLARE</name><argument_list>(<argument>ap_filter_t *</argument>)</argument_list></macro> <expr_stmt><expr><call><name>ap_add_output_filter</name><argument_list>(<argument><expr>const <name>char</name> *<name>name</name></expr></argument>, <argument><expr><name>void</name> *<name>ctx</name></expr></argument>,
+                                               <argument><expr><name>request_rec</name> *<name>r</name></expr></argument>, <argument><expr><name>conn_rec</name> *<name>c</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<comment type="block">/**
+ * Variant of ap_add_output_filter() that accepts a registered filter handle
+ * (as returned by ap_register_output_filter()) rather than a filter name
+ *
+ * @param f The filter handle to add
+ * @param ctx Context data to set in the filter
+ * @param r The request to add this filter for (or NULL if it isn't associated with a request)
+ * @param c The connection to add the filter for
+ * @note If adding a connection-level output filter (i.e. where the type
+ * is &gt;= AP_FTYPE_CONNECTION) during processing of a request, the request
+ * object r must be passed in to ensure the filter chains are modified
+ * correctly.  f-&gt;r will still be initialized as NULL in the new filter.
+ */</comment>
+<macro><name>AP_DECLARE</name><argument_list>(<argument>ap_filter_t *</argument>)</argument_list></macro> <expr_stmt><expr><call><name>ap_add_output_filter_handle</name><argument_list>(<argument><expr><name>ap_filter_rec_t</name> *<name>f</name></expr></argument>,
+                                                      <argument><expr><name>void</name> *<name>ctx</name></expr></argument>,
+                                                      <argument><expr><name>request_rec</name> *<name>r</name></expr></argument>,
+                                                      <argument><expr><name>conn_rec</name> *<name>c</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<comment type="block">/**
+ * Returns the filter handle for use with ap_add_output_filter_handle.
+ *
+ * @param name The filter name to look up
+ */</comment>
+<macro><name>AP_DECLARE</name><argument_list>(<argument>ap_filter_rec_t *</argument>)</argument_list></macro> <expr_stmt><expr><call><name>ap_get_output_filter_handle</name><argument_list>(<argument><expr>const <name>char</name> *<name>name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<comment type="block">/**
+ * Remove an input filter from either the request or connection stack
+ * it is associated with.
+ * @param f The filter to remove
+ */</comment>
+
+<macro><name>AP_DECLARE</name><argument_list>(<argument>void</argument>)</argument_list></macro> <expr_stmt><expr><call><name>ap_remove_input_filter</name><argument_list>(<argument><expr><name>ap_filter_t</name> *<name>f</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<comment type="block">/**
+ * Remove an output filter from either the request or connection stack
+ * it is associated with.
+ * @param f The filter to remove
+ */</comment>
+
+<macro><name>AP_DECLARE</name><argument_list>(<argument>void</argument>)</argument_list></macro> <expr_stmt><expr><call><name>ap_remove_output_filter</name><argument_list>(<argument><expr><name>ap_filter_t</name> *<name>f</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<comment type="block">/**
+ * Remove an input filter from either the request or connection stack
+ * it is associated with.
+ * @param next   The filter stack to search
+ * @param handle The filter handle (name) to remove
+ * @return APR_SUCCESS on removal or error
+ */</comment>
+<macro><name>AP_DECLARE</name><argument_list>(<argument>apr_status_t</argument>)</argument_list></macro> <expr_stmt><expr><call><name>ap_remove_input_filter_byhandle</name><argument_list>(<argument><expr><name>ap_filter_t</name> *<name>next</name></expr></argument>,
+                                                         <argument><expr>const <name>char</name> *<name>handle</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<comment type="block">/**
+ * Remove an output filter from either the request or connection stack
+ * it is associated with.
+ * @param next   The filter stack to search
+ * @param handle The filter handle (name) to remove
+ * @return APR_SUCCESS on removal or error
+ */</comment>
+<macro><name>AP_DECLARE</name><argument_list>(<argument>apr_status_t</argument>)</argument_list></macro> <expr_stmt><expr><call><name>ap_remove_output_filter_byhandle</name><argument_list>(<argument><expr><name>ap_filter_t</name> *<name>next</name></expr></argument>,
+                                                          <argument><expr>const <name>char</name> *<name>handle</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<comment type="block">/* The next two filters are for abstraction purposes only.  They could be
+ * done away with, but that would require that we break modules if we ever
+ * want to change our filter registration method.  The basic idea, is that
+ * all filters have a place to store data, the ctx pointer.  These functions
+ * fill out that pointer with a bucket brigade, and retrieve that data on
+ * the next call.  The nice thing about these functions, is that they
+ * automatically concatenate the bucket brigades together for you.  This means
+ * that if you have already stored a brigade in the filters ctx pointer, then
+ * when you add more it will be tacked onto the end of that brigade.  When
+ * you retrieve data, if you pass in a bucket brigade to the get function,
+ * it will append the current brigade onto the one that you are retrieving.
+ */</comment>
+
+<comment type="block">/**
+ * prepare a bucket brigade to be setaside.  If a different brigade was
+ * set-aside earlier, then the two brigades are concatenated together.
+ * @param f The current filter
+ * @param save_to The brigade that was previously set-aside.  Regardless, the
+ *             new bucket brigade is returned in this location.
+ * @param b The bucket brigade to save aside.  This brigade is always empty
+ *          on return
+ * @param p Ensure that all data in the brigade lives as long as this pool
+ */</comment>
+<macro><name>AP_DECLARE</name><argument_list>(<argument>apr_status_t</argument>)</argument_list></macro> <expr_stmt><expr><call><name>ap_save_brigade</name><argument_list>(<argument><expr><name>ap_filter_t</name> *<name>f</name></expr></argument>,
+                                         <argument><expr><name>apr_bucket_brigade</name> **<name>save_to</name></expr></argument>,
+                                         <argument><expr><name>apr_bucket_brigade</name> **<name>b</name></expr></argument>, <argument><expr><name>apr_pool_t</name> *<name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<comment type="block">/**
+ * Flush function for apr_brigade_* calls.  This calls ap_pass_brigade
+ * to flush the brigade if the brigade buffer overflows.
+ * @param bb The brigade to flush
+ * @param ctx The filter to pass the brigade to
+ * @note this function has nothing to do with FLUSH buckets. It is simply
+ * a way to flush content out of a brigade and down a filter stack.
+ */</comment>
+<macro><name>AP_DECLARE_NONSTD</name><argument_list>(<argument>apr_status_t</argument>)</argument_list></macro> <expr_stmt><expr><call><name>ap_filter_flush</name><argument_list>(<argument><expr><name>apr_bucket_brigade</name> *<name>bb</name></expr></argument>,
+                                                <argument><expr><name>void</name> *<name>ctx</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<comment type="block">/**
+ * Flush the current brigade down the filter stack.
+ * @param f The filter we are passing to
+ * @param bb The brigade to flush
+ */</comment>
+<macro><name>AP_DECLARE</name><argument_list>(<argument>apr_status_t</argument>)</argument_list></macro> <expr_stmt><expr><call><name>ap_fflush</name><argument_list>(<argument><expr><name>ap_filter_t</name> *<name>f</name></expr></argument>, <argument><expr><name>apr_bucket_brigade</name> *<name>bb</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<comment type="block">/**
+ * Write a buffer for the current filter, buffering if possible.
+ * @param f the filter we are writing to
+ * @param bb The brigade to buffer into
+ * @param data The data to write
+ * @param nbyte The number of bytes in the data
+ */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>ap_fwrite</name><parameter_list>(<param><type><name>f</name></type></param>, <param><type><name>bb</name></type></param>, <param><type><name>data</name></type></param>, <param><type><name>nbyte</name></type></param>)</parameter_list></cpp:macro> \
+        <cpp:value>apr_brigade_write(bb, ap_filter_flush, f, data, nbyte)</cpp:value></cpp:define>
+
+<comment type="block">/**
+ * Write a buffer for the current filter, buffering if possible.
+ * @param f the filter we are writing to
+ * @param bb The brigade to buffer into
+ * @param str The string to write
+ */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>ap_fputs</name><parameter_list>(<param><type><name>f</name></type></param>, <param><type><name>bb</name></type></param>, <param><type><name>str</name></type></param>)</parameter_list></cpp:macro> \
+        <cpp:value>apr_brigade_write(bb, ap_filter_flush, f, str, strlen(str))</cpp:value></cpp:define>
+
+<comment type="block">/**
+ * Write a character for the current filter, buffering if possible.
+ * @param f the filter we are writing to
+ * @param bb The brigade to buffer into
+ * @param c The character to write
+ */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>ap_fputc</name><parameter_list>(<param><type><name>f</name></type></param>, <param><type><name>bb</name></type></param>, <param><type><name>c</name></type></param>)</parameter_list></cpp:macro> \
+        <cpp:value>apr_brigade_putc(bb, ap_filter_flush, f, c)</cpp:value></cpp:define>
+
+<comment type="block">/**
+ * Write an unspecified number of strings to the current filter
+ * @param f the filter we are writing to
+ * @param bb The brigade to buffer into
+ * @param ... The strings to write
+ */</comment>
+<macro><name>AP_DECLARE_NONSTD</name><argument_list>(<argument>apr_status_t</argument>)</argument_list></macro> <macro><name>ap_fputstrs</name><argument_list>(<argument>ap_filter_t *f</argument>,
+                                            <argument>apr_bucket_brigade *bb</argument>,
+                                            <argument>...</argument>)</argument_list></macro>
+                                <expr_stmt><expr><name>AP_FN_ATTR_SENTINEL</name></expr>;</expr_stmt>
+
+<comment type="block">/**
+ * Output data to the filter in printf format
+ * @param f the filter we are writing to
+ * @param bb The brigade to buffer into
+ * @param fmt The format string
+ * @param ... The arguments to use to fill out the format string
+ */</comment>
+<macro><name>AP_DECLARE_NONSTD</name><argument_list>(<argument>apr_status_t</argument>)</argument_list></macro> <macro><name>ap_fprintf</name><argument_list>(<argument>ap_filter_t *f</argument>,
+                                           <argument>apr_bucket_brigade *bb</argument>,
+                                           <argument>const char *fmt</argument>,
+                                           <argument>...</argument>)</argument_list></macro>
+        <expr_stmt><expr><call><name>__attribute__</name><argument_list>(<argument><expr>(<call><name>format</name><argument_list>(<argument><expr><name>printf</name></expr></argument>,<argument><expr>3</expr></argument>,<argument><expr>4</expr></argument>)</argument_list></call>)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<comment type="block">/**
+ * set protocol requirements for an output content filter
+ * (only works with AP_FTYPE_RESOURCE and AP_FTYPE_CONTENT_SET)
+ * @param f the filter in question
+ * @param proto_flags Logical OR of AP_FILTER_PROTO_* bits
+ */</comment>
+<macro><name>AP_DECLARE</name><argument_list>(<argument>void</argument>)</argument_list></macro> <macro><name>ap_filter_protocol</name><argument_list>(<argument>ap_filter_t* f</argument>, <argument>unsigned int proto_flags</argument>)</argument_list></macro><empty_stmt>;</empty_stmt>
+
+<comment type="block">/** Filter changes contents (so invalidating checksums/etc) */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>AP_FILTER_PROTO_CHANGE</name></cpp:macro> <cpp:value>0x1</cpp:value></cpp:define>
+
+<comment type="block">/** Filter changes length of contents (so invalidating content-length/etc) */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>AP_FILTER_PROTO_CHANGE_LENGTH</name></cpp:macro> <cpp:value>0x2</cpp:value></cpp:define>
+
+<comment type="block">/** Filter requires complete input and can't work on byteranges */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>AP_FILTER_PROTO_NO_BYTERANGE</name></cpp:macro> <cpp:value>0x4</cpp:value></cpp:define>
+
+<comment type="block">/** Filter should not run in a proxy */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>AP_FILTER_PROTO_NO_PROXY</name></cpp:macro> <cpp:value>0x8</cpp:value></cpp:define>
+
+<comment type="block">/** Filter makes output non-cacheable */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>AP_FILTER_PROTO_NO_CACHE</name></cpp:macro> <cpp:value>0x10</cpp:value></cpp:define>
+
+<comment type="block">/** Filter is incompatible with "Cache-Control: no-transform" */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>AP_FILTER_PROTO_TRANSFORM</name></cpp:macro> <cpp:value>0x20</cpp:value></cpp:define>
+
+<comment type="block">/**
+ * @}
+ */</comment>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>__cplusplus</name></cpp:ifdef>
+}</block></extern>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>  <comment type="block">/* !AP_FILTER_H */</comment>
+</unit>

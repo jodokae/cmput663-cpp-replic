@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/cpython-2.6.1/source/Objects/stringlib/localeutil.h"><comment type="block">/* stringlib: locale related helpers implementation */</comment>
+
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>STRINGLIB_LOCALEUTIL_H</name></cpp:ifndef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>STRINGLIB_LOCALEUTIL_H</name></cpp:macro></cpp:define>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;locale.h&gt;</cpp:file></cpp:include>
+
+<comment type="block">/**
+ * _Py_InsertThousandsGrouping:
+ * @buffer: A pointer to the start of a string.
+ * @n_buffer: The length of the string.
+ * @n_digits: The number of digits in the string, in which we want
+ *            to put the grouping chars.
+ * @buf_size: The maximum size of the buffer pointed to by buffer.
+ * @count: If non-NULL, points to a variable that will receive the
+ *         number of characters we need to insert (and no formatting
+ *         will actually occur).
+ * @append_zero_char: If non-zero, put a trailing zero at the end of
+ *         of the resulting string, if and only if we modified the
+ *         string.
+ *
+ * Inserts thousand grouping characters (as defined in the current
+ *  locale) into the string between buffer and buffer+n_digits.  If
+ *  count is non-NULL, don't do any formatting, just count the number
+ *  of characters to insert.  This is used by the caller to
+ *  appropriately resize the buffer, if needed.  If count is non-NULL,
+ *  buffer can be NULL (it is not dereferenced at all in that case).
+ *
+ * Return value: 0 on error, else 1.  Note that no error can occur if
+ *  count is non-NULL.
+ *
+ * This name won't be used, the includer of this file should define
+ *  it to be the actual function name, based on unicode or string.
+ **/</comment>
+<function><type><name>int</name></type>
+<name>_Py_InsertThousandsGrouping</name><parameter_list>(<param><decl><type><name>STRINGLIB_CHAR</name> *</type><name>buffer</name></decl></param>,
+			    <param><decl><type><name>Py_ssize_t</name></type> <name>n_buffer</name></decl></param>,
+			    <param><decl><type><name>Py_ssize_t</name></type> <name>n_digits</name></decl></param>,
+			    <param><decl><type><name>Py_ssize_t</name></type> <name>buf_size</name></decl></param>,
+			    <param><decl><type><name>Py_ssize_t</name> *</type><name>count</name></decl></param>,
+			    <param><decl><type><name>int</name></type> <name>append_zero_char</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type>struct <name>lconv</name> *</type><name>locale_data</name> <init>= <expr><call><name>localeconv</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>grouping</name> <init>= <expr><name><name>locale_data</name>-&gt;<name>grouping</name></name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>thousands_sep</name> <init>= <expr><name><name>locale_data</name>-&gt;<name>thousands_sep</name></name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>thousands_sep_len</name> <init>= <expr><call><name>strlen</name><argument_list>(<argument><expr><name>thousands_sep</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>STRINGLIB_CHAR</name> *</type><name>pend</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt> <comment type="block">/* current end of buffer */</comment>
+	<decl_stmt><decl><type><name>STRINGLIB_CHAR</name> *</type><name>pmax</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt> <comment type="block">/* max of buffer */</comment>
+	<decl_stmt><decl><type><name>char</name></type> <name>current_grouping</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>remaining</name> <init>= <expr><name>n_digits</name></expr></init></decl>;</decl_stmt> <comment type="block">/* Number of chars remaining to
+					    be looked at */</comment>
+
+	<comment type="block">/* Initialize the character count, if we're just counting. */</comment>
+	<if>if <condition>(<expr><name>count</name></expr>)</condition><then>
+		<expr_stmt><expr>*<name>count</name> = 0</expr>;</expr_stmt></then>
+	<else>else <block>{
+		<comment type="block">/* We're not just counting, we're modifying buffer */</comment>
+		<expr_stmt><expr><name>pend</name> = <name>buffer</name> + <name>n_buffer</name></expr>;</expr_stmt>
+		<expr_stmt><expr><name>pmax</name> = <name>buffer</name> + <name>buf_size</name></expr>;</expr_stmt>
+	}</block></else></if>
+
+	<comment type="block">/* Starting at the end and working right-to-left, keep track of
+	   what grouping needs to be added and insert that. */</comment>
+	<expr_stmt><expr><name>current_grouping</name> = *<name>grouping</name>++</expr>;</expr_stmt>
+
+	<comment type="block">/* If the first character is 0, perform no grouping at all. */</comment>
+	<if>if <condition>(<expr><name>current_grouping</name> == 0</expr>)</condition><then>
+		<return>return <expr>1</expr>;</return></then></if>
+
+	<while>while <condition>(<expr><name>remaining</name> &gt; <name>current_grouping</name></expr>)</condition> <block>{
+		<comment type="block">/* Always leave buffer and pend valid at the end of this
+		   loop, since we might leave with a return statement. */</comment>
+
+		<expr_stmt><expr><name>remaining</name> -= <name>current_grouping</name></expr>;</expr_stmt>
+		<if>if <condition>(<expr><name>count</name></expr>)</condition><then> <block>{
+			<comment type="block">/* We're only counting, not touching the memory. */</comment>
+			<expr_stmt><expr>*<name>count</name> += <name>thousands_sep_len</name></expr>;</expr_stmt>
+		}</block></then>
+		<else>else <block>{
+			<comment type="block">/* Do the formatting. */</comment>
+
+			<decl_stmt><decl><type><name>STRINGLIB_CHAR</name> *</type><name>plast</name> <init>= <expr><name>buffer</name> + <name>remaining</name></expr></init></decl>;</decl_stmt>
+
+			<comment type="block">/* Is there room to insert thousands_sep_len chars? */</comment>
+			<if>if <condition>(<expr><name>pmax</name> - <name>pend</name> &lt; <name>thousands_sep_len</name></expr>)</condition><then>
+				<comment type="block">/* No room. */</comment>
+				<return>return <expr>0</expr>;</return></then></if>
+
+			<comment type="block">/* Move the rest of the string down. */</comment>
+			<expr_stmt><expr><call><name>memmove</name><argument_list>(<argument><expr><name>plast</name> + <name>thousands_sep_len</name></expr></argument>,
+				<argument><expr><name>plast</name></expr></argument>,
+				<argument><expr>(<name>pend</name> - <name>plast</name>) * <sizeof>sizeof<argument_list>(<argument><expr><name>STRINGLIB_CHAR</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<comment type="block">/* Copy the thousands_sep chars into the buffer. */</comment>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>STRINGLIB_IS_UNICODE</name></expr></cpp:if>
+			<comment type="block">/* Convert from the char's of the thousands_sep from
+			   the locale into unicode. */</comment>
+			<block>{
+				<decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>i</name></decl>;</decl_stmt>
+				<for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name>thousands_sep_len</name></expr>;</condition> <incr><expr>++<name>i</name></expr></incr>)
+					<expr_stmt><expr><name><name>plast</name><index>[<expr><name>i</name></expr>]</index></name> = <name><name>thousands_sep</name><index>[<expr><name>i</name></expr>]</index></name></expr>;</expr_stmt></for>
+			}</block>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+			<comment type="block">/* No conversion, just memcpy the thousands_sep. */</comment>
+			<expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>plast</name></expr></argument>, <argument><expr><name>thousands_sep</name></expr></argument>, <argument><expr><name>thousands_sep_len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+		}</block></else></if>
+
+		<comment type="block">/* Adjust end pointer. */</comment>
+		<expr_stmt><expr><name>pend</name> += <name>thousands_sep_len</name></expr>;</expr_stmt>
+
+		<comment type="block">/* Move to the next grouping character, unless we're
+		   repeating (which is designated by a grouping of 0). */</comment>
+		<if>if <condition>(<expr>*<name>grouping</name> != 0</expr>)</condition><then> <block>{
+			<expr_stmt><expr><name>current_grouping</name> = *<name>grouping</name>++</expr>;</expr_stmt>
+			<if>if <condition>(<expr><name>current_grouping</name> == <name>CHAR_MAX</name></expr>)</condition><then>
+				<comment type="block">/* We're done. */</comment>
+				<break>break;</break></then></if>
+		}</block></then></if>
+	}</block></while>
+	<if>if <condition>(<expr><name>append_zero_char</name></expr>)</condition><then> <block>{
+		<comment type="block">/* Append a zero character to mark the end of the string,
+		   if there's room. */</comment>
+		<if>if <condition>(<expr><name>pend</name> - (<name>buffer</name> + <name>remaining</name>) &lt; 1</expr>)</condition><then>
+			<comment type="block">/* No room, error. */</comment>
+			<return>return <expr>0</expr>;</return></then></if>
+		<expr_stmt><expr>*<name>pend</name> = 0</expr>;</expr_stmt>
+	}</block></then></if>
+	<return>return <expr>1</expr>;</return>
+}</block></function>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* STRINGLIB_LOCALEUTIL_H */</comment>
+</unit>

@@ -1,0 +1,439 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/subversion-1.5.1/source/subversion/libsvn_delta/depth_filter_editor.c"><comment type="block">/*
+ * depth_filter_editor.c -- provide a svn_delta_editor_t which wraps
+ *                          another editor and provides depth-based filtering
+ *
+ * ====================================================================
+ * Copyright (c) 2000-2004 CollabNet.  All rights reserved.
+ *
+ * This software is licensed as described in the file COPYING, which
+ * you should have received as part of this distribution.  The terms
+ * are also available at http://subversion.tigris.org/license-1.html.
+ * If newer versions of this license are posted there, you may use a
+ * newer version instead, at your option.
+ *
+ * This software consists of voluntary contributions made by many
+ * individuals.  For exact contribution history, see the revision
+ * history and logs, available at http://subversion.tigris.org/.
+ * ====================================================================
+ */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_delta.h"</cpp:file></cpp:include>
+
+<escape char="0xc"/>
+<comment type="block">/*** Batons, and the Toys That Create Them ***/</comment>
+
+<struct>struct <name>edit_baton</name>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>svn_delta_editor_t</name> *</type><name>wrapped_editor</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>void</name> *</type><name>wrapped_edit_baton</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_depth_t</name></type> <name>requested_depth</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>has_target</name></decl>;</decl_stmt>
+}</block>;</struct>
+
+<struct>struct <name>node_baton</name>
+<block>{
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>filtered</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>void</name> *</type><name>edit_baton</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>void</name> *</type><name>wrapped_baton</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>dir_depth</name></decl>;</decl_stmt>
+}</block>;</struct>
+
+<comment type="block">/* Allocate and return a new node_baton structure, populated via the
+   the input to this helper function. */</comment>
+<function><type><specifier>static</specifier> struct <name>node_baton</name> *</type>
+<name>make_node_baton</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>edit_baton</name></decl></param>,
+                <param><decl><type><name>svn_boolean_t</name></type> <name>filtered</name></decl></param>,
+                <param><decl><type><name>int</name></type> <name>dir_depth</name></decl></param>,
+                <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>node_baton</name> *</type><name>b</name> <init>= <expr><call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>b</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>edit_baton</name></name> = <name>edit_baton</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>wrapped_baton</name></name> = <name>NULL</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>filtered</name></name> = <name>filtered</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>dir_depth</name></name> = <name>dir_depth</name></expr>;</expr_stmt>
+  <return>return <expr><name>b</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_boolean_t</name></type>
+<name>okay_to_edit</name><parameter_list>(<param><decl><type>struct <name>edit_baton</name> *</type><name>eb</name></decl></param>,
+             <param><decl><type>struct <name>node_baton</name> *</type><name>pb</name></decl></param>,
+             <param><decl><type><name>svn_node_kind_t</name></type> <name>kind</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>int</name></type> <name>effective_depth</name></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr><name><name>pb</name>-&gt;<name>filtered</name></name></expr>)</condition><then>
+    <return>return <expr><name>FALSE</name></expr>;</return></then></if>
+
+  <expr_stmt><expr><name>effective_depth</name> = <name><name>pb</name>-&gt;<name>dir_depth</name></name> - (<name><name>eb</name>-&gt;<name>has_target</name></name> ? 1 : 0)</expr>;</expr_stmt>
+  <switch>switch <condition>(<expr><name><name>eb</name>-&gt;<name>requested_depth</name></name></expr>)</condition>
+    <block>{
+    <case>case <expr><name>svn_depth_empty</name></expr>:
+      <return>return <expr>(<name>effective_depth</name> &lt;= 0)</expr>;</return>
+    </case><case>case <expr><name>svn_depth_files</name></expr>:
+      <return>return <expr>((<name>effective_depth</name> &lt;= 0)
+              || (<name>kind</name> == <name>svn_node_file</name> &amp;&amp; <name>effective_depth</name> == 1))</expr>;</return>
+    </case><case>case <expr><name>svn_depth_immediates</name></expr>:
+      <return>return <expr>(<name>effective_depth</name> &lt;= 1)</expr>;</return>
+    </case><case>case <expr><name>svn_depth_infinity</name></expr>:
+      <return>return <expr><name>TRUE</name></expr>;</return> <comment type="block">/* Shouldn't reach; see svn_delta_depth_filter_editor() */</comment>
+    </case><default>default:
+      <break>break;</break>
+    </default>}</block></switch>
+  <expr_stmt><expr><call><name>abort</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><name>FALSE</name></expr>;</return>
+}</block></function>
+
+<escape char="0xc"/>
+<comment type="block">/*** Editor Functions ***/</comment>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>set_target_revision</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>edit_baton</name></decl></param>,
+                    <param><decl><type><name>svn_revnum_t</name></type> <name>target_revision</name></decl></param>,
+                    <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>edit_baton</name> *</type><name>eb</name> <init>= <expr><name>edit_baton</name></expr></init></decl>;</decl_stmt>
+
+  <comment type="block">/* Nothing depth-y to filter here. */</comment>
+ <return>return <expr><call><name><name>eb</name>-&gt;<name>wrapped_editor</name>-&gt;<name>set_target_revision</name></name><argument_list>(<argument><expr><name><name>eb</name>-&gt;<name>wrapped_edit_baton</name></name></expr></argument>,
+                                                <argument><expr><name>target_revision</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>open_root</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>edit_baton</name></decl></param>,
+          <param><decl><type><name>svn_revnum_t</name></type> <name>base_revision</name></decl></param>,
+          <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>,
+          <param><decl><type><name>void</name> **</type><name>root_baton</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>edit_baton</name> *</type><name>eb</name> <init>= <expr><name>edit_baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type>struct <name>node_baton</name> *</type><name>b</name></decl>;</decl_stmt>
+
+  <comment type="block">/* The root node always gets through cleanly. */</comment>
+  <expr_stmt><expr><name>b</name> = <call><name>make_node_baton</name><argument_list>(<argument><expr><name>edit_baton</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr>1</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>eb</name>-&gt;<name>wrapped_editor</name>-&gt;<name>open_root</name></name><argument_list>(<argument><expr><name><name>eb</name>-&gt;<name>wrapped_edit_baton</name></name></expr></argument>, <argument><expr><name>base_revision</name></expr></argument>,
+                                        <argument><expr><name>pool</name></expr></argument>, <argument><expr>&amp;<name><name>b</name>-&gt;<name>wrapped_baton</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr>*<name>root_baton</name> = <name>b</name></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>delete_entry</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+             <param><decl><type><name>svn_revnum_t</name></type> <name>base_revision</name></decl></param>,
+             <param><decl><type><name>void</name> *</type><name>parent_baton</name></decl></param>,
+             <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>node_baton</name> *</type><name>pb</name> <init>= <expr><name>parent_baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type>struct <name>edit_baton</name> *</type><name>eb</name> <init>= <expr><name><name>pb</name>-&gt;<name>edit_baton</name></name></expr></init></decl>;</decl_stmt>
+
+  <comment type="block">/* ### FIXME: We don't know the type of the entry, which ordinarily
+     doesn't matter, but is a key (*the* key, in fact) distinction
+     between depth "files" and depths "immediates".  If the server is
+     telling us to delete a subdirectory and our requested depth was
+     "immediates", that's fine; if our requested depth was "files",
+     though, this deletion shouldn't survive filtering.  For now,
+     we'll claim to our helper function that the to-be-deleted thing
+     is a file because that's the conservative route to take. */</comment>
+  <if>if <condition>(<expr><call><name>okay_to_edit</name><argument_list>(<argument><expr><name>eb</name></expr></argument>, <argument><expr><name>pb</name></expr></argument>, <argument><expr><name>svn_node_file</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>eb</name>-&gt;<name>wrapped_editor</name>-&gt;<name>delete_entry</name></name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr><name>base_revision</name></expr></argument>,
+                                             <argument><expr><name><name>pb</name>-&gt;<name>wrapped_baton</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>add_directory</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+              <param><decl><type><name>void</name> *</type><name>parent_baton</name></decl></param>,
+              <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>copyfrom_path</name></decl></param>,
+              <param><decl><type><name>svn_revnum_t</name></type> <name>copyfrom_revision</name></decl></param>,
+              <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>,
+              <param><decl><type><name>void</name> **</type><name>child_baton</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>node_baton</name> *</type><name>pb</name> <init>= <expr><name>parent_baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type>struct <name>edit_baton</name> *</type><name>eb</name> <init>= <expr><name><name>pb</name>-&gt;<name>edit_baton</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type>struct <name>node_baton</name> *</type><name>b</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+
+  <comment type="block">/* Check for sufficient depth. */</comment>
+  <if>if <condition>(<expr><call><name>okay_to_edit</name><argument_list>(<argument><expr><name>eb</name></expr></argument>, <argument><expr><name>pb</name></expr></argument>, <argument><expr><name>svn_node_dir</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><name>b</name> = <call><name>make_node_baton</name><argument_list>(<argument><expr><name>eb</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name><name>pb</name>-&gt;<name>dir_depth</name></name> + 1</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>eb</name>-&gt;<name>wrapped_editor</name>-&gt;<name>add_directory</name></name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr><name><name>pb</name>-&gt;<name>wrapped_baton</name></name></expr></argument>,
+                                                <argument><expr><name>copyfrom_path</name></expr></argument>,
+                                                <argument><expr><name>copyfrom_revision</name></expr></argument>,
+                                                <argument><expr><name>pool</name></expr></argument>, <argument><expr>&amp;<name><name>b</name>-&gt;<name>wrapped_baton</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else
+    <block>{
+      <expr_stmt><expr><name>b</name> = <call><name>make_node_baton</name><argument_list>(<argument><expr><name>eb</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>, <argument><expr><name><name>pb</name>-&gt;<name>dir_depth</name></name> + 1</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if>
+
+  <expr_stmt><expr>*<name>child_baton</name> = <name>b</name></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>open_directory</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+               <param><decl><type><name>void</name> *</type><name>parent_baton</name></decl></param>,
+               <param><decl><type><name>svn_revnum_t</name></type> <name>base_revision</name></decl></param>,
+               <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>,
+               <param><decl><type><name>void</name> **</type><name>child_baton</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>node_baton</name> *</type><name>pb</name> <init>= <expr><name>parent_baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type>struct <name>edit_baton</name> *</type><name>eb</name> <init>= <expr><name><name>pb</name>-&gt;<name>edit_baton</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type>struct <name>node_baton</name> *</type><name>b</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Check for sufficient depth. */</comment>
+  <if>if <condition>(<expr><call><name>okay_to_edit</name><argument_list>(<argument><expr><name>eb</name></expr></argument>, <argument><expr><name>pb</name></expr></argument>, <argument><expr><name>svn_node_dir</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><name>b</name> = <call><name>make_node_baton</name><argument_list>(<argument><expr><name>eb</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name><name>pb</name>-&gt;<name>dir_depth</name></name> + 1</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>eb</name>-&gt;<name>wrapped_editor</name>-&gt;<name>open_directory</name></name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr><name><name>pb</name>-&gt;<name>wrapped_baton</name></name></expr></argument>,
+                                                 <argument><expr><name>base_revision</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>,
+                                                 <argument><expr>&amp;<name><name>b</name>-&gt;<name>wrapped_baton</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else
+    <block>{
+      <expr_stmt><expr><name>b</name> = <call><name>make_node_baton</name><argument_list>(<argument><expr><name>eb</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>, <argument><expr><name><name>pb</name>-&gt;<name>dir_depth</name></name> + 1</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if>
+
+  <expr_stmt><expr>*<name>child_baton</name> = <name>b</name></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>add_file</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+         <param><decl><type><name>void</name> *</type><name>parent_baton</name></decl></param>,
+         <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>copyfrom_path</name></decl></param>,
+         <param><decl><type><name>svn_revnum_t</name></type> <name>copyfrom_revision</name></decl></param>,
+         <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>,
+         <param><decl><type><name>void</name> **</type><name>child_baton</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>node_baton</name> *</type><name>pb</name> <init>= <expr><name>parent_baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type>struct <name>edit_baton</name> *</type><name>eb</name> <init>= <expr><name><name>pb</name>-&gt;<name>edit_baton</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type>struct <name>node_baton</name> *</type><name>b</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+
+  <comment type="block">/* Check for sufficient depth. */</comment>
+  <if>if <condition>(<expr><call><name>okay_to_edit</name><argument_list>(<argument><expr><name>eb</name></expr></argument>, <argument><expr><name>pb</name></expr></argument>, <argument><expr><name>svn_node_file</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><name>b</name> = <call><name>make_node_baton</name><argument_list>(<argument><expr><name>eb</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name><name>pb</name>-&gt;<name>dir_depth</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>eb</name>-&gt;<name>wrapped_editor</name>-&gt;<name>add_file</name></name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr><name><name>pb</name>-&gt;<name>wrapped_baton</name></name></expr></argument>,
+                                           <argument><expr><name>copyfrom_path</name></expr></argument>, <argument><expr><name>copyfrom_revision</name></expr></argument>,
+                                           <argument><expr><name>pool</name></expr></argument>, <argument><expr>&amp;<name><name>b</name>-&gt;<name>wrapped_baton</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else
+    <block>{
+      <expr_stmt><expr><name>b</name> = <call><name>make_node_baton</name><argument_list>(<argument><expr><name>eb</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>, <argument><expr><name><name>pb</name>-&gt;<name>dir_depth</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if>
+
+  <expr_stmt><expr>*<name>child_baton</name> = <name>b</name></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>open_file</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+          <param><decl><type><name>void</name> *</type><name>parent_baton</name></decl></param>,
+          <param><decl><type><name>svn_revnum_t</name></type> <name>base_revision</name></decl></param>,
+          <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>,
+          <param><decl><type><name>void</name> **</type><name>child_baton</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>node_baton</name> *</type><name>pb</name> <init>= <expr><name>parent_baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type>struct <name>edit_baton</name> *</type><name>eb</name> <init>= <expr><name><name>pb</name>-&gt;<name>edit_baton</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type>struct <name>node_baton</name> *</type><name>b</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Check for sufficient depth. */</comment>
+  <if>if <condition>(<expr><call><name>okay_to_edit</name><argument_list>(<argument><expr><name>eb</name></expr></argument>, <argument><expr><name>pb</name></expr></argument>, <argument><expr><name>svn_node_file</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><name>b</name> = <call><name>make_node_baton</name><argument_list>(<argument><expr><name>eb</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name><name>pb</name>-&gt;<name>dir_depth</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>eb</name>-&gt;<name>wrapped_editor</name>-&gt;<name>open_file</name></name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr><name><name>pb</name>-&gt;<name>wrapped_baton</name></name></expr></argument>,
+                                            <argument><expr><name>base_revision</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>,
+                                            <argument><expr>&amp;<name><name>b</name>-&gt;<name>wrapped_baton</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else
+    <block>{
+      <expr_stmt><expr><name>b</name> = <call><name>make_node_baton</name><argument_list>(<argument><expr><name>eb</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>, <argument><expr><name><name>pb</name>-&gt;<name>dir_depth</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if>
+
+  <expr_stmt><expr>*<name>child_baton</name> = <name>b</name></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>apply_textdelta</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>file_baton</name></decl></param>,
+                <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>base_checksum</name></decl></param>,
+                <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>,
+                <param><decl><type><name>svn_txdelta_window_handler_t</name> *</type><name>handler</name></decl></param>,
+                <param><decl><type><name>void</name> **</type><name>handler_baton</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>node_baton</name> *</type><name>fb</name> <init>= <expr><name>file_baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type>struct <name>edit_baton</name> *</type><name>eb</name> <init>= <expr><name><name>fb</name>-&gt;<name>edit_baton</name></name></expr></init></decl>;</decl_stmt>
+
+  <comment type="block">/* For filtered files, we just consume the textdelta. */</comment>
+  <if>if <condition>(<expr><name><name>fb</name>-&gt;<name>filtered</name></name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr>*<name>handler</name> = <name>svn_delta_noop_window_handler</name></expr>;</expr_stmt>
+      <expr_stmt><expr>*<name>handler_baton</name> = <name>NULL</name></expr>;</expr_stmt>
+    }</block></then>
+  <else>else
+    <block>{
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>eb</name>-&gt;<name>wrapped_editor</name>-&gt;<name>apply_textdelta</name></name><argument_list>(<argument><expr><name><name>fb</name>-&gt;<name>wrapped_baton</name></name></expr></argument>,
+                                                  <argument><expr><name>base_checksum</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>,
+                                                  <argument><expr><name>handler</name></expr></argument>, <argument><expr><name>handler_baton</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>close_file</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>file_baton</name></decl></param>,
+           <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>text_checksum</name></decl></param>,
+           <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>node_baton</name> *</type><name>fb</name> <init>= <expr><name>file_baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type>struct <name>edit_baton</name> *</type><name>eb</name> <init>= <expr><name><name>fb</name>-&gt;<name>edit_baton</name></name></expr></init></decl>;</decl_stmt>
+
+  <comment type="block">/* Don't close filtered files. */</comment>
+  <if>if <condition>(<expr>! <name><name>fb</name>-&gt;<name>filtered</name></name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>eb</name>-&gt;<name>wrapped_editor</name>-&gt;<name>close_file</name></name><argument_list>(<argument><expr><name><name>fb</name>-&gt;<name>wrapped_baton</name></name></expr></argument>,
+                                           <argument><expr><name>text_checksum</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>absent_file</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+            <param><decl><type><name>void</name> *</type><name>parent_baton</name></decl></param>,
+            <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>node_baton</name> *</type><name>pb</name> <init>= <expr><name>parent_baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type>struct <name>edit_baton</name> *</type><name>eb</name> <init>= <expr><name><name>pb</name>-&gt;<name>edit_baton</name></name></expr></init></decl>;</decl_stmt>
+
+  <comment type="block">/* Don't report absent items in filtered directories. */</comment>
+  <if>if <condition>(<expr>! <name><name>pb</name>-&gt;<name>filtered</name></name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>eb</name>-&gt;<name>wrapped_editor</name>-&gt;<name>absent_file</name></name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr><name><name>pb</name>-&gt;<name>wrapped_baton</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>close_directory</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>dir_baton</name></decl></param>,
+                <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>node_baton</name> *</type><name>db</name> <init>= <expr><name>dir_baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type>struct <name>edit_baton</name> *</type><name>eb</name> <init>= <expr><name><name>db</name>-&gt;<name>edit_baton</name></name></expr></init></decl>;</decl_stmt>
+
+  <comment type="block">/* Don't close filtered directories. */</comment>
+  <if>if <condition>(<expr>! <name><name>db</name>-&gt;<name>filtered</name></name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>eb</name>-&gt;<name>wrapped_editor</name>-&gt;<name>close_directory</name></name><argument_list>(<argument><expr><name><name>db</name>-&gt;<name>wrapped_baton</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>absent_directory</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+                 <param><decl><type><name>void</name> *</type><name>parent_baton</name></decl></param>,
+                 <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>node_baton</name> *</type><name>pb</name> <init>= <expr><name>parent_baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type>struct <name>edit_baton</name> *</type><name>eb</name> <init>= <expr><name><name>pb</name>-&gt;<name>edit_baton</name></name></expr></init></decl>;</decl_stmt>
+
+  <comment type="block">/* Don't report absent items in filtered directories. */</comment>
+  <if>if <condition>(<expr>! <name><name>pb</name>-&gt;<name>filtered</name></name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>eb</name>-&gt;<name>wrapped_editor</name>-&gt;<name>absent_directory</name></name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr><name><name>pb</name>-&gt;<name>wrapped_baton</name></name></expr></argument>,
+                                                 <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>change_file_prop</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>file_baton</name></decl></param>,
+                 <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>name</name></decl></param>,
+                 <param><decl><type><specifier>const</specifier> <name>svn_string_t</name> *</type><name>value</name></decl></param>,
+                 <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>node_baton</name> *</type><name>fb</name> <init>= <expr><name>file_baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type>struct <name>edit_baton</name> *</type><name>eb</name> <init>= <expr><name><name>fb</name>-&gt;<name>edit_baton</name></name></expr></init></decl>;</decl_stmt>
+
+  <comment type="block">/* No propchanges on filtered files. */</comment>
+  <if>if <condition>(<expr>! <name><name>fb</name>-&gt;<name>filtered</name></name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>eb</name>-&gt;<name>wrapped_editor</name>-&gt;<name>change_file_prop</name></name><argument_list>(<argument><expr><name><name>fb</name>-&gt;<name>wrapped_baton</name></name></expr></argument>,
+                                                 <argument><expr><name>name</name></expr></argument>, <argument><expr><name>value</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>change_dir_prop</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>dir_baton</name></decl></param>,
+                <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>name</name></decl></param>,
+                <param><decl><type><specifier>const</specifier> <name>svn_string_t</name> *</type><name>value</name></decl></param>,
+                <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>node_baton</name> *</type><name>db</name> <init>= <expr><name>dir_baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type>struct <name>edit_baton</name> *</type><name>eb</name> <init>= <expr><name><name>db</name>-&gt;<name>edit_baton</name></name></expr></init></decl>;</decl_stmt>
+
+  <comment type="block">/* No propchanges on filtered nodes. */</comment>
+  <if>if <condition>(<expr>! <name><name>db</name>-&gt;<name>filtered</name></name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>eb</name>-&gt;<name>wrapped_editor</name>-&gt;<name>change_dir_prop</name></name><argument_list>(<argument><expr><name><name>db</name>-&gt;<name>wrapped_baton</name></name></expr></argument>,
+                                                <argument><expr><name>name</name></expr></argument>, <argument><expr><name>value</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>close_edit</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>edit_baton</name></decl></param>,
+           <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>edit_baton</name> *</type><name>eb</name> <init>= <expr><name>edit_baton</name></expr></init></decl>;</decl_stmt>
+  <return>return <expr><call><name><name>eb</name>-&gt;<name>wrapped_editor</name>-&gt;<name>close_edit</name></name><argument_list>(<argument><expr><name><name>eb</name>-&gt;<name>wrapped_edit_baton</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_delta_depth_filter_editor</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>svn_delta_editor_t</name> **</type><name>editor</name></decl></param>,
+                              <param><decl><type><name>void</name> **</type><name>edit_baton</name></decl></param>,
+                              <param><decl><type><specifier>const</specifier> <name>svn_delta_editor_t</name> *</type><name>wrapped_editor</name></decl></param>,
+                              <param><decl><type><name>void</name> *</type><name>wrapped_edit_baton</name></decl></param>,
+                              <param><decl><type><name>svn_depth_t</name></type> <name>requested_depth</name></decl></param>,
+                              <param><decl><type><name>svn_boolean_t</name></type> <name>has_target</name></decl></param>,
+                              <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_delta_editor_t</name> *</type><name>depth_filter_editor</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type>struct <name>edit_baton</name> *</type><name>eb</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Easy out: if the caller wants infinite depth, there's nothing to
+     filter, so just return the editor we were supposed to wrap.  And
+     if they've asked for an unknown depth, we can't possibly know
+     what that means, so why bother?  */</comment>
+  <if>if <condition>(<expr>(<name>requested_depth</name> == <name>svn_depth_unknown</name>)
+      || (<name>requested_depth</name> == <name>svn_depth_infinity</name>)</expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr>*<name>editor</name> = <name>wrapped_editor</name></expr>;</expr_stmt>
+      <expr_stmt><expr>*<name>edit_baton</name> = <name>wrapped_edit_baton</name></expr>;</expr_stmt>
+      <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+    }</block></then></if>
+
+  <expr_stmt><expr><name>depth_filter_editor</name> = <call><name>svn_delta_default_editor</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>depth_filter_editor</name>-&gt;<name>set_target_revision</name></name> = <name>set_target_revision</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>depth_filter_editor</name>-&gt;<name>open_root</name></name> = <name>open_root</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>depth_filter_editor</name>-&gt;<name>delete_entry</name></name> = <name>delete_entry</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>depth_filter_editor</name>-&gt;<name>add_directory</name></name> = <name>add_directory</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>depth_filter_editor</name>-&gt;<name>open_directory</name></name> = <name>open_directory</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>depth_filter_editor</name>-&gt;<name>change_dir_prop</name></name> = <name>change_dir_prop</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>depth_filter_editor</name>-&gt;<name>close_directory</name></name> = <name>close_directory</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>depth_filter_editor</name>-&gt;<name>absent_directory</name></name> = <name>absent_directory</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>depth_filter_editor</name>-&gt;<name>add_file</name></name> = <name>add_file</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>depth_filter_editor</name>-&gt;<name>open_file</name></name> = <name>open_file</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>depth_filter_editor</name>-&gt;<name>apply_textdelta</name></name> = <name>apply_textdelta</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>depth_filter_editor</name>-&gt;<name>change_file_prop</name></name> = <name>change_file_prop</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>depth_filter_editor</name>-&gt;<name>close_file</name></name> = <name>close_file</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>depth_filter_editor</name>-&gt;<name>absent_file</name></name> = <name>absent_file</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>depth_filter_editor</name>-&gt;<name>close_edit</name></name> = <name>close_edit</name></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name>eb</name> = <call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>eb</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>eb</name>-&gt;<name>wrapped_editor</name></name> = <name>wrapped_editor</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>eb</name>-&gt;<name>wrapped_edit_baton</name></name> = <name>wrapped_edit_baton</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>eb</name>-&gt;<name>has_target</name></name> = <name>has_target</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>eb</name>-&gt;<name>requested_depth</name></name> = <name>requested_depth</name></expr>;</expr_stmt>
+
+  <expr_stmt><expr>*<name>editor</name> = <name>depth_filter_editor</name></expr>;</expr_stmt>
+  <expr_stmt><expr>*<name>edit_baton</name> = <name>eb</name></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+</unit>

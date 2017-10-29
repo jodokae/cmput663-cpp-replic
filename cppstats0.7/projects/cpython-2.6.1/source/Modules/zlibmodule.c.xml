@@ -1,0 +1,1041 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/cpython-2.6.1/source/Modules/zlibmodule.c"><comment type="block">/* zlibmodule.c -- gzip-compatible data compression */</comment>
+<comment type="block">/* See http://www.gzip.org/zlib/ */</comment>
+
+<comment type="block">/* Windows users:  read Python's PCbuild\readme.txt */</comment>
+
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"Python.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"zlib.h"</cpp:file></cpp:include>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>WITH_THREAD</name></cpp:ifdef>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"pythread.h"</cpp:file></cpp:include>
+
+<comment type="block">/* #defs ripped off from _tkinter.c, even though the situation here is much
+   simpler, because we don't have to worry about waiting for Tcl
+   events!  And, since zlib itself is threadsafe, we don't need to worry
+   about re-entering zlib functions.
+
+   N.B.
+
+   Since ENTER_ZLIB and LEAVE_ZLIB only need to be called on functions
+   that modify the components of preexisting de/compress objects, it
+   could prove to be a performance gain on multiprocessor machines if
+   there was an de/compress object-specific lock.  However, for the
+   moment the ENTER_ZLIB and LEAVE_ZLIB calls are global for ALL
+   de/compress objects.
+ */</comment>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyThread_type_lock</name></type> <name>zlib_lock</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt> <comment type="block">/* initialized on module load */</comment>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>ENTER_ZLIB</name></cpp:macro> \
+	<cpp:value>Py_BEGIN_ALLOW_THREADS \
+	PyThread_acquire_lock(zlib_lock, 1); \
+	Py_END_ALLOW_THREADS</cpp:value></cpp:define>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>LEAVE_ZLIB</name></cpp:macro> \
+	<cpp:value>PyThread_release_lock(zlib_lock);</cpp:value></cpp:define>
+
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>ENTER_ZLIB</name></cpp:macro></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>LEAVE_ZLIB</name></cpp:macro></cpp:define>
+
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<comment type="block">/* The following parameters are copied from zutil.h, version 0.95 */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>DEFLATED</name></cpp:macro>   <cpp:value>8</cpp:value></cpp:define>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>MAX_MEM_LEVEL</name> &gt;= 8</expr></cpp:if>
+<cpp:define>#  <cpp:directive>define</cpp:directive> <cpp:macro><name>DEF_MEM_LEVEL</name></cpp:macro> <cpp:value>8</cpp:value></cpp:define>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+<cpp:define>#  <cpp:directive>define</cpp:directive> <cpp:macro><name>DEF_MEM_LEVEL</name></cpp:macro>  <cpp:value>MAX_MEM_LEVEL</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>DEF_WBITS</name></cpp:macro> <cpp:value>MAX_WBITS</cpp:value></cpp:define>
+
+<comment type="block">/* The output buffer will be increased in chunks of DEFAULTALLOC bytes. */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>DEFAULTALLOC</name></cpp:macro> <cpp:value>(16*1024)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyInit_zlib</name></cpp:macro> <cpp:value>initzlib</cpp:value></cpp:define>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyTypeObject</name></type> <name>Comptype</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyTypeObject</name></type> <name>Decomptype</name></decl>;</decl_stmt>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyObject</name> *</type><name>ZlibError</name></decl>;</decl_stmt>
+
+<typedef>typedef <type><struct>struct
+<block>{
+    <decl_stmt><decl><type><name>PyObject_HEAD</name>
+    <name>z_stream</name></type> <name>zst</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name> *</type><name>unused_data</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name> *</type><name>unconsumed_tail</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>is_initialised</name></decl>;</decl_stmt>
+}</block></struct></type> <name>compobject</name>;</typedef>
+
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>zlib_error</name><parameter_list>(<param><decl><type><name>z_stream</name></type> <name>zst</name></decl></param>, <param><decl><type><name>int</name></type> <name>err</name></decl></param>, <param><decl><type><name>char</name> *</type><name>msg</name></decl></param>)</parameter_list>
+<block>{
+    <if>if <condition>(<expr><name><name>zst</name>.<name>msg</name></name> == <name>Z_NULL</name></expr>)</condition><then>
+	<expr_stmt><expr><call><name>PyErr_Format</name><argument_list>(<argument><expr><name>ZlibError</name></expr></argument>, <argument><expr>"Error %d %s"</expr></argument>, <argument><expr><name>err</name></expr></argument>, <argument><expr><name>msg</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+    <else>else
+	<expr_stmt><expr><call><name>PyErr_Format</name><argument_list>(<argument><expr><name>ZlibError</name></expr></argument>, <argument><expr>"Error %d %s: %.200s"</expr></argument>, <argument><expr><name>err</name></expr></argument>, <argument><expr><name>msg</name></expr></argument>, <argument><expr><name><name>zst</name>.<name>msg</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+}</block></function>
+
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>compressobj__doc__</name></expr></argument>,
+<argument><expr>"compressobj([level]) -- Return a compressor object.\n"
+"\n"
+"Optional arg level is the compression level, in 1-9."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>decompressobj__doc__</name></expr></argument>,
+<argument><expr>"decompressobj([wbits]) -- Return a decompressor object.\n"
+"\n"
+"Optional arg wbits is the window buffer size."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<function><type><specifier>static</specifier> <name>compobject</name> *</type>
+<name>newcompobject</name><parameter_list>(<param><decl><type><name>PyTypeObject</name> *</type><name>type</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>compobject</name> *</type><name>self</name></decl>;</decl_stmt>
+    <expr_stmt><expr><name>self</name> = <call><name>PyObject_New</name><argument_list>(<argument><expr><name>compobject</name></expr></argument>, <argument><expr><name>type</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>self</name> == <name>NULL</name></expr>)</condition><then>
+	<return>return <expr><name>NULL</name></expr>;</return></then></if>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>is_initialised</name></name> = 0</expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>unused_data</name></name> = <call><name>PyString_FromString</name><argument_list>(<argument><expr>""</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name><name>self</name>-&gt;<name>unused_data</name></name> == <name>NULL</name></expr>)</condition><then> <block>{
+	<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>unconsumed_tail</name></name> = <call><name>PyString_FromString</name><argument_list>(<argument><expr>""</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name><name>self</name>-&gt;<name>unconsumed_tail</name></name> == <name>NULL</name></expr>)</condition><then> <block>{
+	<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+    <return>return <expr><name>self</name></expr>;</return>
+}</block></function>
+
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>compress__doc__</name></expr></argument>,
+<argument><expr>"compress(string[, level]) -- Returned compressed string.\n"
+"\n"
+"Optional arg level is the compression level, in 1-9."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>PyZlib_compress</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>PyObject</name> *</type><name>ReturnVal</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>Byte</name> *</type><name>input</name></decl>, *<decl><type ref="prev"/><name>output</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>length</name></decl>, <decl><type ref="prev"/><name>level</name><init>=<expr><name>Z_DEFAULT_COMPRESSION</name></expr></init>, <name>err</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>z_stream</name></type> <name>zst</name></decl>;</decl_stmt>
+
+    <comment type="block">/* require Python string object, optional 'level' arg */</comment>
+    <if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"s#|i:compress"</expr></argument>, <argument><expr>&amp;<name>input</name></expr></argument>, <argument><expr>&amp;<name>length</name></expr></argument>, <argument><expr>&amp;<name>level</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+	<return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+    <expr_stmt><expr><name><name>zst</name>.<name>avail_out</name></name> = <name>length</name> + <name>length</name>/1000 + 12 + 1</expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>output</name> = (<name>Byte</name>*)<call><name>malloc</name><argument_list>(<argument><expr><name><name>zst</name>.<name>avail_out</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>output</name> == <name>NULL</name></expr>)</condition><then> <block>{
+	<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_MemoryError</name></expr></argument>,
+			<argument><expr>"Can't allocate memory to compress data"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/* Past the point of no return.  From here on out, we need to make sure
+       we clean up mallocs &amp; INCREFs. */</comment>
+
+    <expr_stmt><expr><name><name>zst</name>.<name>zalloc</name></name> = (<name>alloc_func</name>)<name>NULL</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>zst</name>.<name>zfree</name></name> = (<name>free_func</name>)<name>Z_NULL</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>zst</name>.<name>next_out</name></name> = (<name>Byte</name> *)<name>output</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>zst</name>.<name>next_in</name></name> = (<name>Byte</name> *)<name>input</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>zst</name>.<name>avail_in</name></name> = <name>length</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name>err</name> = <call><name>deflateInit</name><argument_list>(<argument><expr>&amp;<name>zst</name></expr></argument>, <argument><expr><name>level</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <switch>switch<condition>(<expr><name>err</name></expr>)</condition> <block>{
+    <case>case<expr>(<name>Z_OK</name>)</expr>:
+	<break>break;</break>
+    </case><case>case<expr>(<name>Z_MEM_ERROR</name>)</expr>:
+	<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_MemoryError</name></expr></argument>,
+			<argument><expr>"Out of memory while compressing data"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<goto>goto <name>error</name>;</goto>
+    </case><case>case<expr>(<name>Z_STREAM_ERROR</name>)</expr>:
+	<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>ZlibError</name></expr></argument>,
+			<argument><expr>"Bad compression level"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<goto>goto <name>error</name>;</goto>
+    </case><default>default:
+        <expr_stmt><expr><call><name>deflateEnd</name><argument_list>(<argument><expr>&amp;<name>zst</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>zlib_error</name><argument_list>(<argument><expr><name>zst</name></expr></argument>, <argument><expr><name>err</name></expr></argument>, <argument><expr>"while compressing data"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<goto>goto <name>error</name>;</goto>
+    </default>}</block></switch>
+
+    <expr_stmt><expr><name>Py_BEGIN_ALLOW_THREADS</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name>err</name> = <call><name>deflate</name><argument_list>(<argument><expr>&amp;<name>zst</name></expr></argument>, <argument><expr><name>Z_FINISH</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name>Py_END_ALLOW_THREADS</name></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr><name>err</name> != <name>Z_STREAM_END</name></expr>)</condition><then> <block>{
+	<expr_stmt><expr><call><name>zlib_error</name><argument_list>(<argument><expr><name>zst</name></expr></argument>, <argument><expr><name>err</name></expr></argument>, <argument><expr>"while compressing data"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>deflateEnd</name><argument_list>(<argument><expr>&amp;<name>zst</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<goto>goto <name>error</name>;</goto>
+    }</block></then></if>
+
+    <expr_stmt><expr><name>err</name>=<call><name>deflateEnd</name><argument_list>(<argument><expr>&amp;<name>zst</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>err</name> == <name>Z_OK</name></expr>)</condition><then>
+	<expr_stmt><expr><name>ReturnVal</name> = <call><name>PyString_FromStringAndSize</name><argument_list>(<argument><expr>(<name>char</name> *)<name>output</name></expr></argument>,
+					       <argument><expr><name><name>zst</name>.<name>total_out</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+    <else>else
+	<expr_stmt><expr><call><name>zlib_error</name><argument_list>(<argument><expr><name>zst</name></expr></argument>, <argument><expr><name>err</name></expr></argument>, <argument><expr>"while finishing compression"</expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+
+ <label><name>error</name>:</label>
+    <expr_stmt><expr><call><name>free</name><argument_list>(<argument><expr><name>output</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <return>return <expr><name>ReturnVal</name></expr>;</return>
+}</block></function>
+
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>decompress__doc__</name></expr></argument>,
+<argument><expr>"decompress(string[, wbits[, bufsize]]) -- Return decompressed string.\n"
+"\n"
+"Optional arg wbits is the window buffer size.  Optional arg bufsize is\n"
+"the initial output buffer size."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>PyZlib_decompress</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>PyObject</name> *</type><name>result_str</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>Byte</name> *</type><name>input</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>length</name></decl>, <decl><type ref="prev"/><name>err</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>wsize</name><init>=<expr><name>DEF_WBITS</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>r_strlen</name><init>=<expr><name>DEFAULTALLOC</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>z_stream</name></type> <name>zst</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"s#|in:decompress"</expr></argument>,
+			  <argument><expr>&amp;<name>input</name></expr></argument>, <argument><expr>&amp;<name>length</name></expr></argument>, <argument><expr>&amp;<name>wsize</name></expr></argument>, <argument><expr>&amp;<name>r_strlen</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+	<return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+    <if>if <condition>(<expr><name>r_strlen</name> &lt;= 0</expr>)</condition><then>
+	<expr_stmt><expr><name>r_strlen</name> = 1</expr>;</expr_stmt></then></if>
+
+    <expr_stmt><expr><name><name>zst</name>.<name>avail_in</name></name> = <name>length</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>zst</name>.<name>avail_out</name></name> = <name>r_strlen</name></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr>!(<name>result_str</name> = <call><name>PyString_FromStringAndSize</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>r_strlen</name></expr></argument>)</argument_list></call>)</expr>)</condition><then>
+	<return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+    <expr_stmt><expr><name><name>zst</name>.<name>zalloc</name></name> = (<name>alloc_func</name>)<name>NULL</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>zst</name>.<name>zfree</name></name> = (<name>free_func</name>)<name>Z_NULL</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>zst</name>.<name>next_out</name></name> = (<name>Byte</name> *)<call><name>PyString_AS_STRING</name><argument_list>(<argument><expr><name>result_str</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>zst</name>.<name>next_in</name></name> = (<name>Byte</name> *)<name>input</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name>err</name> = <call><name>inflateInit2</name><argument_list>(<argument><expr>&amp;<name>zst</name></expr></argument>, <argument><expr><name>wsize</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <switch>switch<condition>(<expr><name>err</name></expr>)</condition> <block>{
+    <case>case<expr>(<name>Z_OK</name>)</expr>:
+	<break>break;</break>
+    </case><case>case<expr>(<name>Z_MEM_ERROR</name>)</expr>:
+	<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_MemoryError</name></expr></argument>,
+			<argument><expr>"Out of memory while decompressing data"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<goto>goto <name>error</name>;</goto>
+    </case><default>default:
+        <expr_stmt><expr><call><name>inflateEnd</name><argument_list>(<argument><expr>&amp;<name>zst</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>zlib_error</name><argument_list>(<argument><expr><name>zst</name></expr></argument>, <argument><expr><name>err</name></expr></argument>, <argument><expr>"while preparing to decompress data"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<goto>goto <name>error</name>;</goto>
+    </default>}</block></switch>
+
+    <do>do <block>{
+	<decl_stmt><decl><type><name>Py_BEGIN_ALLOW_THREADS</name></type>
+	<name>err</name><init>=<expr><call><name>inflate</name><argument_list>(<argument><expr>&amp;<name>zst</name></expr></argument>, <argument><expr><name>Z_FINISH</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+	<macro><name>Py_END_ALLOW_THREADS</name></macro>
+
+	<switch>switch<condition>(<expr><name>err</name></expr>)</condition> <block>{
+	<case>case<expr>(<name>Z_STREAM_END</name>)</expr>:
+	    <break>break;</break>
+	</case><case>case<expr>(<name>Z_BUF_ERROR</name>)</expr>:
+	    <comment type="block">/*
+	     * If there is at least 1 byte of room according to zst.avail_out
+	     * and we get this error, assume that it means zlib cannot
+	     * process the inflate call() due to an error in the data.
+	     */</comment>
+	    <if>if <condition>(<expr><name><name>zst</name>.<name>avail_out</name></name> &gt; 0</expr>)</condition><then> <block>{
+		<expr_stmt><expr><call><name>PyErr_Format</name><argument_list>(<argument><expr><name>ZlibError</name></expr></argument>, <argument><expr>"Error %i while decompressing data"</expr></argument>,
+			     <argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><call><name>inflateEnd</name><argument_list>(<argument><expr>&amp;<name>zst</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<goto>goto <name>error</name>;</goto>
+	    }</block></then></if>
+	    <comment type="block">/* fall through */</comment>
+	</case><case>case<expr>(<name>Z_OK</name>)</expr>:
+	    <comment type="block">/* need more memory */</comment>
+	    <if>if <condition>(<expr><call><name>_PyString_Resize</name><argument_list>(<argument><expr>&amp;<name>result_str</name></expr></argument>, <argument><expr><name>r_strlen</name> &lt;&lt; 1</expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then> <block>{
+		<expr_stmt><expr><call><name>inflateEnd</name><argument_list>(<argument><expr>&amp;<name>zst</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<goto>goto <name>error</name>;</goto>
+	    }</block></then></if>
+	    <expr_stmt><expr><name><name>zst</name>.<name>next_out</name></name> = (<name>unsigned</name> <name>char</name> *)<call><name>PyString_AS_STRING</name><argument_list>(<argument><expr><name>result_str</name></expr></argument>)</argument_list></call> \
+		+ <name>r_strlen</name></expr>;</expr_stmt>
+	    <expr_stmt><expr><name><name>zst</name>.<name>avail_out</name></name> = <name>r_strlen</name></expr>;</expr_stmt>
+	    <expr_stmt><expr><name>r_strlen</name> = <name>r_strlen</name> &lt;&lt; 1</expr>;</expr_stmt>
+	    <break>break;</break>
+	</case><default>default:
+	    <expr_stmt><expr><call><name>inflateEnd</name><argument_list>(<argument><expr>&amp;<name>zst</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	    <expr_stmt><expr><call><name>zlib_error</name><argument_list>(<argument><expr><name>zst</name></expr></argument>, <argument><expr><name>err</name></expr></argument>, <argument><expr>"while decompressing data"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	    <goto>goto <name>error</name>;</goto>
+	</default>}</block></switch>
+    }</block> while <condition>(<expr><name>err</name> != <name>Z_STREAM_END</name></expr>)</condition>;</do>
+
+    <expr_stmt><expr><name>err</name> = <call><name>inflateEnd</name><argument_list>(<argument><expr>&amp;<name>zst</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>err</name> != <name>Z_OK</name></expr>)</condition><then> <block>{
+	<expr_stmt><expr><call><name>zlib_error</name><argument_list>(<argument><expr><name>zst</name></expr></argument>, <argument><expr><name>err</name></expr></argument>, <argument><expr>"while finishing data decompression"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<goto>goto <name>error</name>;</goto>
+    }</block></then></if>
+
+    <expr_stmt><expr><call><name>_PyString_Resize</name><argument_list>(<argument><expr>&amp;<name>result_str</name></expr></argument>, <argument><expr><name><name>zst</name>.<name>total_out</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>result_str</name></expr>;</return>
+
+ <label><name>error</name>:</label>
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>result_str</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>PyZlib_compressobj</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>selfptr</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>compobject</name> *</type><name>self</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>level</name><init>=<expr><name>Z_DEFAULT_COMPRESSION</name></expr></init>, <name>method</name><init>=<expr><name>DEFLATED</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>wbits</name><init>=<expr><name>MAX_WBITS</name></expr></init>, <name>memLevel</name><init>=<expr><name>DEF_MEM_LEVEL</name></expr></init>, <name>strategy</name><init>=<expr>0</expr></init>, <name>err</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"|iiiii:compressobj"</expr></argument>, <argument><expr>&amp;<name>level</name></expr></argument>, <argument><expr>&amp;<name>method</name></expr></argument>, <argument><expr>&amp;<name>wbits</name></expr></argument>,
+			  <argument><expr>&amp;<name>memLevel</name></expr></argument>, <argument><expr>&amp;<name>strategy</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+	<return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+    <expr_stmt><expr><name>self</name> = <call><name>newcompobject</name><argument_list>(<argument><expr>&amp;<name>Comptype</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>self</name>==<name>NULL</name></expr>)</condition><then>
+	<return>return<expr>(<name>NULL</name>)</expr>;</return></then></if>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>zst</name>.<name>zalloc</name></name> = (<name>alloc_func</name>)<name>NULL</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>zst</name>.<name>zfree</name></name> = (<name>free_func</name>)<name>Z_NULL</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>zst</name>.<name>next_in</name></name> = <name>NULL</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>zst</name>.<name>avail_in</name></name> = 0</expr>;</expr_stmt>
+    <expr_stmt><expr><name>err</name> = <call><name>deflateInit2</name><argument_list>(<argument><expr>&amp;<name><name>self</name>-&gt;<name>zst</name></name></expr></argument>, <argument><expr><name>level</name></expr></argument>, <argument><expr><name>method</name></expr></argument>, <argument><expr><name>wbits</name></expr></argument>, <argument><expr><name>memLevel</name></expr></argument>, <argument><expr><name>strategy</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <switch>switch<condition>(<expr><name>err</name></expr>)</condition> <block>{
+    <case>case <expr>(<name>Z_OK</name>)</expr>:
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>is_initialised</name></name> = 1</expr>;</expr_stmt>
+	<return>return <expr>(<name>PyObject</name>*)<name>self</name></expr>;</return>
+    </case><case>case <expr>(<name>Z_MEM_ERROR</name>)</expr>:
+	<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_MemoryError</name></expr></argument>,
+			<argument><expr>"Can't allocate memory for compression object"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>NULL</name></expr>;</return>
+    </case><case>case<expr>(<name>Z_STREAM_ERROR</name>)</expr>:
+	<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>, <argument><expr>"Invalid initialization option"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>NULL</name></expr>;</return>
+    </case><default>default:
+	<expr_stmt><expr><call><name>zlib_error</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>zst</name></name></expr></argument>, <argument><expr><name>err</name></expr></argument>, <argument><expr>"while creating compression object"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>NULL</name></expr>;</return>
+    </default>}</block></switch>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>PyZlib_decompressobj</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>selfptr</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>wbits</name><init>=<expr><name>DEF_WBITS</name></expr></init>, <name>err</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>compobject</name> *</type><name>self</name></decl>;</decl_stmt>
+    <if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"|i:decompressobj"</expr></argument>, <argument><expr>&amp;<name>wbits</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+	<return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+    <expr_stmt><expr><name>self</name> = <call><name>newcompobject</name><argument_list>(<argument><expr>&amp;<name>Decomptype</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>self</name> == <name>NULL</name></expr>)</condition><then>
+	<return>return<expr>(<name>NULL</name>)</expr>;</return></then></if>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>zst</name>.<name>zalloc</name></name> = (<name>alloc_func</name>)<name>NULL</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>zst</name>.<name>zfree</name></name> = (<name>free_func</name>)<name>Z_NULL</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>zst</name>.<name>next_in</name></name> = <name>NULL</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>zst</name>.<name>avail_in</name></name> = 0</expr>;</expr_stmt>
+    <expr_stmt><expr><name>err</name> = <call><name>inflateInit2</name><argument_list>(<argument><expr>&amp;<name><name>self</name>-&gt;<name>zst</name></name></expr></argument>, <argument><expr><name>wbits</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <switch>switch<condition>(<expr><name>err</name></expr>)</condition> <block>{
+    <case>case <expr>(<name>Z_OK</name>)</expr>:
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>is_initialised</name></name> = 1</expr>;</expr_stmt>
+	<return>return <expr>(<name>PyObject</name>*)<name>self</name></expr>;</return>
+    </case><case>case<expr>(<name>Z_STREAM_ERROR</name>)</expr>:
+	<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>, <argument><expr>"Invalid initialization option"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>NULL</name></expr>;</return>
+    </case><case>case <expr>(<name>Z_MEM_ERROR</name>)</expr>:
+	<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_MemoryError</name></expr></argument>,
+			<argument><expr>"Can't allocate memory for decompression object"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>NULL</name></expr>;</return>
+    </case><default>default:
+	<expr_stmt><expr><call><name>zlib_error</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>zst</name></name></expr></argument>, <argument><expr><name>err</name></expr></argument>, <argument><expr>"while creating decompression object"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>NULL</name></expr>;</return>
+    </default>}</block></switch>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>Comp_dealloc</name><parameter_list>(<param><decl><type><name>compobject</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+    <if>if <condition>(<expr><name><name>self</name>-&gt;<name>is_initialised</name></name></expr>)</condition><then>
+	<expr_stmt><expr><call><name>deflateEnd</name><argument_list>(<argument><expr>&amp;<name><name>self</name>-&gt;<name>zst</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>unused_data</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>unconsumed_tail</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>PyObject_Del</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>Decomp_dealloc</name><parameter_list>(<param><decl><type><name>compobject</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+    <if>if <condition>(<expr><name><name>self</name>-&gt;<name>is_initialised</name></name></expr>)</condition><then>
+	<expr_stmt><expr><call><name>inflateEnd</name><argument_list>(<argument><expr>&amp;<name><name>self</name>-&gt;<name>zst</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>unused_data</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>unconsumed_tail</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>PyObject_Del</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>comp_compress__doc__</name></expr></argument>,
+<argument><expr>"compress(data) -- Return a string containing data compressed.\n"
+"\n"
+"After calling this function, some of the input data may still\n"
+"be stored in internal buffers for later processing.\n"
+"Call the flush() method to clear these buffers."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>PyZlib_objcompress</name><parameter_list>(<param><decl><type><name>compobject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>err</name></decl>, <decl><type ref="prev"/><name>inplen</name></decl>, <decl><type ref="prev"/><name>length</name> <init>= <expr><name>DEFAULTALLOC</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name> *</type><name>RetVal</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>Byte</name> *</type><name>input</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>unsigned</name> <name>long</name></type> <name>start_total_out</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"s#:compress"</expr></argument>, <argument><expr>&amp;<name>input</name></expr></argument>, <argument><expr>&amp;<name>inplen</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+	<return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+    <if>if <condition>(<expr>!(<name>RetVal</name> = <call><name>PyString_FromStringAndSize</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>length</name></expr></argument>)</argument_list></call>)</expr>)</condition><then>
+	<return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+    <decl_stmt><decl><type><name>ENTER_ZLIB</name></type>
+
+    <name>start_total_out</name> <init>= <expr><name><name>self</name>-&gt;<name>zst</name>.<name>total_out</name></name></expr></init></decl>;</decl_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>zst</name>.<name>avail_in</name></name> = <name>inplen</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>zst</name>.<name>next_in</name></name> = <name>input</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>zst</name>.<name>avail_out</name></name> = <name>length</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>zst</name>.<name>next_out</name></name> = (<name>unsigned</name> <name>char</name> *)<call><name>PyString_AS_STRING</name><argument_list>(<argument><expr><name>RetVal</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <decl_stmt><decl><type><name>Py_BEGIN_ALLOW_THREADS</name></type>
+    <name>err</name> <init>= <expr><call><name>deflate</name><argument_list>(<argument><expr>&amp;(<name><name>self</name>-&gt;<name>zst</name></name>)</expr></argument>, <argument><expr><name>Z_NO_FLUSH</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <macro><name>Py_END_ALLOW_THREADS</name></macro>
+
+    <comment type="block">/* while Z_OK and the output buffer is full, there might be more output,
+       so extend the output buffer and try again */</comment>
+    <while>while <condition>(<expr><name>err</name> == <name>Z_OK</name> &amp;&amp; <name><name>self</name>-&gt;<name>zst</name>.<name>avail_out</name></name> == 0</expr>)</condition> <block>{
+	<if>if <condition>(<expr><call><name>_PyString_Resize</name><argument_list>(<argument><expr>&amp;<name>RetVal</name></expr></argument>, <argument><expr><name>length</name> &lt;&lt; 1</expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+	    <goto>goto <name>error</name>;</goto></then></if>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>zst</name>.<name>next_out</name></name> = (<name>unsigned</name> <name>char</name> *)<call><name>PyString_AS_STRING</name><argument_list>(<argument><expr><name>RetVal</name></expr></argument>)</argument_list></call> \
+	    + <name>length</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>zst</name>.<name>avail_out</name></name> = <name>length</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name>length</name> = <name>length</name> &lt;&lt; 1</expr>;</expr_stmt>
+
+	<decl_stmt><decl><type><name>Py_BEGIN_ALLOW_THREADS</name></type>
+	<name>err</name> <init>= <expr><call><name>deflate</name><argument_list>(<argument><expr>&amp;(<name><name>self</name>-&gt;<name>zst</name></name>)</expr></argument>, <argument><expr><name>Z_NO_FLUSH</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+	<expr_stmt><expr><name>Py_END_ALLOW_THREADS</name></expr></expr_stmt>
+    }</block></while>
+    <comment type="block">/* We will only get Z_BUF_ERROR if the output buffer was full but
+       there wasn't more output when we tried again, so it is not an error
+       condition.
+    */</comment>
+
+    <if>if <condition>(<expr><name>err</name> != <name>Z_OK</name> &amp;&amp; <name>err</name> != <name>Z_BUF_ERROR</name></expr>)</condition><then> <block>{
+	<expr_stmt><expr><call><name>zlib_error</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>zst</name></name></expr></argument>, <argument><expr><name>err</name></expr></argument>, <argument><expr>"while compressing"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>RetVal</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>RetVal</name> = <name>NULL</name></expr>;</expr_stmt>
+	<goto>goto <name>error</name>;</goto>
+    }</block></then></if>
+    <expr_stmt><expr><call><name>_PyString_Resize</name><argument_list>(<argument><expr>&amp;<name>RetVal</name></expr></argument>, <argument><expr><name><name>self</name>-&gt;<name>zst</name>.<name>total_out</name></name> - <name>start_total_out</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+ <label><name>error</name>:</label>
+    <macro><name>LEAVE_ZLIB</name></macro>
+    <return>return <expr><name>RetVal</name></expr>;</return>
+}</block></function>
+
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>decomp_decompress__doc__</name></expr></argument>,
+<argument><expr>"decompress(data, max_length) -- Return a string containing the decompressed\n"
+"version of the data.\n"
+"\n"
+"After calling this function, some of the input data may still be stored in\n"
+"internal buffers for later processing.\n"
+"Call the flush() method to clear these buffers.\n"
+"If the max_length parameter is specified then the return value will be\n"
+"no longer than max_length.  Unconsumed input data will be stored in\n"
+"the unconsumed_tail attribute."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>PyZlib_objdecompress</name><parameter_list>(<param><decl><type><name>compobject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>err</name></decl>, <decl><type ref="prev"/><name>inplen</name></decl>, <decl><type ref="prev"/><name>old_length</name></decl>, <decl><type ref="prev"/><name>length</name> <init>= <expr><name>DEFAULTALLOC</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>max_length</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name> *</type><name>RetVal</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>Byte</name> *</type><name>input</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>unsigned</name> <name>long</name></type> <name>start_total_out</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"s#|i:decompress"</expr></argument>, <argument><expr>&amp;<name>input</name></expr></argument>,
+			  <argument><expr>&amp;<name>inplen</name></expr></argument>, <argument><expr>&amp;<name>max_length</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+	<return>return <expr><name>NULL</name></expr>;</return></then></if>
+    <if>if <condition>(<expr><name>max_length</name> &lt; 0</expr>)</condition><then> <block>{
+	<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>,
+			<argument><expr>"max_length must be greater than zero"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/* limit amount of data allocated to max_length */</comment>
+    <if>if <condition>(<expr><name>max_length</name> &amp;&amp; <name>length</name> &gt; <name>max_length</name></expr>)</condition><then>
+	<expr_stmt><expr><name>length</name> = <name>max_length</name></expr>;</expr_stmt></then></if>
+    <if>if <condition>(<expr>!(<name>RetVal</name> = <call><name>PyString_FromStringAndSize</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>length</name></expr></argument>)</argument_list></call>)</expr>)</condition><then>
+	<return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+    <decl_stmt><decl><type><name>ENTER_ZLIB</name></type>
+
+    <name>start_total_out</name> <init>= <expr><name><name>self</name>-&gt;<name>zst</name>.<name>total_out</name></name></expr></init></decl>;</decl_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>zst</name>.<name>avail_in</name></name> = <name>inplen</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>zst</name>.<name>next_in</name></name> = <name>input</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>zst</name>.<name>avail_out</name></name> = <name>length</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>zst</name>.<name>next_out</name></name> = (<name>unsigned</name> <name>char</name> *)<call><name>PyString_AS_STRING</name><argument_list>(<argument><expr><name>RetVal</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <decl_stmt><decl><type><name>Py_BEGIN_ALLOW_THREADS</name></type>
+    <name>err</name> <init>= <expr><call><name>inflate</name><argument_list>(<argument><expr>&amp;(<name><name>self</name>-&gt;<name>zst</name></name>)</expr></argument>, <argument><expr><name>Z_SYNC_FLUSH</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <macro><name>Py_END_ALLOW_THREADS</name></macro>
+
+    <comment type="block">/* While Z_OK and the output buffer is full, there might be more output.
+       So extend the output buffer and try again.
+    */</comment>
+    <while>while <condition>(<expr><name>err</name> == <name>Z_OK</name> &amp;&amp; <name><name>self</name>-&gt;<name>zst</name>.<name>avail_out</name></name> == 0</expr>)</condition> <block>{
+	<comment type="block">/* If max_length set, don't continue decompressing if we've already
+	   reached the limit.
+	*/</comment>
+	<if>if <condition>(<expr><name>max_length</name> &amp;&amp; <name>length</name> &gt;= <name>max_length</name></expr>)</condition><then>
+	    <break>break;</break></then></if>
+
+	<comment type="block">/* otherwise, ... */</comment>
+	<expr_stmt><expr><name>old_length</name> = <name>length</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name>length</name> = <name>length</name> &lt;&lt; 1</expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>max_length</name> &amp;&amp; <name>length</name> &gt; <name>max_length</name></expr>)</condition><then>
+	    <expr_stmt><expr><name>length</name> = <name>max_length</name></expr>;</expr_stmt></then></if>
+
+	<if>if <condition>(<expr><call><name>_PyString_Resize</name><argument_list>(<argument><expr>&amp;<name>RetVal</name></expr></argument>, <argument><expr><name>length</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+	    <goto>goto <name>error</name>;</goto></then></if>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>zst</name>.<name>next_out</name></name> = (<name>unsigned</name> <name>char</name> *)<call><name>PyString_AS_STRING</name><argument_list>(<argument><expr><name>RetVal</name></expr></argument>)</argument_list></call> \
+	    + <name>old_length</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>zst</name>.<name>avail_out</name></name> = <name>length</name> - <name>old_length</name></expr>;</expr_stmt>
+
+	<decl_stmt><decl><type><name>Py_BEGIN_ALLOW_THREADS</name></type>
+	<name>err</name> <init>= <expr><call><name>inflate</name><argument_list>(<argument><expr>&amp;(<name><name>self</name>-&gt;<name>zst</name></name>)</expr></argument>, <argument><expr><name>Z_SYNC_FLUSH</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+	<expr_stmt><expr><name>Py_END_ALLOW_THREADS</name></expr></expr_stmt>
+    }</block></while>
+
+    <comment type="block">/* Not all of the compressed data could be accommodated in the output buffer
+       of specified size. Return the unconsumed tail in an attribute.*/</comment>
+    <if>if<condition>(<expr><name>max_length</name></expr>)</condition><then> <block>{
+	<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>unconsumed_tail</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>unconsumed_tail</name></name> = <call><name>PyString_FromStringAndSize</name><argument_list>(<argument><expr>(<name>char</name> *)<name><name>self</name>-&gt;<name>zst</name>.<name>next_in</name></name></expr></argument>,
+							   <argument><expr><name><name>self</name>-&gt;<name>zst</name>.<name>avail_in</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if<condition>(<expr>!<name><name>self</name>-&gt;<name>unconsumed_tail</name></name></expr>)</condition><then> <block>{
+	    <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>RetVal</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	    <expr_stmt><expr><name>RetVal</name> = <name>NULL</name></expr>;</expr_stmt>
+	    <goto>goto <name>error</name>;</goto>
+	}</block></then></if>
+    }</block></then></if>
+
+    <comment type="block">/* The end of the compressed data has been reached, so set the
+       unused_data attribute to a string containing the remainder of the
+       data in the string.  Note that this is also a logical place to call
+       inflateEnd, but the old behaviour of only calling it on flush() is
+       preserved.
+    */</comment>
+    <if>if <condition>(<expr><name>err</name> == <name>Z_STREAM_END</name></expr>)</condition><then> <block>{
+	<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>unused_data</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>  <comment type="block">/* Free original empty string */</comment>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>unused_data</name></name> = <call><name>PyString_FromStringAndSize</name><argument_list>(
+	    <argument><expr>(<name>char</name> *)<name><name>self</name>-&gt;<name>zst</name>.<name>next_in</name></name></expr></argument>, <argument><expr><name><name>self</name>-&gt;<name>zst</name>.<name>avail_in</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name><name>self</name>-&gt;<name>unused_data</name></name> == <name>NULL</name></expr>)</condition><then> <block>{
+	    <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>RetVal</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	    <goto>goto <name>error</name>;</goto>
+	}</block></then></if>
+	<comment type="block">/* We will only get Z_BUF_ERROR if the output buffer was full
+	   but there wasn't more output when we tried again, so it is
+	   not an error condition.
+	*/</comment>
+    }</block></then> <else>else <if>if <condition>(<expr><name>err</name> != <name>Z_OK</name> &amp;&amp; <name>err</name> != <name>Z_BUF_ERROR</name></expr>)</condition><then> <block>{
+	<expr_stmt><expr><call><name>zlib_error</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>zst</name></name></expr></argument>, <argument><expr><name>err</name></expr></argument>, <argument><expr>"while decompressing"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>RetVal</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>RetVal</name> = <name>NULL</name></expr>;</expr_stmt>
+	<goto>goto <name>error</name>;</goto>
+    }</block></then></if></else></if>
+
+    <expr_stmt><expr><call><name>_PyString_Resize</name><argument_list>(<argument><expr>&amp;<name>RetVal</name></expr></argument>, <argument><expr><name><name>self</name>-&gt;<name>zst</name>.<name>total_out</name></name> - <name>start_total_out</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+ <label><name>error</name>:</label>
+    <macro><name>LEAVE_ZLIB</name></macro>
+
+    <return>return <expr><name>RetVal</name></expr>;</return>
+}</block></function>
+
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>comp_flush__doc__</name></expr></argument>,
+<argument><expr>"flush( [mode] ) -- Return a string containing any remaining compressed data.\n"
+"\n"
+"mode can be one of the constants Z_SYNC_FLUSH, Z_FULL_FLUSH, Z_FINISH; the\n"
+"default value used when mode is not specified is Z_FINISH.\n"
+"If mode == Z_FINISH, the compressor object can no longer be used after\n"
+"calling the flush() method.  Otherwise, more data can still be compressed."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>PyZlib_flush</name><parameter_list>(<param><decl><type><name>compobject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>err</name></decl>, <decl><type ref="prev"/><name>length</name> <init>= <expr><name>DEFAULTALLOC</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name> *</type><name>RetVal</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>flushmode</name> <init>= <expr><name>Z_FINISH</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>unsigned</name> <name>long</name></type> <name>start_total_out</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"|i:flush"</expr></argument>, <argument><expr>&amp;<name>flushmode</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+	<return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+    <comment type="block">/* Flushing with Z_NO_FLUSH is a no-op, so there's no point in
+       doing any work at all; just return an empty string. */</comment>
+    <if>if <condition>(<expr><name>flushmode</name> == <name>Z_NO_FLUSH</name></expr>)</condition><then> <block>{
+	<return>return <expr><call><name>PyString_FromStringAndSize</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+
+    <if>if <condition>(<expr>!(<name>RetVal</name> = <call><name>PyString_FromStringAndSize</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>length</name></expr></argument>)</argument_list></call>)</expr>)</condition><then>
+	<return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+    <decl_stmt><decl><type><name>ENTER_ZLIB</name></type>
+
+    <name>start_total_out</name> <init>= <expr><name><name>self</name>-&gt;<name>zst</name>.<name>total_out</name></name></expr></init></decl>;</decl_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>zst</name>.<name>avail_in</name></name> = 0</expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>zst</name>.<name>avail_out</name></name> = <name>length</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>zst</name>.<name>next_out</name></name> = (<name>unsigned</name> <name>char</name> *)<call><name>PyString_AS_STRING</name><argument_list>(<argument><expr><name>RetVal</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <decl_stmt><decl><type><name>Py_BEGIN_ALLOW_THREADS</name></type>
+    <name>err</name> <init>= <expr><call><name>deflate</name><argument_list>(<argument><expr>&amp;(<name><name>self</name>-&gt;<name>zst</name></name>)</expr></argument>, <argument><expr><name>flushmode</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <macro><name>Py_END_ALLOW_THREADS</name></macro>
+
+    <comment type="block">/* while Z_OK and the output buffer is full, there might be more output,
+       so extend the output buffer and try again */</comment>
+    <while>while <condition>(<expr><name>err</name> == <name>Z_OK</name> &amp;&amp; <name><name>self</name>-&gt;<name>zst</name>.<name>avail_out</name></name> == 0</expr>)</condition> <block>{
+	<if>if <condition>(<expr><call><name>_PyString_Resize</name><argument_list>(<argument><expr>&amp;<name>RetVal</name></expr></argument>, <argument><expr><name>length</name> &lt;&lt; 1</expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+	    <goto>goto <name>error</name>;</goto></then></if>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>zst</name>.<name>next_out</name></name> = (<name>unsigned</name> <name>char</name> *)<call><name>PyString_AS_STRING</name><argument_list>(<argument><expr><name>RetVal</name></expr></argument>)</argument_list></call> \
+	    + <name>length</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>zst</name>.<name>avail_out</name></name> = <name>length</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name>length</name> = <name>length</name> &lt;&lt; 1</expr>;</expr_stmt>
+
+	<decl_stmt><decl><type><name>Py_BEGIN_ALLOW_THREADS</name></type>
+	<name>err</name> <init>= <expr><call><name>deflate</name><argument_list>(<argument><expr>&amp;(<name><name>self</name>-&gt;<name>zst</name></name>)</expr></argument>, <argument><expr><name>flushmode</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+	<expr_stmt><expr><name>Py_END_ALLOW_THREADS</name></expr></expr_stmt>
+    }</block></while>
+
+    <comment type="block">/* If flushmode is Z_FINISH, we also have to call deflateEnd() to free
+       various data structures. Note we should only get Z_STREAM_END when
+       flushmode is Z_FINISH, but checking both for safety*/</comment>
+    <if>if <condition>(<expr><name>err</name> == <name>Z_STREAM_END</name> &amp;&amp; <name>flushmode</name> == <name>Z_FINISH</name></expr>)</condition><then> <block>{
+	<expr_stmt><expr><name>err</name> = <call><name>deflateEnd</name><argument_list>(<argument><expr>&amp;(<name><name>self</name>-&gt;<name>zst</name></name>)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>err</name> != <name>Z_OK</name></expr>)</condition><then> <block>{
+	    <expr_stmt><expr><call><name>zlib_error</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>zst</name></name></expr></argument>, <argument><expr><name>err</name></expr></argument>, <argument><expr>"from deflateEnd()"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	    <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>RetVal</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	    <expr_stmt><expr><name>RetVal</name> = <name>NULL</name></expr>;</expr_stmt>
+	    <goto>goto <name>error</name>;</goto>
+	}</block></then>
+	<else>else
+	    <expr_stmt><expr><name><name>self</name>-&gt;<name>is_initialised</name></name> = 0</expr>;</expr_stmt></else></if>
+
+	<comment type="block">/* We will only get Z_BUF_ERROR if the output buffer was full
+	   but there wasn't more output when we tried again, so it is
+	   not an error condition.
+	*/</comment>
+    }</block></then> <else>else <if>if <condition>(<expr><name>err</name>!=<name>Z_OK</name> &amp;&amp; <name>err</name>!=<name>Z_BUF_ERROR</name></expr>)</condition><then> <block>{
+	<expr_stmt><expr><call><name>zlib_error</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>zst</name></name></expr></argument>, <argument><expr><name>err</name></expr></argument>, <argument><expr>"while flushing"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>RetVal</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>RetVal</name> = <name>NULL</name></expr>;</expr_stmt>
+	<goto>goto <name>error</name>;</goto>
+    }</block></then></if></else></if>
+
+    <expr_stmt><expr><call><name>_PyString_Resize</name><argument_list>(<argument><expr>&amp;<name>RetVal</name></expr></argument>, <argument><expr><name><name>self</name>-&gt;<name>zst</name>.<name>total_out</name></name> - <name>start_total_out</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+ <label><name>error</name>:</label>
+    <macro><name>LEAVE_ZLIB</name></macro>
+
+    <return>return <expr><name>RetVal</name></expr>;</return>
+}</block></function>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>HAVE_ZLIB_COPY</name></cpp:ifdef>
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>comp_copy__doc__</name></expr></argument>,
+<argument><expr>"copy() -- Return a copy of the compression object."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>PyZlib_copy</name><parameter_list>(<param><decl><type><name>compobject</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>compobject</name> *</type><name>retval</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>err</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>retval</name> = <call><name>newcompobject</name><argument_list>(<argument><expr>&amp;<name>Comptype</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr>!<name>retval</name></expr>)</condition><then> <return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+    <comment type="block">/* Copy the zstream state
+     * We use ENTER_ZLIB / LEAVE_ZLIB to make this thread-safe
+     */</comment>
+    <decl_stmt><decl><type><name>ENTER_ZLIB</name></type>
+    <name>err</name> <init>= <expr><call><name>deflateCopy</name><argument_list>(<argument><expr>&amp;<name><name>retval</name>-&gt;<name>zst</name></name></expr></argument>, <argument><expr>&amp;<name><name>self</name>-&gt;<name>zst</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <switch>switch<condition>(<expr><name>err</name></expr>)</condition> <block>{
+    <case>case<expr>(<name>Z_OK</name>)</expr>:
+        <break>break;</break>
+    </case><case>case<expr>(<name>Z_STREAM_ERROR</name>)</expr>:
+        <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>, <argument><expr>"Inconsistent stream state"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <goto>goto <name>error</name>;</goto>
+    </case><case>case<expr>(<name>Z_MEM_ERROR</name>)</expr>:
+        <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_MemoryError</name></expr></argument>,
+                        <argument><expr>"Can't allocate memory for compression object"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <goto>goto <name>error</name>;</goto>
+    </case><default>default:
+        <expr_stmt><expr><call><name>zlib_error</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>zst</name></name></expr></argument>, <argument><expr><name>err</name></expr></argument>, <argument><expr>"while copying compression object"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <goto>goto <name>error</name>;</goto>
+    </default>}</block></switch>
+
+    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>unused_data</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>unconsumed_tail</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name><name>retval</name>-&gt;<name>unused_data</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name><name>retval</name>-&gt;<name>unconsumed_tail</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>retval</name>-&gt;<name>unused_data</name></name> = <name><name>self</name>-&gt;<name>unused_data</name></name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>retval</name>-&gt;<name>unconsumed_tail</name></name> = <name><name>self</name>-&gt;<name>unconsumed_tail</name></name></expr>;</expr_stmt>
+
+    <comment type="block">/* Mark it as being initialized */</comment>
+    <expr_stmt><expr><name><name>retval</name>-&gt;<name>is_initialised</name></name> = 1</expr>;</expr_stmt>
+
+    <macro><name>LEAVE_ZLIB</name></macro>
+    <return>return <expr>(<name>PyObject</name> *)<name>retval</name></expr>;</return>
+
+<label><name>error</name>:</label>
+    <function_decl><type><name>LEAVE_ZLIB</name></type>
+    <name>Py_XDECREF</name><parameter_list>(<param><decl><type><name>retval</name></type></decl></param>)</parameter_list>;</function_decl>
+    <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>decomp_copy__doc__</name></expr></argument>,
+<argument><expr>"copy() -- Return a copy of the decompression object."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>PyZlib_uncopy</name><parameter_list>(<param><decl><type><name>compobject</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>compobject</name> *</type><name>retval</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>err</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>retval</name> = <call><name>newcompobject</name><argument_list>(<argument><expr>&amp;<name>Decomptype</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr>!<name>retval</name></expr>)</condition><then> <return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+    <comment type="block">/* Copy the zstream state
+     * We use ENTER_ZLIB / LEAVE_ZLIB to make this thread-safe
+     */</comment>
+    <decl_stmt><decl><type><name>ENTER_ZLIB</name></type>
+    <name>err</name> <init>= <expr><call><name>inflateCopy</name><argument_list>(<argument><expr>&amp;<name><name>retval</name>-&gt;<name>zst</name></name></expr></argument>, <argument><expr>&amp;<name><name>self</name>-&gt;<name>zst</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <switch>switch<condition>(<expr><name>err</name></expr>)</condition> <block>{
+    <case>case<expr>(<name>Z_OK</name>)</expr>:
+        <break>break;</break>
+    </case><case>case<expr>(<name>Z_STREAM_ERROR</name>)</expr>:
+        <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>, <argument><expr>"Inconsistent stream state"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <goto>goto <name>error</name>;</goto>
+    </case><case>case<expr>(<name>Z_MEM_ERROR</name>)</expr>:
+        <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_MemoryError</name></expr></argument>,
+                        <argument><expr>"Can't allocate memory for decompression object"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <goto>goto <name>error</name>;</goto>
+    </case><default>default:
+        <expr_stmt><expr><call><name>zlib_error</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>zst</name></name></expr></argument>, <argument><expr><name>err</name></expr></argument>, <argument><expr>"while copying decompression object"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <goto>goto <name>error</name>;</goto>
+    </default>}</block></switch>
+
+    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>unused_data</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>unconsumed_tail</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name><name>retval</name>-&gt;<name>unused_data</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name><name>retval</name>-&gt;<name>unconsumed_tail</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>retval</name>-&gt;<name>unused_data</name></name> = <name><name>self</name>-&gt;<name>unused_data</name></name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>retval</name>-&gt;<name>unconsumed_tail</name></name> = <name><name>self</name>-&gt;<name>unconsumed_tail</name></name></expr>;</expr_stmt>
+
+    <comment type="block">/* Mark it as being initialized */</comment>
+    <expr_stmt><expr><name><name>retval</name>-&gt;<name>is_initialised</name></name> = 1</expr>;</expr_stmt>
+
+    <macro><name>LEAVE_ZLIB</name></macro>
+    <return>return <expr>(<name>PyObject</name> *)<name>retval</name></expr>;</return>
+
+<label><name>error</name>:</label>
+    <function_decl><type><name>LEAVE_ZLIB</name></type>
+    <name>Py_XDECREF</name><parameter_list>(<param><decl><type><name>retval</name></type></decl></param>)</parameter_list>;</function_decl>
+    <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>decomp_flush__doc__</name></expr></argument>,
+<argument><expr>"flush( [length] ) -- Return a string containing any remaining\n"
+"decompressed data. length, if given, is the initial size of the\n"
+"output buffer.\n"
+"\n"
+"The decompressor object can no longer be used after this call."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>PyZlib_unflush</name><parameter_list>(<param><decl><type><name>compobject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>err</name></decl>, <decl><type ref="prev"/><name>length</name> <init>= <expr><name>DEFAULTALLOC</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name> *</type> <name>retval</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>unsigned</name> <name>long</name></type> <name>start_total_out</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"|i:flush"</expr></argument>, <argument><expr>&amp;<name>length</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+	<return>return <expr><name>NULL</name></expr>;</return></then></if>
+    <if>if <condition>(<expr><name>length</name> &lt;= 0</expr>)</condition><then> <block>{
+	<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>, <argument><expr>"length must be greater than zero"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+    <if>if <condition>(<expr>!(<name>retval</name> = <call><name>PyString_FromStringAndSize</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>length</name></expr></argument>)</argument_list></call>)</expr>)</condition><then>
+	<return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+
+    <decl_stmt><decl><type><name>ENTER_ZLIB</name></type>
+
+    <name>start_total_out</name> <init>= <expr><name><name>self</name>-&gt;<name>zst</name>.<name>total_out</name></name></expr></init></decl>;</decl_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>zst</name>.<name>avail_out</name></name> = <name>length</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>zst</name>.<name>next_out</name></name> = (<name>Byte</name> *)<call><name>PyString_AS_STRING</name><argument_list>(<argument><expr><name>retval</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <decl_stmt><decl><type><name>Py_BEGIN_ALLOW_THREADS</name></type>
+    <name>err</name> <init>= <expr><call><name>inflate</name><argument_list>(<argument><expr>&amp;(<name><name>self</name>-&gt;<name>zst</name></name>)</expr></argument>, <argument><expr><name>Z_FINISH</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <macro><name>Py_END_ALLOW_THREADS</name></macro>
+
+    <comment type="block">/* while Z_OK and the output buffer is full, there might be more output,
+       so extend the output buffer and try again */</comment>
+    <while>while <condition>(<expr>(<name>err</name> == <name>Z_OK</name> || <name>err</name> == <name>Z_BUF_ERROR</name>) &amp;&amp; <name><name>self</name>-&gt;<name>zst</name>.<name>avail_out</name></name> == 0</expr>)</condition> <block>{
+	<if>if <condition>(<expr><call><name>_PyString_Resize</name><argument_list>(<argument><expr>&amp;<name>retval</name></expr></argument>, <argument><expr><name>length</name> &lt;&lt; 1</expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+	    <goto>goto <name>error</name>;</goto></then></if>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>zst</name>.<name>next_out</name></name> = (<name>Byte</name> *)<call><name>PyString_AS_STRING</name><argument_list>(<argument><expr><name>retval</name></expr></argument>)</argument_list></call> + <name>length</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>zst</name>.<name>avail_out</name></name> = <name>length</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name>length</name> = <name>length</name> &lt;&lt; 1</expr>;</expr_stmt>
+
+	<decl_stmt><decl><type><name>Py_BEGIN_ALLOW_THREADS</name></type>
+	<name>err</name> <init>= <expr><call><name>inflate</name><argument_list>(<argument><expr>&amp;(<name><name>self</name>-&gt;<name>zst</name></name>)</expr></argument>, <argument><expr><name>Z_FINISH</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+	<expr_stmt><expr><name>Py_END_ALLOW_THREADS</name></expr></expr_stmt>
+    }</block></while>
+
+    <comment type="block">/* If flushmode is Z_FINISH, we also have to call deflateEnd() to free
+       various data structures. Note we should only get Z_STREAM_END when
+       flushmode is Z_FINISH */</comment>
+    <if>if <condition>(<expr><name>err</name> == <name>Z_STREAM_END</name></expr>)</condition><then> <block>{
+	<expr_stmt><expr><name>err</name> = <call><name>inflateEnd</name><argument_list>(<argument><expr>&amp;(<name><name>self</name>-&gt;<name>zst</name></name>)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>self</name>-&gt;<name>is_initialised</name></name> = 0</expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>err</name> != <name>Z_OK</name></expr>)</condition><then> <block>{
+	    <expr_stmt><expr><call><name>zlib_error</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>zst</name></name></expr></argument>, <argument><expr><name>err</name></expr></argument>, <argument><expr>"from inflateEnd()"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	    <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>retval</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	    <expr_stmt><expr><name>retval</name> = <name>NULL</name></expr>;</expr_stmt>
+	    <goto>goto <name>error</name>;</goto>
+	}</block></then></if>
+    }</block></then></if>
+    <expr_stmt><expr><call><name>_PyString_Resize</name><argument_list>(<argument><expr>&amp;<name>retval</name></expr></argument>, <argument><expr><name><name>self</name>-&gt;<name>zst</name>.<name>total_out</name></name> - <name>start_total_out</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<label><name>error</name>:</label>
+
+    <macro><name>LEAVE_ZLIB</name></macro>
+
+    <return>return <expr><name>retval</name></expr>;</return>
+}</block></function>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyMethodDef</name></type> <name><name>comp_methods</name><index>[]</index></name> <init>=
+<expr><block>{
+    <expr><block>{<expr>"compress"</expr>, <expr>(<name>binaryfunc</name>)<name>PyZlib_objcompress</name></expr>, <expr><name>METH_VARARGS</name></expr>,
+                 <expr><name>comp_compress__doc__</name></expr>}</block></expr>,
+    <expr><block>{<expr>"flush"</expr>, <expr>(<name>binaryfunc</name>)<name>PyZlib_flush</name></expr>, <expr><name>METH_VARARGS</name></expr>,
+              <expr><name>comp_flush__doc__</name></expr>}</block></expr>,
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>HAVE_ZLIB_COPY</name></cpp:ifdef>
+    <expr><block>{<expr>"copy"</expr>,  <expr>(<name>PyCFunction</name>)<name>PyZlib_copy</name></expr>, <expr><name>METH_NOARGS</name></expr>,
+              <expr><name>comp_copy__doc__</name></expr>}</block></expr>,
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+    <expr><block>{<expr><name>NULL</name></expr>, <expr><name>NULL</name></expr>}</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyMethodDef</name></type> <name><name>Decomp_methods</name><index>[]</index></name> <init>=
+<expr><block>{
+    <expr><block>{<expr>"decompress"</expr>, <expr>(<name>binaryfunc</name>)<name>PyZlib_objdecompress</name></expr>, <expr><name>METH_VARARGS</name></expr>,
+                   <expr><name>decomp_decompress__doc__</name></expr>}</block></expr>,
+    <expr><block>{<expr>"flush"</expr>, <expr>(<name>binaryfunc</name>)<name>PyZlib_unflush</name></expr>, <expr><name>METH_VARARGS</name></expr>,
+              <expr><name>decomp_flush__doc__</name></expr>}</block></expr>,
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>HAVE_ZLIB_COPY</name></cpp:ifdef>
+    <expr><block>{<expr>"copy"</expr>,  <expr>(<name>PyCFunction</name>)<name>PyZlib_uncopy</name></expr>, <expr><name>METH_NOARGS</name></expr>,
+              <expr><name>decomp_copy__doc__</name></expr>}</block></expr>,
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+    <expr><block>{<expr><name>NULL</name></expr>, <expr><name>NULL</name></expr>}</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>Comp_getattr</name><parameter_list>(<param><decl><type><name>compobject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>char</name> *</type><name>name</name></decl></param>)</parameter_list>
+<block>{
+  <comment type="block">/* No ENTER/LEAVE_ZLIB is necessary because this fn doesn't touch
+     internal data. */</comment>
+
+  <return>return <expr><call><name>Py_FindMethod</name><argument_list>(<argument><expr><name>comp_methods</name></expr></argument>, <argument><expr>(<name>PyObject</name> *)<name>self</name></expr></argument>, <argument><expr><name>name</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>Decomp_getattr</name><parameter_list>(<param><decl><type><name>compobject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>char</name> *</type><name>name</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>PyObject</name> *</type> <name>retval</name></decl>;</decl_stmt>
+
+    <macro><name>ENTER_ZLIB</name></macro>
+
+    <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>name</name></expr></argument>, <argument><expr>"unused_data"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then> <block>{
+	<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>unused_data</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>retval</name> = <name><name>self</name>-&gt;<name>unused_data</name></name></expr>;</expr_stmt>
+    }</block></then> <else>else <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>name</name></expr></argument>, <argument><expr>"unconsumed_tail"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then> <block>{
+	<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>unconsumed_tail</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>retval</name> = <name><name>self</name>-&gt;<name>unconsumed_tail</name></name></expr>;</expr_stmt>
+    }</block></then> <else>else
+	<expr_stmt><expr><name>retval</name> = <call><name>Py_FindMethod</name><argument_list>(<argument><expr><name>Decomp_methods</name></expr></argument>, <argument><expr>(<name>PyObject</name> *)<name>self</name></expr></argument>, <argument><expr><name>name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if></else></if>
+
+    <macro><name>LEAVE_ZLIB</name></macro>
+
+    <return>return <expr><name>retval</name></expr>;</return>
+}</block></function>
+
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>adler32__doc__</name></expr></argument>,
+<argument><expr>"adler32(string[, start]) -- Compute an Adler-32 checksum of string.\n"
+"\n"
+"An optional starting value can be specified.  The returned checksum is\n"
+"a signed integer."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>PyZlib_adler32</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>unsigned</name> <name>int</name></type> <name>adler32val</name> <init>= <expr>1</expr></init></decl>;</decl_stmt>  <comment type="block">/* adler32(0L, Z_NULL, 0) */</comment>
+    <decl_stmt><decl><type><name>Byte</name> *</type><name>buf</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>len</name></decl>, <decl><type ref="prev"/><name>signed_val</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"s#|I:adler32"</expr></argument>, <argument><expr>&amp;<name>buf</name></expr></argument>, <argument><expr>&amp;<name>len</name></expr></argument>, <argument><expr>&amp;<name>adler32val</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+	<return>return <expr><name>NULL</name></expr>;</return></then></if>
+    <comment type="block">/* In Python 2.x we return a signed integer regardless of native platform
+     * long size (the 32bit unsigned long is treated as 32-bit signed and sign
+     * extended into a 64-bit long inside the integer object).  3.0 does the
+     * right thing and returns unsigned. http://bugs.python.org/issue1202 */</comment>
+    <expr_stmt><expr><name>signed_val</name> = <call><name>adler32</name><argument_list>(<argument><expr><name>adler32val</name></expr></argument>, <argument><expr><name>buf</name></expr></argument>, <argument><expr><name>len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><call><name>PyInt_FromLong</name><argument_list>(<argument><expr><name>signed_val</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>crc32__doc__</name></expr></argument>,
+<argument><expr>"crc32(string[, start]) -- Compute a CRC-32 checksum of string.\n"
+"\n"
+"An optional starting value can be specified.  The returned checksum is\n"
+"a signed integer."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>PyZlib_crc32</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>unsigned</name> <name>int</name></type> <name>crc32val</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>  <comment type="block">/* crc32(0L, Z_NULL, 0) */</comment>
+    <decl_stmt><decl><type><name>Byte</name> *</type><name>buf</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>len</name></decl>, <decl><type ref="prev"/><name>signed_val</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"s#|I:crc32"</expr></argument>, <argument><expr>&amp;<name>buf</name></expr></argument>, <argument><expr>&amp;<name>len</name></expr></argument>, <argument><expr>&amp;<name>crc32val</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+	<return>return <expr><name>NULL</name></expr>;</return></then></if>
+    <comment type="block">/* In Python 2.x we return a signed integer regardless of native platform
+     * long size (the 32bit unsigned long is treated as 32-bit signed and sign
+     * extended into a 64-bit long inside the integer object).  3.0 does the
+     * right thing and returns unsigned. http://bugs.python.org/issue1202 */</comment>
+    <expr_stmt><expr><name>signed_val</name> = <call><name>crc32</name><argument_list>(<argument><expr><name>crc32val</name></expr></argument>, <argument><expr><name>buf</name></expr></argument>, <argument><expr><name>len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><call><name>PyInt_FromLong</name><argument_list>(<argument><expr><name>signed_val</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyMethodDef</name></type> <name><name>zlib_methods</name><index>[]</index></name> <init>=
+<expr><block>{
+    <expr><block>{<expr>"adler32"</expr>, <expr>(<name>PyCFunction</name>)<name>PyZlib_adler32</name></expr>, <expr><name>METH_VARARGS</name></expr>,
+                <expr><name>adler32__doc__</name></expr>}</block></expr>,
+    <expr><block>{<expr>"compress"</expr>, <expr>(<name>PyCFunction</name>)<name>PyZlib_compress</name></expr>,  <expr><name>METH_VARARGS</name></expr>,
+                 <expr><name>compress__doc__</name></expr>}</block></expr>,
+    <expr><block>{<expr>"compressobj"</expr>, <expr>(<name>PyCFunction</name>)<name>PyZlib_compressobj</name></expr>, <expr><name>METH_VARARGS</name></expr>,
+                    <expr><name>compressobj__doc__</name></expr>}</block></expr>,
+    <expr><block>{<expr>"crc32"</expr>, <expr>(<name>PyCFunction</name>)<name>PyZlib_crc32</name></expr>, <expr><name>METH_VARARGS</name></expr>,
+              <expr><name>crc32__doc__</name></expr>}</block></expr>,
+    <expr><block>{<expr>"decompress"</expr>, <expr>(<name>PyCFunction</name>)<name>PyZlib_decompress</name></expr>, <expr><name>METH_VARARGS</name></expr>,
+                   <expr><name>decompress__doc__</name></expr>}</block></expr>,
+    <expr><block>{<expr>"decompressobj"</expr>, <expr>(<name>PyCFunction</name>)<name>PyZlib_decompressobj</name></expr>, <expr><name>METH_VARARGS</name></expr>,
+                   <expr><name>decompressobj__doc__</name></expr>}</block></expr>,
+    <expr><block>{<expr><name>NULL</name></expr>, <expr><name>NULL</name></expr>}</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyTypeObject</name></type> <name>Comptype</name> <init>= <expr><block>{
+    <expr><call><name>PyVarObject_HEAD_INIT</name><argument_list>(<argument><expr>0</expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call>
+    "zlib.Compress"</expr>,
+    <expr><sizeof>sizeof<argument_list>(<argument><expr><name>compobject</name></expr></argument>)</argument_list></sizeof></expr>,
+    <expr>0</expr>,
+    <expr>(<name>destructor</name>)<name>Comp_dealloc</name></expr>,       <comment type="block">/*tp_dealloc*/</comment>
+    <expr>0</expr>,                              <comment type="block">/*tp_print*/</comment>
+    <expr>(<name>getattrfunc</name>)<name>Comp_getattr</name></expr>,      <comment type="block">/*tp_getattr*/</comment>
+    <expr>0</expr>,                              <comment type="block">/*tp_setattr*/</comment>
+    <expr>0</expr>,                              <comment type="block">/*tp_compare*/</comment>
+    <expr>0</expr>,                              <comment type="block">/*tp_repr*/</comment>
+    <expr>0</expr>,                              <comment type="block">/*tp_as_number*/</comment>
+    <expr>0</expr>,                              <comment type="block">/*tp_as_sequence*/</comment>
+    <expr>0</expr>,                              <comment type="block">/*tp_as_mapping*/</comment>
+}</block></expr></init></decl>;</decl_stmt>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyTypeObject</name></type> <name>Decomptype</name> <init>= <expr><block>{
+    <expr><call><name>PyVarObject_HEAD_INIT</name><argument_list>(<argument><expr>0</expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call>
+    "zlib.Decompress"</expr>,
+    <expr><sizeof>sizeof<argument_list>(<argument><expr><name>compobject</name></expr></argument>)</argument_list></sizeof></expr>,
+    <expr>0</expr>,
+    <expr>(<name>destructor</name>)<name>Decomp_dealloc</name></expr>,     <comment type="block">/*tp_dealloc*/</comment>
+    <expr>0</expr>,                              <comment type="block">/*tp_print*/</comment>
+    <expr>(<name>getattrfunc</name>)<name>Decomp_getattr</name></expr>,    <comment type="block">/*tp_getattr*/</comment>
+    <expr>0</expr>,                              <comment type="block">/*tp_setattr*/</comment>
+    <expr>0</expr>,                              <comment type="block">/*tp_compare*/</comment>
+    <expr>0</expr>,                              <comment type="block">/*tp_repr*/</comment>
+    <expr>0</expr>,                              <comment type="block">/*tp_as_number*/</comment>
+    <expr>0</expr>,                              <comment type="block">/*tp_as_sequence*/</comment>
+    <expr>0</expr>,                              <comment type="block">/*tp_as_mapping*/</comment>
+}</block></expr></init></decl>;</decl_stmt>
+
+<expr_stmt><expr><call><name>PyDoc_STRVAR</name><argument_list>(<argument><expr><name>zlib_module_documentation</name></expr></argument>,
+<argument><expr>"The functions in this module allow compression and decompression using the\n"
+"zlib library, which is based on GNU zip.\n"
+"\n"
+"adler32(string[, start]) -- Compute an Adler-32 checksum.\n"
+"compress(string[, level]) -- Compress string, with compression level in 1-9.\n"
+"compressobj([level]) -- Return a compressor object.\n"
+"crc32(string[, start]) -- Compute a CRC-32 checksum.\n"
+"decompress(string,[wbits],[bufsize]) -- Decompresses a compressed string.\n"
+"decompressobj([wbits]) -- Return a decompressor object.\n"
+"\n"
+"'wbits' is window buffer size.\n"
+"Compressor objects support compress() and flush() methods; decompressor\n"
+"objects support decompress() and flush()."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<function><type><name>PyMODINIT_FUNC</name></type>
+<name>PyInit_zlib</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>PyObject</name> *</type><name>m</name></decl>, *<decl><type ref="prev"/><name>ver</name></decl>;</decl_stmt>
+    <expr_stmt><expr><call><name>Py_TYPE</name><argument_list>(<argument><expr>&amp;<name>Comptype</name></expr></argument>)</argument_list></call> = &amp;<name>PyType_Type</name></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>Py_TYPE</name><argument_list>(<argument><expr>&amp;<name>Decomptype</name></expr></argument>)</argument_list></call> = &amp;<name>PyType_Type</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name>m</name> = <call><name>Py_InitModule4</name><argument_list>(<argument><expr>"zlib"</expr></argument>, <argument><expr><name>zlib_methods</name></expr></argument>,
+		       <argument><expr><name>zlib_module_documentation</name></expr></argument>,
+		       <argument><expr>(<name>PyObject</name>*)<name>NULL</name></expr></argument>,<argument><expr><name>PYTHON_API_VERSION</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>m</name> == <name>NULL</name></expr>)</condition><then>
+	<return>return;</return></then></if>
+
+    <expr_stmt><expr><name>ZlibError</name> = <call><name>PyErr_NewException</name><argument_list>(<argument><expr>"zlib.error"</expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>ZlibError</name> != <name>NULL</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>ZlibError</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>PyModule_AddObject</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"error"</expr></argument>, <argument><expr><name>ZlibError</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+    <expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"MAX_WBITS"</expr></argument>, <argument><expr><name>MAX_WBITS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"DEFLATED"</expr></argument>, <argument><expr><name>DEFLATED</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"DEF_MEM_LEVEL"</expr></argument>, <argument><expr><name>DEF_MEM_LEVEL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"Z_BEST_SPEED"</expr></argument>, <argument><expr><name>Z_BEST_SPEED</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"Z_BEST_COMPRESSION"</expr></argument>, <argument><expr><name>Z_BEST_COMPRESSION</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"Z_DEFAULT_COMPRESSION"</expr></argument>, <argument><expr><name>Z_DEFAULT_COMPRESSION</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"Z_FILTERED"</expr></argument>, <argument><expr><name>Z_FILTERED</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"Z_HUFFMAN_ONLY"</expr></argument>, <argument><expr><name>Z_HUFFMAN_ONLY</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"Z_DEFAULT_STRATEGY"</expr></argument>, <argument><expr><name>Z_DEFAULT_STRATEGY</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"Z_FINISH"</expr></argument>, <argument><expr><name>Z_FINISH</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"Z_NO_FLUSH"</expr></argument>, <argument><expr><name>Z_NO_FLUSH</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"Z_SYNC_FLUSH"</expr></argument>, <argument><expr><name>Z_SYNC_FLUSH</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>PyModule_AddIntConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"Z_FULL_FLUSH"</expr></argument>, <argument><expr><name>Z_FULL_FLUSH</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>ver</name> = <call><name>PyString_FromString</name><argument_list>(<argument><expr><name>ZLIB_VERSION</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>ver</name> != <name>NULL</name></expr>)</condition><then>
+	<expr_stmt><expr><call><name>PyModule_AddObject</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"ZLIB_VERSION"</expr></argument>, <argument><expr><name>ver</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+    <expr_stmt><expr><call><name>PyModule_AddStringConstant</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"__version__"</expr></argument>, <argument><expr>"1.0"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>WITH_THREAD</name></cpp:ifdef>
+    <expr_stmt><expr><name>zlib_lock</name> = <call><name>PyThread_allocate_lock</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* WITH_THREAD */</comment>
+}</block></function>
+</unit>

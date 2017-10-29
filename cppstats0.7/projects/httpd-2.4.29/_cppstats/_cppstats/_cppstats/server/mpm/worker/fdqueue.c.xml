@@ -1,0 +1,253 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="_cppstats/_cppstats/server/mpm/worker/fdqueue.c"><cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"fdqueue.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_atomic.h"</cpp:file></cpp:include>
+<typedef>typedef <type><struct>struct <name>recycled_pool</name> <block>{
+<decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl>;</decl_stmt>
+<decl_stmt><decl><type>struct <name>recycled_pool</name> *</type><name>next</name></decl>;</decl_stmt>
+}</block></struct></type> <name>recycled_pool</name>;</typedef>
+<struct>struct <name>fd_queue_info_t</name> <block>{
+<decl_stmt><decl><type><name>apr_uint32_t</name></type> <name>idlers</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_thread_mutex_t</name> *</type><name>idlers_mutex</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_thread_cond_t</name> *</type><name>wait_for_idler</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>terminated</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>max_idlers</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>recycled_pool</name> *</type><name>recycled_pools</name></decl>;</decl_stmt>
+}</block>;</struct>
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>queue_info_cleanup</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>data_</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>fd_queue_info_t</name> *</type><name>qi</name> <init>= <expr><name>data_</name></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>apr_thread_cond_destroy</name><argument_list>(<argument><expr><name><name>qi</name>-&gt;<name>wait_for_idler</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>apr_thread_mutex_destroy</name><argument_list>(<argument><expr><name><name>qi</name>-&gt;<name>idlers_mutex</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<for>for (<init>;</init><condition>;</condition><incr/>) <block>{
+<decl_stmt><decl><type>struct <name>recycled_pool</name> *</type><name>first_pool</name> <init>= <expr><name><name>qi</name>-&gt;<name>recycled_pools</name></name></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>first_pool</name> == <name>NULL</name></expr>)</condition><then> <block>{
+<break>break;</break>
+}</block></then></if>
+<if>if <condition>(<expr><call><name>apr_atomic_casptr</name><argument_list>(<argument><expr>(<name>void</name>*)&amp;(<name><name>qi</name>-&gt;<name>recycled_pools</name></name>)</expr></argument>, <argument><expr><name><name>first_pool</name>-&gt;<name>next</name></name></expr></argument>,
+<argument><expr><name>first_pool</name></expr></argument>)</argument_list></call> == <name>first_pool</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>apr_pool_destroy</name><argument_list>(<argument><expr><name><name>first_pool</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+}</block></for>
+<return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+<function><type><name>apr_status_t</name></type> <name>ap_queue_info_create</name><parameter_list>(<param><decl><type><name>fd_queue_info_t</name> **</type><name>queue_info</name></decl></param>,
+<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>, <param><decl><type><name>int</name></type> <name>max_idlers</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>fd_queue_info_t</name> *</type><name>qi</name></decl>;</decl_stmt>
+<expr_stmt><expr><name>qi</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>qi</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>rv</name> = <call><name>apr_thread_mutex_create</name><argument_list>(<argument><expr>&amp;<name><name>qi</name>-&gt;<name>idlers_mutex</name></name></expr></argument>, <argument><expr><name>APR_THREAD_MUTEX_DEFAULT</name></expr></argument>,
+<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<return>return <expr><name>rv</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>rv</name> = <call><name>apr_thread_cond_create</name><argument_list>(<argument><expr>&amp;<name><name>qi</name>-&gt;<name>wait_for_idler</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<return>return <expr><name>rv</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name><name>qi</name>-&gt;<name>recycled_pools</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>qi</name>-&gt;<name>max_idlers</name></name> = <name>max_idlers</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>apr_pool_cleanup_register</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>qi</name></expr></argument>, <argument><expr><name>queue_info_cleanup</name></expr></argument>,
+<argument><expr><name>apr_pool_cleanup_null</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr>*<name>queue_info</name> = <name>qi</name></expr>;</expr_stmt>
+<return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+<function><type><name>apr_status_t</name></type> <name>ap_queue_info_set_idle</name><parameter_list>(<param><decl><type><name>fd_queue_info_t</name> *</type><name>queue_info</name></decl></param>,
+<param><decl><type><name>apr_pool_t</name> *</type><name>pool_to_recycle</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>prev_idlers</name></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>pool_to_recycle</name></expr>)</condition><then> <block>{
+<decl_stmt><decl><type>struct <name>recycled_pool</name> *</type><name>new_recycle</name></decl>;</decl_stmt>
+<expr_stmt><expr><name>new_recycle</name> = (struct <name>recycled_pool</name> *)<call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool_to_recycle</name></expr></argument>,
+<argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>new_recycle</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>new_recycle</name>-&gt;<name>pool</name></name> = <name>pool_to_recycle</name></expr>;</expr_stmt>
+<for>for (<init>;</init><condition>;</condition><incr/>) <block>{
+<decl_stmt><decl><type>struct <name>recycled_pool</name> *</type><name>next</name> <init>= <expr><name><name>queue_info</name>-&gt;<name>recycled_pools</name></name></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><name><name>new_recycle</name>-&gt;<name>next</name></name> = <name>next</name></expr>;</expr_stmt>
+<if>if <condition>(<expr><call><name>apr_atomic_casptr</name><argument_list>(<argument><expr>(<name>void</name>*)&amp;(<name><name>queue_info</name>-&gt;<name>recycled_pools</name></name>)</expr></argument>,
+<argument><expr><name>new_recycle</name></expr></argument>, <argument><expr><name>next</name></expr></argument>)</argument_list></call> == <name>next</name></expr>)</condition><then> <block>{
+<break>break;</break>
+}</block></then></if>
+}</block></for>
+}</block></then></if>
+<for>for (<init>;</init><condition>;</condition><incr/>) <block>{
+<expr_stmt><expr><name>prev_idlers</name> = <name><name>queue_info</name>-&gt;<name>idlers</name></name></expr>;</expr_stmt>
+<if>if <condition>(<expr><call><name>apr_atomic_cas32</name><argument_list>(<argument><expr>&amp;(<name><name>queue_info</name>-&gt;<name>idlers</name></name>)</expr></argument>, <argument><expr><name>prev_idlers</name> + 1</expr></argument>,
+<argument><expr><name>prev_idlers</name></expr></argument>)</argument_list></call> == <name>prev_idlers</name></expr>)</condition><then> <block>{
+<break>break;</break>
+}</block></then></if>
+}</block></for>
+<if>if <condition>(<expr><name>prev_idlers</name> == 0</expr>)</condition><then> <block>{
+<expr_stmt><expr><name>rv</name> = <call><name>apr_thread_mutex_lock</name><argument_list>(<argument><expr><name><name>queue_info</name>-&gt;<name>idlers_mutex</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<return>return <expr><name>rv</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>rv</name> = <call><name>apr_thread_cond_signal</name><argument_list>(<argument><expr><name><name>queue_info</name>-&gt;<name>wait_for_idler</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>apr_thread_mutex_unlock</name><argument_list>(<argument><expr><name><name>queue_info</name>-&gt;<name>idlers_mutex</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>rv</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>rv</name> = <call><name>apr_thread_mutex_unlock</name><argument_list>(<argument><expr><name><name>queue_info</name>-&gt;<name>idlers_mutex</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<return>return <expr><name>rv</name></expr>;</return>
+}</block></then></if>
+}</block></then></if>
+<return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+<function><type><name>apr_status_t</name></type> <name>ap_queue_info_wait_for_idler</name><parameter_list>(<param><decl><type><name>fd_queue_info_t</name> *</type><name>queue_info</name></decl></param>,
+<param><decl><type><name>apr_pool_t</name> **</type><name>recycled_pool</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+<expr_stmt><expr>*<name>recycled_pool</name> = <name>NULL</name></expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>queue_info</name>-&gt;<name>idlers</name></name> == 0</expr>)</condition><then> <block>{
+<expr_stmt><expr><name>rv</name> = <call><name>apr_thread_mutex_lock</name><argument_list>(<argument><expr><name><name>queue_info</name>-&gt;<name>idlers_mutex</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<return>return <expr><name>rv</name></expr>;</return>
+}</block></then></if>
+<while>while <condition>(<expr><name><name>queue_info</name>-&gt;<name>idlers</name></name> == 0</expr>)</condition> <block>{
+<expr_stmt><expr><name>rv</name> = <call><name>apr_thread_cond_wait</name><argument_list>(<argument><expr><name><name>queue_info</name>-&gt;<name>wait_for_idler</name></name></expr></argument>,
+<argument><expr><name><name>queue_info</name>-&gt;<name>idlers_mutex</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv2</name></decl>;</decl_stmt>
+<expr_stmt><expr><name>rv2</name> = <call><name>apr_thread_mutex_unlock</name><argument_list>(<argument><expr><name><name>queue_info</name>-&gt;<name>idlers_mutex</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>rv2</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<return>return <expr><name>rv2</name></expr>;</return>
+}</block></then></if>
+<return>return <expr><name>rv</name></expr>;</return>
+}</block></then></if>
+}</block></while>
+<expr_stmt><expr><name>rv</name> = <call><name>apr_thread_mutex_unlock</name><argument_list>(<argument><expr><name><name>queue_info</name>-&gt;<name>idlers_mutex</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<return>return <expr><name>rv</name></expr>;</return>
+}</block></then></if>
+}</block></then></if>
+<expr_stmt><expr><call><name>apr_atomic_dec32</name><argument_list>(<argument><expr>&amp;(<name><name>queue_info</name>-&gt;<name>idlers</name></name>)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<for>for (<init>;</init><condition>;</condition><incr/>) <block>{
+<decl_stmt><decl><type>struct <name>recycled_pool</name> *</type><name>first_pool</name> <init>= <expr><name><name>queue_info</name>-&gt;<name>recycled_pools</name></name></expr></init></decl>;</decl_stmt>
+<if>if <condition>(<expr><name>first_pool</name> == <name>NULL</name></expr>)</condition><then> <block>{
+<break>break;</break>
+}</block></then></if>
+<if>if <condition>(<expr><call><name>apr_atomic_casptr</name><argument_list>(<argument><expr>(<name>void</name>*)&amp;(<name><name>queue_info</name>-&gt;<name>recycled_pools</name></name>)</expr></argument>, <argument><expr><name><name>first_pool</name>-&gt;<name>next</name></name></expr></argument>,
+<argument><expr><name>first_pool</name></expr></argument>)</argument_list></call> == <name>first_pool</name></expr>)</condition><then> <block>{
+<expr_stmt><expr>*<name>recycled_pool</name> = <name><name>first_pool</name>-&gt;<name>pool</name></name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+}</block></for>
+<if>if <condition>(<expr><name><name>queue_info</name>-&gt;<name>terminated</name></name></expr>)</condition><then> <block>{
+<return>return <expr><name>APR_EOF</name></expr>;</return>
+}</block></then> <else>else <block>{
+<return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></else></if>
+}</block></function>
+<function><type><name>apr_status_t</name></type> <name>ap_queue_info_term</name><parameter_list>(<param><decl><type><name>fd_queue_info_t</name> *</type><name>queue_info</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+<expr_stmt><expr><name>rv</name> = <call><name>apr_thread_mutex_lock</name><argument_list>(<argument><expr><name><name>queue_info</name>-&gt;<name>idlers_mutex</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<return>return <expr><name>rv</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name><name>queue_info</name>-&gt;<name>terminated</name></name> = 1</expr>;</expr_stmt>
+<expr_stmt><expr><call><name>apr_thread_cond_broadcast</name><argument_list>(<argument><expr><name><name>queue_info</name>-&gt;<name>wait_for_idler</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><call><name>apr_thread_mutex_unlock</name><argument_list>(<argument><expr><name><name>queue_info</name>-&gt;<name>idlers_mutex</name></name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>ap_queue_full</name><parameter_list>(<param><type><name>queue</name></type></param>)</parameter_list></cpp:macro> <cpp:value>((queue)-&gt;nelts == (queue)-&gt;bounds)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>ap_queue_empty</name><parameter_list>(<param><type><name>queue</name></type></param>)</parameter_list></cpp:macro> <cpp:value>((queue)-&gt;nelts == 0)</cpp:value></cpp:define>
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>ap_queue_destroy</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>data</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>fd_queue_t</name> *</type><name>queue</name> <init>= <expr><name>data</name></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>apr_thread_cond_destroy</name><argument_list>(<argument><expr><name><name>queue</name>-&gt;<name>not_empty</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>apr_thread_mutex_destroy</name><argument_list>(<argument><expr><name><name>queue</name>-&gt;<name>one_big_mutex</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+<function><type><name>apr_status_t</name></type> <name>ap_queue_init</name><parameter_list>(<param><decl><type><name>fd_queue_t</name> *</type><name>queue</name></decl></param>, <param><decl><type><name>int</name></type> <name>queue_capacity</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>a</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>(<name>rv</name> = <call><name>apr_thread_mutex_create</name><argument_list>(<argument><expr>&amp;<name><name>queue</name>-&gt;<name>one_big_mutex</name></name></expr></argument>,
+<argument><expr><name>APR_THREAD_MUTEX_DEFAULT</name></expr></argument>, <argument><expr><name>a</name></expr></argument>)</argument_list></call>) != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<return>return <expr><name>rv</name></expr>;</return>
+}</block></then></if>
+<if>if <condition>(<expr>(<name>rv</name> = <call><name>apr_thread_cond_create</name><argument_list>(<argument><expr>&amp;<name><name>queue</name>-&gt;<name>not_empty</name></name></expr></argument>, <argument><expr><name>a</name></expr></argument>)</argument_list></call>) != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<return>return <expr><name>rv</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name><name>queue</name>-&gt;<name>data</name></name> = <call><name>apr_palloc</name><argument_list>(<argument><expr><name>a</name></expr></argument>, <argument><expr><name>queue_capacity</name> * <sizeof>sizeof<argument_list>(<argument><expr><name>fd_queue_elem_t</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>queue</name>-&gt;<name>bounds</name></name> = <name>queue_capacity</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>queue</name>-&gt;<name>nelts</name></name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>queue</name>-&gt;<name>in</name></name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><name><name>queue</name>-&gt;<name>out</name></name> = 0</expr>;</expr_stmt>
+<for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name>queue_capacity</name></expr>;</condition> <incr><expr>++<name>i</name></expr></incr>)
+<expr_stmt><expr><name><name>queue</name>-&gt;<name>data</name><index>[<expr><name>i</name></expr>]</index></name>.<name>sd</name> = <name>NULL</name></expr>;</expr_stmt></for>
+<expr_stmt><expr><call><name>apr_pool_cleanup_register</name><argument_list>(<argument><expr><name>a</name></expr></argument>, <argument><expr><name>queue</name></expr></argument>, <argument><expr><name>ap_queue_destroy</name></expr></argument>, <argument><expr><name>apr_pool_cleanup_null</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+<function><type><name>apr_status_t</name></type> <name>ap_queue_push</name><parameter_list>(<param><decl><type><name>fd_queue_t</name> *</type><name>queue</name></decl></param>, <param><decl><type><name>apr_socket_t</name> *</type><name>sd</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>fd_queue_elem_t</name> *</type><name>elem</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>(<name>rv</name> = <call><name>apr_thread_mutex_lock</name><argument_list>(<argument><expr><name><name>queue</name>-&gt;<name>one_big_mutex</name></name></expr></argument>)</argument_list></call>) != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<return>return <expr><name>rv</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><call><name>AP_DEBUG_ASSERT</name><argument_list>(<argument><expr>!<name><name>queue</name>-&gt;<name>terminated</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>AP_DEBUG_ASSERT</name><argument_list>(<argument><expr>!<call><name>ap_queue_full</name><argument_list>(<argument><expr><name>queue</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>elem</name> = &amp;<name><name>queue</name>-&gt;<name>data</name><index>[<expr><name><name>queue</name>-&gt;<name>in</name></name></expr>]</index></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>queue</name>-&gt;<name>in</name></name>++</expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>queue</name>-&gt;<name>in</name></name> &gt;= <name><name>queue</name>-&gt;<name>bounds</name></name></expr>)</condition><then>
+<expr_stmt><expr><name><name>queue</name>-&gt;<name>in</name></name> -= <name><name>queue</name>-&gt;<name>bounds</name></name></expr>;</expr_stmt></then></if>
+<expr_stmt><expr><name><name>elem</name>-&gt;<name>sd</name></name> = <name>sd</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>elem</name>-&gt;<name>p</name></name> = <name>p</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>queue</name>-&gt;<name>nelts</name></name>++</expr>;</expr_stmt>
+<expr_stmt><expr><call><name>apr_thread_cond_signal</name><argument_list>(<argument><expr><name><name>queue</name>-&gt;<name>not_empty</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr>(<name>rv</name> = <call><name>apr_thread_mutex_unlock</name><argument_list>(<argument><expr><name><name>queue</name>-&gt;<name>one_big_mutex</name></name></expr></argument>)</argument_list></call>) != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<return>return <expr><name>rv</name></expr>;</return>
+}</block></then></if>
+<return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+<function><type><name>apr_status_t</name></type> <name>ap_queue_pop</name><parameter_list>(<param><decl><type><name>fd_queue_t</name> *</type><name>queue</name></decl></param>, <param><decl><type><name>apr_socket_t</name> **</type><name>sd</name></decl></param>, <param><decl><type><name>apr_pool_t</name> **</type><name>p</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>fd_queue_elem_t</name> *</type><name>elem</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>(<name>rv</name> = <call><name>apr_thread_mutex_lock</name><argument_list>(<argument><expr><name><name>queue</name>-&gt;<name>one_big_mutex</name></name></expr></argument>)</argument_list></call>) != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<return>return <expr><name>rv</name></expr>;</return>
+}</block></then></if>
+<if>if <condition>(<expr><call><name>ap_queue_empty</name><argument_list>(<argument><expr><name>queue</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<if>if <condition>(<expr>!<name><name>queue</name>-&gt;<name>terminated</name></name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>apr_thread_cond_wait</name><argument_list>(<argument><expr><name><name>queue</name>-&gt;<name>not_empty</name></name></expr></argument>, <argument><expr><name><name>queue</name>-&gt;<name>one_big_mutex</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+<if>if <condition>(<expr><call><name>ap_queue_empty</name><argument_list>(<argument><expr><name>queue</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>rv</name> = <call><name>apr_thread_mutex_unlock</name><argument_list>(<argument><expr><name><name>queue</name>-&gt;<name>one_big_mutex</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<return>return <expr><name>rv</name></expr>;</return>
+}</block></then></if>
+<if>if <condition>(<expr><name><name>queue</name>-&gt;<name>terminated</name></name></expr>)</condition><then> <block>{
+<return>return <expr><name>APR_EOF</name></expr>;</return>
+}</block></then> <else>else <block>{
+<return>return <expr><name>APR_EINTR</name></expr>;</return>
+}</block></else></if>
+}</block></then></if>
+}</block></then></if>
+<expr_stmt><expr><name>elem</name> = &amp;<name><name>queue</name>-&gt;<name>data</name><index>[<expr><name><name>queue</name>-&gt;<name>out</name></name></expr>]</index></name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>queue</name>-&gt;<name>out</name></name>++</expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>queue</name>-&gt;<name>out</name></name> &gt;= <name><name>queue</name>-&gt;<name>bounds</name></name></expr>)</condition><then>
+<expr_stmt><expr><name><name>queue</name>-&gt;<name>out</name></name> -= <name><name>queue</name>-&gt;<name>bounds</name></name></expr>;</expr_stmt></then></if>
+<expr_stmt><expr><name><name>queue</name>-&gt;<name>nelts</name></name>--</expr>;</expr_stmt>
+<expr_stmt><expr>*<name>sd</name> = <name><name>elem</name>-&gt;<name>sd</name></name></expr>;</expr_stmt>
+<expr_stmt><expr>*<name>p</name> = <name><name>elem</name>-&gt;<name>p</name></name></expr>;</expr_stmt>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>AP_DEBUG</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<expr_stmt><expr><name><name>elem</name>-&gt;<name>sd</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>elem</name>-&gt;<name>p</name></name> = <name>NULL</name></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<expr_stmt><expr><name>rv</name> = <call><name>apr_thread_mutex_unlock</name><argument_list>(<argument><expr><name><name>queue</name>-&gt;<name>one_big_mutex</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>rv</name></expr>;</return>
+}</block></function>
+<function><type><name>apr_status_t</name></type> <name>ap_queue_interrupt_all</name><parameter_list>(<param><decl><type><name>fd_queue_t</name> *</type><name>queue</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>(<name>rv</name> = <call><name>apr_thread_mutex_lock</name><argument_list>(<argument><expr><name><name>queue</name>-&gt;<name>one_big_mutex</name></name></expr></argument>)</argument_list></call>) != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<return>return <expr><name>rv</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><call><name>apr_thread_cond_broadcast</name><argument_list>(<argument><expr><name><name>queue</name>-&gt;<name>not_empty</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><call><name>apr_thread_mutex_unlock</name><argument_list>(<argument><expr><name><name>queue</name>-&gt;<name>one_big_mutex</name></name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+<function><type><name>apr_status_t</name></type> <name>ap_queue_term</name><parameter_list>(<param><decl><type><name>fd_queue_t</name> *</type><name>queue</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>(<name>rv</name> = <call><name>apr_thread_mutex_lock</name><argument_list>(<argument><expr><name><name>queue</name>-&gt;<name>one_big_mutex</name></name></expr></argument>)</argument_list></call>) != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<return>return <expr><name>rv</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name><name>queue</name>-&gt;<name>terminated</name></name> = 1</expr>;</expr_stmt>
+<if>if <condition>(<expr>(<name>rv</name> = <call><name>apr_thread_mutex_unlock</name><argument_list>(<argument><expr><name><name>queue</name>-&gt;<name>one_big_mutex</name></name></expr></argument>)</argument_list></call>) != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<return>return <expr><name>rv</name></expr>;</return>
+}</block></then></if>
+<return>return <expr><call><name>ap_queue_interrupt_all</name><argument_list>(<argument><expr><name>queue</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+</unit>

@@ -1,0 +1,717 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/subversion-1.5.1/source/packages/windows-innosetup/tools/svnpath/main.c"><comment type="block">/*
+ * main.c: svnpath - Edit system path for Inno Setup Windows installer.
+ *
+ * USAGE:
+ *     svnpath --help
+ *
+ * ====================================================================
+ * Copyright (c) 2000-2004 CollabNet.  All rights reserved.
+ *
+ * This software is licensed as described in the file COPYING, which
+ * you should have received as part of this distribution.  The terms
+ * are also available at http://subversion.tigris.org/license-1.html.
+ * If newer versions of this license are posted there, you may use a
+ * newer version instead, at your option.
+ *
+ * This software consists of voluntary contributions made by many
+ * individuals.  For exact contribution history, see the revision
+ * history and logs, available at http://subversion.tigris.org/.
+ * ====================================================================
+
+ * Compiling with MinGW (use version 2.x with gcc 3.2 or better):
+ *   Make sure that MinGW/bin is in your path and type:
+ *     windres.exe -i svnpath.rc -I rc -o svnpath.res -O coff
+ *     gcc -s -Os -Wall -mwindows -march=i386 -o svnpath.exe svnpath.res main.c
+ * Compiling with MS Visual C (use VC 5.x.):
+ *   Make a new Win32 Console Application project with the name svnpath
+ *   and add this file to your project.
+ *   NOTE: Do not even think about using something newer than VC 5.x. This is
+ *         an installation program and the required runtime files are newer
+ *         than some of the targed OS's (Win 2000 and older).
+ * Compiling with the free Borland compiler bcc55:
+ *   Make sure that the bcc bin directory is in your path and type:
+ *     bcc32.exe -WC -O1 -fp -esvnpath main.c
+ *
+ * NOTES:
+ *   * Some Win32 API equivalents are used in stead of the standard C functions
+ *     in order to reduce executable size (when compiled with VC).
+ *     This functions as: lstrcpy, lstrcat.
+ *   * Keep away from Cygwin and pre MinGW 2.x. This app must run on all Win32
+ *     OS's independed of any extra dll's.
+ */</comment>
+
+<comment type="block">/* ==================================================================== */</comment>
+
+
+<comment type="block">/*** Includes. ***/</comment>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;stdio.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;stdlib.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;string.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;windows.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;io.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;sys\stat.h&gt;</cpp:file></cpp:include>
+
+<comment type="block">/*** Constants ***/</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>BUFSIZE</name></cpp:macro> <cpp:value>4000</cpp:value></cpp:define>
+
+<comment type="block">/*** Global variables ***/</comment>
+<decl_stmt><decl><type><specifier>static</specifier> <name>char</name></type> <name><name>g_AuExBatFile</name><index>[<expr>17</expr>]</index></name> <init>= <expr>"C:\\Autoexec.bat"</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>char</name></type> <name><name>g_AuExSvnFile</name><index>[<expr>17</expr>]</index></name> <init>= <expr>"C:\\Autoexec.svn"</expr></init></decl>;</decl_stmt>
+
+<decl_stmt><decl><type><name>char</name></type> <name><name>g_cSvnLineRem1</name><index>[<expr>80</expr>]</index></name></decl>;</decl_stmt>    <comment type="block">/* Look at the svn_set_auexlines routine */</comment>
+<decl_stmt><decl><type><name>char</name></type> <name><name>g_cSvnLineRem2</name><index>[<expr>80</expr>]</index></name></decl>;</decl_stmt>    <comment type="block">/* for setting the values                */</comment>
+<decl_stmt><decl><type><name>char</name></type> <name><name>g_cSvnLinePath</name><index>[<expr>256</expr>]</index></name></decl>;</decl_stmt>   <comment type="block">/*                                       */</comment>
+
+<comment type="block">/*** Prototypes ***/</comment>
+<function_decl><type><name>int</name></type> <name>svn_add9x</name> <parameter_list>(<param><decl><type><name>char</name></type> <name><name>cPath</name><index>[<expr>255</expr>]</index></name></decl></param>)</parameter_list>;</function_decl>
+<function_decl><type><name>int</name></type> <name>svn_addnt</name> <parameter_list>(<param><decl><type><name>char</name></type> <name><name>cPath</name><index>[<expr><name>BUFSIZE</name></expr>]</index></name></decl></param>)</parameter_list>;</function_decl>
+<function_decl><type><name>void</name></type> <name>svn_error_msg</name><parameter_list>(<param><decl><type><name>char</name></type> <name><name>cMsg</name><index>[<expr>255</expr>]</index></name></decl></param>)</parameter_list>;</function_decl>
+<function_decl><type><name>int</name></type> <name>svn_os_is_nt</name><parameter_list>()</parameter_list>;</function_decl>
+<function_decl><type><name>int</name></type> <name>svn_print_help</name><parameter_list>()</parameter_list>;</function_decl>
+<function_decl><type><name>int</name></type> <name>svn_read_regval</name> <parameter_list>(<param><decl><type><name>HKEY</name></type> <name>hKey</name></decl></param>, <param><decl><type><name>char</name></type> <name><name>cValue</name><index>[<expr>10</expr>]</index></name></decl></param>, <param><decl><type><name>char</name></type> <name><name>cKey</name><index>[<expr><name>BUFSIZE</name></expr>]</index></name></decl></param>,
+                     <param><decl><type><name>char</name> *</type><name><name>pcPathCur</name><index>[<expr><name>BUFSIZE</name></expr>]</index></name></decl></param>, <param><decl><type><name>DWORD</name> *</type><name>lpType</name></decl></param>)</parameter_list>;</function_decl>
+<function_decl><type><name>int</name></type> <name>svn_remove9x</name> <parameter_list>(<param><decl><type><name>char</name></type> <name><name>cPath</name><index>[<expr>255</expr>]</index></name></decl></param>)</parameter_list>;</function_decl>
+<function_decl><type><name>int</name></type> <name>svn_removent</name> <parameter_list>(<param><decl><type><name>char</name></type> <name><name>cPath</name><index>[<expr>255</expr>]</index></name></decl></param>)</parameter_list>;</function_decl>
+<function_decl><type><name>int</name></type> <name>svn_run_cmd</name> <parameter_list>(<param><decl><type><name>char</name></type> <name><name>cAction</name><index>[<expr>10</expr>]</index></name></decl></param>, <param><decl><type><name>char</name></type> <name><name>cPath</name><index>[<expr>255</expr>]</index></name></decl></param>)</parameter_list>;</function_decl>
+<function_decl><type><name>int</name></type> <name>svn_set_auexlines</name> <parameter_list>(<param><decl><type><name>char</name></type> <name><name>cPath</name><index>[<expr>255</expr>]</index></name></decl></param>)</parameter_list>;</function_decl>
+<function_decl><type><name>int</name></type> <name>svn_svnpath_exists</name> <parameter_list>(<param><decl><type><name>char</name></type> <name><name>cPath</name><index>[<expr>255</expr>]</index></name></decl></param>)</parameter_list>;</function_decl>
+
+<comment type="block">/*** Main. ***/</comment>
+<comment type="block">/*
+ * Initial program flow
+ */</comment>
+<function><type><name>int</name></type>
+<name>main</name> <parameter_list>(<param><decl><type><name>int</name></type> <name>argc</name></decl></param>, <param><decl><type><name>char</name> *</type><name><name>argv</name><index>[]</index></name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>counter</name><init>=<expr>0</expr></init>, <name>iCmdArgError</name><init>=<expr>1</expr></init>, <name>iRetVal</name><init>=<expr>1</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name></type> <name><name>cMsg</name><index>[<expr>150</expr>]</index></name></decl>;</decl_stmt>
+
+    <switch>switch <condition>(<expr><name>argc</name></expr>)</condition>
+      <block>{
+        <case>case <expr>1</expr>: <comment type="block">/* missing arguments */</comment>
+            <expr_stmt><expr><call><name>lstrcpy</name> <argument_list>( <argument><expr><name>cMsg</name></expr></argument>, <argument><expr>"Missing arguments."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>svn_error_msg</name><argument_list>(<argument><expr><name>cMsg</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name>iRetVal</name> = 65</expr>;</expr_stmt>
+            <expr_stmt><expr><name>iCmdArgError</name>=0</expr>;</expr_stmt>
+            <break>break;</break>
+        </case><case>case <expr>2</expr>: <comment type="block">/* help */</comment>
+            <if>if <condition>(<expr>! <call><name>strcmp</name><argument_list>(<argument><expr><name><name>argv</name><index>[<expr>1</expr>]</index></name></expr></argument>, <argument><expr>"--help"</expr></argument>)</argument_list></call> || ! <call><name>strcmp</name><argument_list>(<argument><expr><name><name>argv</name><index>[<expr>1</expr>]</index></name></expr></argument>, <argument><expr>"-h"</expr></argument>)</argument_list></call></expr>)</condition><then>
+              <block>{
+                <expr_stmt><expr><name>iRetVal</name>=<call><name>svn_print_help</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><name>iCmdArgError</name>=0</expr>;</expr_stmt>
+              }</block></then></if>
+            <break>break;</break>
+        </case><case>case <expr>3</expr>: <comment type="block">/* add|remove path */</comment>
+            <if>if <condition>(<expr>! <call><name>strcmp</name><argument_list>(<argument><expr><name><name>argv</name><index>[<expr>1</expr>]</index></name></expr></argument>, <argument><expr>"add"</expr></argument>)</argument_list></call> || ! <call><name>strcmp</name><argument_list>(<argument><expr><name><name>argv</name><index>[<expr>1</expr>]</index></name></expr></argument>, <argument><expr>"remove"</expr></argument>)</argument_list></call></expr>)</condition><then>
+              <block>{
+                <expr_stmt><expr><name>iRetVal</name>=<call><name>svn_run_cmd</name><argument_list>(<argument><expr><name><name>argv</name><index>[<expr>1</expr>]</index></name></expr></argument>, <argument><expr><name><name>argv</name><index>[<expr>2</expr>]</index></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><name>iCmdArgError</name>=0</expr>;</expr_stmt>
+              }</block></then></if>
+            <break>break;</break>
+        </case><default>default:
+              <expr_stmt><expr><name>iRetVal</name> = 1</expr>;</expr_stmt>
+      </default>}</block></switch>
+
+    <if>if <condition>(<expr><name>iCmdArgError</name></expr>)</condition><then>
+      <block>{
+        <comment type="block">/* It's still hope to run a command when another program (IS) has
+         * started svnpath, so we will try to resolve it. */</comment>
+
+        <expr_stmt><expr><call><name>lstrcpy</name> <argument_list>( <argument><expr><name>cMsg</name></expr></argument>, <argument><expr>"Argument Error: Wrong arguments\n\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>lstrcat</name> <argument_list>( <argument><expr><name>cMsg</name></expr></argument>, <argument><expr>"This program received the following arguments:"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <for>for (<init><expr><name>counter</name>=1</expr>;</init> <condition><expr><name>counter</name>&lt;<name>argc</name></expr>;</condition> <incr><expr><name>counter</name>++</expr></incr>)
+          <block>{
+            <expr_stmt><expr><call><name>lstrcat</name> <argument_list>( <argument><expr><name>cMsg</name></expr></argument>, <argument><expr>"\n    '"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>lstrcat</name> <argument_list>( <argument><expr><name>cMsg</name></expr></argument>, <argument><expr><name><name>argv</name><index>[<expr><name>counter</name></expr>]</index></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>lstrcat</name> <argument_list>( <argument><expr><name>cMsg</name></expr></argument>, <argument><expr>"'"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          }</block></for>
+
+        <if>if <condition>(<expr>(!<call><name>strcmp</name><argument_list>(<argument><expr><name><name>argv</name><index>[<expr>1</expr>]</index></name></expr></argument>, <argument><expr>"add"</expr></argument>)</argument_list></call> || !<call><name>strcmp</name><argument_list>(<argument><expr><name><name>argv</name><index>[<expr>1</expr>]</index></name></expr></argument>, <argument><expr>"remove"</expr></argument>)</argument_list></call>) &amp;&amp; (<name>argc</name> &gt; 3)</expr>)</condition><then>
+          <block>{
+            <expr_stmt><expr><name>iRetVal</name>=<call><name>svn_run_cmd</name><argument_list>(<argument><expr><name><name>argv</name><index>[<expr>1</expr>]</index></name></expr></argument>, <argument><expr><name><name>argv</name><index>[<expr>2</expr>]</index></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name>iCmdArgError</name>=0</expr>;</expr_stmt>
+          }</block></then>
+        <else>else
+          <block>{
+            <expr_stmt><expr><call><name>svn_error_msg</name><argument_list>(<argument><expr><name>cMsg</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name>iRetVal</name> = 1</expr>;</expr_stmt>
+          }</block></else></if>
+      }</block></then></if>
+    <return>return <expr>(<name>iRetVal</name>)</expr>;</return>
+}</block></function>
+
+<comment type="block">/*** svn_add9x ***/</comment>
+<comment type="block">/*
+ * Adding the path to the %PATH% environment in Autoexec.bat for Win9x
+ */</comment>
+<function><type><name>int</name></type>
+<name>svn_add9x</name> <parameter_list>(<param><decl><type><name>char</name></type> <name><name>cPath</name><index>[<expr>255</expr>]</index></name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>char</name></type> <name><name>cSvnCnt</name><index>[<expr>1024</expr>]</index></name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>iAutoBatRo</name><init>=<expr>0</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>FILE</name> *</type><name>FH_AUBAT</name></decl>;</decl_stmt>
+
+    <comment type="block">/* Fill up cSvnPath with the svn contents of Autoexec.bat */</comment>
+    <expr_stmt><expr><call><name>svn_set_auexlines</name><argument_list>(<argument><expr><name>cPath</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lstrcpy</name> <argument_list>(<argument><expr><name>cSvnCnt</name></expr></argument>, <argument><expr><name>g_cSvnLineRem1</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lstrcat</name> <argument_list>(<argument><expr><name>cSvnCnt</name></expr></argument>, <argument><expr><name>g_cSvnLineRem2</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lstrcat</name> <argument_list>(<argument><expr><name>cSvnCnt</name></expr></argument>, <argument><expr><name>g_cSvnLinePath</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* Make a backup of Autoexec.bat to Autoexec.svn if it exists, write the
+     * svn stuff to Autoexec.bat */</comment>
+    <if>if<condition>( <expr><call><name>_access</name><argument_list>(<argument><expr><name>g_AuExBatFile</name></expr></argument>, <argument><expr>0</expr></argument> )</argument_list></call> != -1</expr>)</condition><then>
+      <block>{
+        <comment type="block">/* The file exists, so we make sure that we have write permission before
+         * we continue*/</comment>
+        <if>if<condition>(<expr>(<call><name>_access</name><argument_list>(<argument><expr><name>g_AuExBatFile</name></expr></argument>, <argument><expr>2</expr></argument>)</argument_list></call>) == -1</expr>)</condition><then>
+          <block>{
+            <expr_stmt><expr><call><name>_chmod</name><argument_list>(<argument><expr><name>g_AuExBatFile</name></expr></argument>, <argument><expr><name>_S_IWRITE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name>iAutoBatRo</name>=1</expr>;</expr_stmt>
+          }</block></then></if>
+
+        <comment type="block">/* Make the backup */</comment>
+        <expr_stmt><expr><call><name>CopyFileA</name><argument_list>(<argument><expr><name>g_AuExBatFile</name></expr></argument>, <argument><expr><name>g_AuExSvnFile</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      }</block></then></if>
+
+    <comment type="block">/* Write the svn stuff to the file */</comment>
+    <expr_stmt><expr><name>FH_AUBAT</name> = <call><name>fopen</name><argument_list>(<argument><expr><name>g_AuExBatFile</name></expr></argument>, <argument><expr>"a+t"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>fputs</name><argument_list>(<argument><expr><name>cSvnCnt</name></expr></argument>, <argument><expr><name>FH_AUBAT</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>fclose</name><argument_list>(<argument><expr><name>FH_AUBAT</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* Turn back to Read only if that was the original state */</comment>
+    <if>if <condition>(<expr><name>iAutoBatRo</name></expr>)</condition><then>
+      <block>{
+        <expr_stmt><expr><call><name>_chmod</name><argument_list>(<argument><expr><name>g_AuExBatFile</name></expr></argument>, <argument><expr><name>_S_IREAD</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      }</block></then></if>
+
+    <return>return <expr>0</expr>;</return>
+}</block></function>
+
+<comment type="block">/*** svn_addnt ***/</comment>
+<comment type="block">/*
+ * Adding the path to the %PATH% environment in the registry on Win-NT's
+ */</comment>
+<function><type><name>int</name></type>
+<name>svn_addnt</name> <parameter_list>(<param><decl><type><name>char</name></type> <name><name>cPathSvn</name><index>[<expr>255</expr>]</index></name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>long</name></type> <name>lRet</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name></type> <name><name>cPathTmp</name><index>[<expr><name>BUFSIZE</name></expr>]</index></name></decl>;</decl_stmt>
+
+    <decl_stmt><decl><type><name>HKEY</name></type> <name>hKey</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name></type> <name><name>cKey</name><index>[<expr><name>BUFSIZE</name></expr>]</index></name></decl>, <decl><type ref="prev"/><name><name>cPathNew</name><index>[<expr><name>BUFSIZE</name></expr>]</index></name></decl>, <decl><type ref="prev"/><name><name>cPathCur</name><index>[<expr><name>BUFSIZE</name></expr>]</index></name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>DWORD</name></type> <name>dwBufLen</name></decl>, <decl><type ref="prev"/><name>lpType</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name> *</type><name><name>pcPathCur</name><index>[<expr><name>BUFSIZE</name></expr>]</index></name></decl>;</decl_stmt>
+    <expr_stmt><expr><name>dwBufLen</name>=<name>BUFSIZE</name></expr>;</expr_stmt>
+    <expr_stmt><expr>*<name>pcPathCur</name>=<name>cPathCur</name></expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>lstrcpy</name> <argument_list>(<argument><expr><name>cPathTmp</name></expr></argument>, <argument><expr><name>cPathSvn</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr><call><name>svn_svnpath_exists</name><argument_list>(<argument><expr><name>cPathTmp</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+      <block>{
+        <expr_stmt><expr><call><name>exit</name> <argument_list>(<argument><expr>1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      }</block></then></if>
+
+    <expr_stmt><expr><call><name>lstrcpy</name><argument_list>(<argument><expr><name>cKey</name></expr></argument>, <argument><expr>"SYSTEM\\CurrentControlSet\\"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lstrcat</name><argument_list>(<argument><expr><name>cKey</name></expr></argument>, <argument><expr>"Control\\Session Manager\\Environment"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* Get value, value type and current path from HKLM and try to append
+     * the svnpath to it */</comment>
+    <expr_stmt><expr><call><name>svn_read_regval</name> <argument_list>(<argument><expr><name>HKEY_LOCAL_MACHINE</name></expr></argument>, <argument><expr>"Path"</expr></argument>, <argument><expr><name>cKey</name></expr></argument>, <argument><expr>&amp;*<name>pcPathCur</name></expr></argument>, <argument><expr>&amp;<name>lpType</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* Reopen the key for writing */</comment>
+    <expr_stmt><expr><name>lRet</name> = <call><name>RegCreateKeyEx</name><argument_list>(
+              <argument><expr><name>HKEY_LOCAL_MACHINE</name></expr></argument>, <argument><expr><name>cKey</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+              <argument><expr><name>REG_OPTION_NON_VOLATILE</name></expr></argument>, <argument><expr><name>KEY_ALL_ACCESS</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+              <argument><expr>&amp;<name>hKey</name></expr></argument>, <argument><expr>&amp;<name>dwBufLen</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* Add the subversion path to the path */</comment>
+    <expr_stmt><expr><call><name>lstrcpy</name><argument_list>(<argument><expr><name>cPathNew</name></expr></argument>, <argument><expr><name>cPathCur</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lstrcat</name><argument_list>(<argument><expr><name>cPathNew</name></expr></argument>, <argument><expr>";"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lstrcat</name><argument_list>(<argument><expr><name>cPathNew</name></expr></argument>, <argument><expr><name>cPathSvn</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>lRet</name> = <call><name>RegSetValueExA</name><argument_list>(<argument><expr><name>hKey</name></expr></argument>, <argument><expr>"Path"</expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>lpType</name></expr></argument>,
+                          <argument><expr>(<name>BYTE</name>*)<name>cPathNew</name></expr></argument>, <argument><expr><call><name>strlen</name><argument_list>(<argument><expr><name>cPathNew</name></expr></argument>)</argument_list></call>+1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>RegCloseKey</name><argument_list>(<argument><expr><name>hKey</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* If it went wrong to do it with HKLM, then try HKCU */</comment>
+    <if>if <condition>(<expr><name>lRet</name> != 0</expr>)</condition><then>
+      <block>{
+        <expr_stmt><expr><call><name>strcpy</name> <argument_list>(<argument><expr><name>cPathCur</name></expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <expr_stmt><expr><name>lRet</name> = <call><name>svn_read_regval</name><argument_list>(<argument><expr><name>HKEY_CURRENT_USER</name></expr></argument>, <argument><expr>"Path"</expr></argument>,
+                               <argument><expr>"Environment"</expr></argument>, <argument><expr>&amp;*<name>pcPathCur</name></expr></argument>, <argument><expr>&amp;<name>lpType</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <comment type="block">/* Current Path may be empty */</comment>
+        <expr_stmt><expr><name><name>cPathNew</name><index>[<expr>0</expr>]</index></name> = 0</expr>;</expr_stmt>
+        <if>if <condition>(<expr><call><name>strlen</name><argument_list>(<argument><expr><name>cPathCur</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>lstrcpy</name><argument_list>(<argument><expr><name>cPathNew</name></expr></argument>, <argument><expr><name>cPathCur</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><call><name>lstrcat</name><argument_list>(<argument><expr><name>cPathNew</name></expr></argument>, <argument><expr>";"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+        <else>else
+          <expr_stmt><expr><name>lpType</name> = <name>REG_EXPAND_SZ</name></expr>;</expr_stmt></else></if>
+
+        <expr_stmt><expr><call><name>lstrcat</name><argument_list>(<argument><expr><name>cPathNew</name></expr></argument>, <argument><expr><name>cPathSvn</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <comment type="block">/* Reopen the key for writing */</comment>
+        <expr_stmt><expr><name>lRet</name> = <call><name>RegCreateKeyEx</name><argument_list>(
+                  <argument><expr><name>HKEY_CURRENT_USER</name></expr></argument>, <argument><expr>"Environment"</expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                  <argument><expr><name>REG_OPTION_NON_VOLATILE</name></expr></argument>, <argument><expr><name>KEY_ALL_ACCESS</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                  <argument><expr>&amp;<name>hKey</name></expr></argument>, <argument><expr>&amp;<name>dwBufLen</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <expr_stmt><expr><name>lRet</name> = <call><name>RegSetValueExA</name><argument_list>(<argument><expr><name>hKey</name></expr></argument>, <argument><expr>"Path"</expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>lpType</name></expr></argument>,
+                              <argument><expr>(<name>LPBYTE</name>)<name>cPathNew</name></expr></argument>, <argument><expr><call><name>strlen</name><argument_list>(<argument><expr><name>cPathNew</name></expr></argument>)</argument_list></call>+1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <expr_stmt><expr><call><name>RegCloseKey</name><argument_list>(<argument><expr><name>hKey</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      }</block></then></if>
+
+    <if>if <condition>(<expr><name>lRet</name> != 0</expr>)</condition><then>
+      <block>{
+        <return>return <expr>(1)</expr>;</return>
+      }</block></then>
+    <else>else
+      <block>{
+        <decl_stmt><decl><type><name>long</name></type> <name>lRet</name></decl>;</decl_stmt>
+
+        <comment type="block">/* Tell the system about the new path */</comment>
+        <expr_stmt><expr><call><name>SendMessageTimeout</name><argument_list>(<argument><expr><name>HWND_BROADCAST</name></expr></argument>, <argument><expr><name>WM_SETTINGCHANGE</name></expr></argument>, <argument><expr>0</expr></argument>,
+                           <argument><expr>(<name>LPARAM</name>) "Environment"</expr></argument>, <argument><expr><name>SMTO_ABORTIFHUNG</name></expr></argument>,
+                           <argument><expr>5000</expr></argument>, <argument><expr>&amp;<name>lRet</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr>(0)</expr>;</return>
+      }</block></else></if>
+}</block></function>
+
+<comment type="block">/*** svn_error_msg ***/</comment>
+<comment type="block">/*
+ * Displays a message box with a error message
+ */</comment>
+<function><type><name>void</name></type>
+<name>svn_error_msg</name><parameter_list>(<param><decl><type><name>char</name></type> <name><name>cMsg</name><index>[<expr>150</expr>]</index></name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>long</name></type> <name>lRet</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>long</name></type> <name>lMsgBoxFlag</name><init>=<expr><name>MB_YESNO</name>+<name>MB_ICONWARNING</name>+<name>MB_SETFOREGROUND</name>+<name>MB_TOPMOST</name></expr></init></decl>;</decl_stmt>
+
+    <expr_stmt><expr><call><name>lstrcat</name><argument_list>(<argument><expr><name>cMsg</name></expr></argument>, <argument><expr>"\n\nDo you want to read the help for svnpath?"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>lRet</name>=<call><name>MessageBox</name><argument_list>(<argument><expr>0</expr></argument>, <argument><expr><name>cMsg</name></expr></argument>, <argument><expr>"svnpath - Error"</expr></argument> , <argument><expr><name>lMsgBoxFlag</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr><name>lRet</name>==<name>IDYES</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>svn_print_help</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+}</block></function>
+
+<comment type="block">/*** svn_os_is_nt ***/</comment>
+<comment type="block">/*
+ * Determing if the OS type is Windows NT or not. Returns 1 if true
+ */</comment>
+<function><type><name>int</name></type>
+<name>svn_os_is_nt</name><parameter_list>()</parameter_list>
+<block>{
+    <comment type="block">/* NOTE: Use OSVERSIONINFO and not OSVERSIONINFOEX, older VC's have bogus
+     *       headers */</comment>
+    <decl_stmt><decl><type><name>int</name></type> <name>iRetVal</name><init>=<expr>0</expr></init></decl>;</decl_stmt>
+
+    <decl_stmt><decl><type><name>OSVERSIONINFO</name></type> <name>osvi</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>BOOL</name></type> <name>bOsVersionInfoEx</name></decl>;</decl_stmt>
+    <expr_stmt><expr><call><name>ZeroMemory</name><argument_list>(<argument><expr>&amp;<name>osvi</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>OSVERSIONINFO</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>osvi</name>.<name>dwOSVersionInfoSize</name></name> = <sizeof>sizeof<argument_list>(<argument><expr><name>OSVERSIONINFO</name></expr></argument>)</argument_list></sizeof></expr>;</expr_stmt>
+
+    <if>if<condition>( <expr>!(<name>bOsVersionInfoEx</name> = <call><name>GetVersionEx</name> <argument_list>(<argument><expr>(<name>OSVERSIONINFO</name> *) &amp;<name>osvi</name></expr></argument>)</argument_list></call>)</expr> )</condition><then>
+      <block>{
+        <expr_stmt><expr><name><name>osvi</name>.<name>dwOSVersionInfoSize</name></name> = <sizeof>sizeof <argument_list>(<argument><expr><name>OSVERSIONINFO</name></expr></argument>)</argument_list></sizeof></expr>;</expr_stmt>
+        <if>if <condition>(<expr>! <call><name>GetVersionEx</name> <argument_list>( <argument><expr>(<name>OSVERSIONINFO</name> *) &amp;<name>osvi</name></expr></argument>)</argument_list></call></expr> )</condition><then>
+          <block>{
+            <expr_stmt><expr><call><name>exit</name> <argument_list>(<argument><expr>1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          }</block></then></if>
+      }</block></then></if>
+
+    <if>if <condition>(<expr><name><name>osvi</name>.<name>dwPlatformId</name></name> == <name>VER_PLATFORM_WIN32_NT</name></expr>)</condition><then>
+      <block>{
+        <expr_stmt><expr><name>iRetVal</name>=1</expr>;</expr_stmt>
+      }</block></then></if>
+
+    <return>return <expr>(<name>iRetVal</name>)</expr>;</return>
+}</block></function>
+
+<comment type="block">/*** svn_print_help ***/</comment>
+<comment type="block">/*
+ * Printing out help on the console
+ */</comment>
+<function><type><name>int</name></type>
+<name>svn_print_help</name><parameter_list>()</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>char</name></type> <name><name>cMsgBoxCaption</name><index>[<expr>80</expr>]</index></name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name></type> <name><name>cMsgBoxMsg</name><index>[<expr>1024</expr>]</index></name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>long</name></type> <name>lMsgBoxFlag</name><init>=<expr><name>MB_OK</name>+<name>MB_ICONINFORMATION</name>+<name>MB_SETFOREGROUND</name></expr></init></decl>;</decl_stmt>
+
+    <expr_stmt><expr><call><name>lstrcpy</name><argument_list>(<argument><expr><name>cMsgBoxCaption</name></expr></argument>, <argument><expr>"Help for svnpath"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+
+    <expr_stmt><expr><call><name>lstrcpy</name><argument_list>(<argument><expr><name>cMsgBoxMsg</name></expr></argument>, <argument><expr>"svnpath - Add/remove a path on the system's PATH environment variable\n\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>lstrcat</name><argument_list>(<argument><expr><name>cMsgBoxMsg</name></expr></argument>, <argument><expr>"usage:\tsvnpath add|remove \"Path\"\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lstrcat</name><argument_list>(<argument><expr><name>cMsgBoxMsg</name></expr></argument>, <argument><expr>"\tsvnpath -h|--help\n\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>lstrcat</name><argument_list>(<argument><expr><name>cMsgBoxMsg</name></expr></argument>, <argument><expr>"Example:\tsvnpath add \"C:\\Path\\to\\svn.exe\"\n\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+
+    <expr_stmt><expr><call><name>lstrcat</name><argument_list>(<argument><expr><name>cMsgBoxMsg</name></expr></argument>, <argument><expr>"Command explanations:\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lstrcat</name><argument_list>(<argument><expr><name>cMsgBoxMsg</name></expr></argument>, <argument><expr>"    add &lt;path&gt;\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lstrcat</name><argument_list>(<argument><expr><name>cMsgBoxMsg</name></expr></argument>, <argument><expr>"        Adding the path to the system's PATH environment variable\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lstrcat</name><argument_list>(<argument><expr><name>cMsgBoxMsg</name></expr></argument>, <argument><expr>"    remove &lt;path&gt;,\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lstrcat</name><argument_list>(<argument><expr><name>cMsgBoxMsg</name></expr></argument>, <argument><expr>"        Removing the path from the system's PATH environment "</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lstrcat</name><argument_list>(<argument><expr><name>cMsgBoxMsg</name></expr></argument>, <argument><expr>"variable\n\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>lstrcat</name><argument_list>(<argument><expr><name>cMsgBoxMsg</name></expr></argument>, <argument><expr>"        * On the Windows 9x variations, the Autoexec.bat file are "</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lstrcat</name><argument_list>(<argument><expr><name>cMsgBoxMsg</name></expr></argument>, <argument><expr>"edited\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lstrcat</name><argument_list>(<argument><expr><name>cMsgBoxMsg</name></expr></argument>, <argument><expr>"        * On the Windows NT variations, the registry are edited. The "</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lstrcat</name><argument_list>(<argument><expr><name>cMsgBoxMsg</name></expr></argument>, <argument><expr>"program tries\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lstrcat</name><argument_list>(<argument><expr><name>cMsgBoxMsg</name></expr></argument>, <argument><expr>"            to edit the Environment in HKLM first. If that fails, then "</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lstrcat</name><argument_list>(<argument><expr><name>cMsgBoxMsg</name></expr></argument>, <argument><expr>"the Environment\n            in HKCU are used.\n\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>lstrcat</name><argument_list>(<argument><expr><name>cMsgBoxMsg</name></expr></argument>, <argument><expr>"    -h, --help:    Print help (this page)\n\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>lstrcat</name><argument_list>(<argument><expr><name>cMsgBoxMsg</name></expr></argument>, <argument><expr>"Notes:\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lstrcat</name><argument_list>(<argument><expr><name>cMsgBoxMsg</name></expr></argument>, <argument><expr>"   * For playing safe: -Make sure that the given path allways is "</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lstrcat</name><argument_list>(<argument><expr><name>cMsgBoxMsg</name></expr></argument>, <argument><expr>"quoted between\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lstrcat</name><argument_list>(<argument><expr><name>cMsgBoxMsg</name></expr></argument>, <argument><expr>"      two \"'s wherewer the path contains spaces or not\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>MessageBox</name><argument_list>(<argument><expr>0</expr></argument>,<argument><expr><name>cMsgBoxMsg</name></expr></argument>, <argument><expr><name>cMsgBoxCaption</name></expr></argument> , <argument><expr><name>lMsgBoxFlag</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <return>return <expr>0</expr>;</return>
+}</block></function>
+
+<comment type="block">/*** svn_read_regval ***/</comment>
+<comment type="block">/*
+ * Reading a registry value
+ */</comment>
+<function><type><name>int</name></type>
+<name>svn_read_regval</name> <parameter_list>(<param><decl><type><name>HKEY</name></type> <name>hKey</name></decl></param>, <param><decl><type><name>char</name></type> <name><name>cValue</name><index>[<expr>10</expr>]</index></name></decl></param>, <param><decl><type><name>char</name></type> <name><name>cKey</name><index>[<expr><name>BUFSIZE</name></expr>]</index></name></decl></param>,
+                 <param><decl><type><name>char</name> *</type><name><name>pcPathCur</name><index>[<expr><name>BUFSIZE</name></expr>]</index></name></decl></param>, <param><decl><type><name>DWORD</name> *</type><name>lpType</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>long</name></type> <name>lRet</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>DWORD</name></type> <name>dwBufLen</name></decl>;</decl_stmt>
+    <expr_stmt><expr><name>dwBufLen</name>=<name>BUFSIZE</name></expr>;</expr_stmt>
+
+    <comment type="block">/* Get the key value and put in pcPathCur */</comment>
+    <expr_stmt><expr><name>lRet</name> = <call><name>RegOpenKeyExA</name><argument_list>(<argument><expr><name>hKey</name></expr></argument>, <argument><expr><name>cKey</name></expr></argument>,
+                         <argument><expr>0</expr></argument>, <argument><expr><name>KEY_READ</name></expr></argument>, <argument><expr>&amp;<name>hKey</name></expr></argument> )</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>lRet</name> = <call><name>RegQueryValueExA</name><argument_list>(<argument><expr><name>hKey</name></expr></argument>, <argument><expr><name>cValue</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr>&amp;*<name>lpType</name></expr></argument>,
+                             <argument><expr>(<name>LPBYTE</name>) &amp;**<name>pcPathCur</name></expr></argument>, <argument><expr>&amp;<name>dwBufLen</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>RegCloseKey</name><argument_list>(<argument><expr><name>hKey</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr><name>lRet</name> != 0</expr>)</condition><then>
+      <block>{
+        <return>return <expr>(1)</expr>;</return>
+      }</block></then>
+    <else>else
+      <block>{
+        <return>return <expr>(0)</expr>;</return>
+      }</block></else></if>
+}</block></function>
+
+<comment type="block">/*** svn_remove9x ***/</comment>
+<comment type="block">/*
+ * Removing the path from the %PATH% environment in Autoexec.bat for Win-9x
+ */</comment>
+<function><type><name>int</name></type>
+<name>svn_remove9x</name> <parameter_list>(<param><decl><type><name>char</name></type> <name><name>cPath</name><index>[<expr>255</expr>]</index></name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>char</name></type> <name><name>cPathTmp</name><index>[<expr>255</expr>]</index></name></decl>;</decl_stmt>
+
+    <decl_stmt><decl><type><name>FILE</name> *</type><name>FH_AUBAT</name></decl>, *<decl><type ref="prev"/><name>FH_AUSVN</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name></type> <name><name>cLineBuffer</name><index>[<expr>255</expr>]</index></name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name></type> <name><name>cSvnLineBuffer</name><index>[<expr>255</expr>]</index></name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>iCounter</name><init>=<expr>0</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>iAutoBatRo</name><init>=<expr>0</expr></init></decl>;</decl_stmt>
+
+    <expr_stmt><expr><call><name>lstrcpy</name> <argument_list>(<argument><expr><name>cPathTmp</name></expr></argument>, <argument><expr><name>cPath</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr>! <call><name>svn_svnpath_exists</name><argument_list>(<argument><expr><name>cPathTmp</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+      <block>{
+        <expr_stmt><expr><call><name>exit</name><argument_list>(<argument><expr>1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      }</block></then></if>
+
+    <comment type="block">/* Make a backup of Autoexec.bat to Autoexec.svn if it exists, write the
+     * svn stuff to Autoexec.bat */</comment>
+    <if>if<condition>(<expr><call><name>_access</name><argument_list>(<argument><expr><name>g_AuExBatFile</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call> != -1</expr>)</condition><then>
+      <block>{
+        <comment type="block">/* The file exists, so we make sure that we have write permission
+         *  before we continue*/</comment>
+        <if>if<condition>(<expr>(<call><name>_access</name><argument_list>(<argument><expr><name>g_AuExBatFile</name></expr></argument>, <argument><expr>2</expr></argument> )</argument_list></call>) == -1</expr>)</condition><then>
+          <block>{
+            <expr_stmt><expr><call><name>_chmod</name><argument_list>(<argument><expr><name>g_AuExBatFile</name></expr></argument>, <argument><expr><name>_S_IWRITE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name>iAutoBatRo</name>=1</expr>;</expr_stmt>
+          }</block></then></if>
+
+        <comment type="block">/* Make the backup */</comment>
+        <expr_stmt><expr><call><name>CopyFileA</name><argument_list>(<argument><expr><name>g_AuExBatFile</name></expr></argument>, <argument><expr><name>g_AuExSvnFile</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      }</block></then></if>
+
+    <comment type="block">/* Open Autoexec.svn and parse it line by line. Save the new contents
+     * to Autoexec.bat */</comment>
+    <expr_stmt><expr><name>FH_AUSVN</name>=<call><name>fopen</name><argument_list>(<argument><expr><name>g_AuExSvnFile</name></expr></argument>, <argument><expr>"rt"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name>FH_AUBAT</name>=<call><name>fopen</name><argument_list>(<argument><expr><name>g_AuExBatFile</name></expr></argument>, <argument><expr>"wt"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* Give cSvnLineBuffer the first line to remove from Autoexec.bat */</comment>
+    <expr_stmt><expr><call><name>svn_set_auexlines</name><argument_list>(<argument><expr><name>cPath</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lstrcpy</name> <argument_list>(<argument><expr><name>cSvnLineBuffer</name></expr></argument>, <argument><expr><name>g_cSvnLineRem1</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <while>while<condition>(<expr><call><name>fgets</name><argument_list>(<argument><expr><name>cLineBuffer</name></expr></argument>, <argument><expr>255</expr></argument>, <argument><expr><name>FH_AUSVN</name></expr></argument>)</argument_list></call> != <name>NULL</name></expr>)</condition>
+      <block>{
+        <if>if <condition>(<expr><call><name>strstr</name> <argument_list>(<argument><expr><name>cLineBuffer</name></expr></argument>, <argument><expr><name>cSvnLineBuffer</name></expr></argument>)</argument_list></call> == <name>NULL</name></expr>)</condition><then>
+          <block>{
+            <expr_stmt><expr><call><name>fputs</name><argument_list>(<argument><expr><name>cLineBuffer</name></expr></argument>, <argument><expr><name>FH_AUBAT</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          }</block></then>
+        <else>else
+          <block>{
+            <expr_stmt><expr><name>iCounter</name>++</expr>;</expr_stmt>
+            <switch>switch <condition>(<expr><name>iCounter</name></expr>)</condition>
+              <block>{
+                <case>case <expr>1</expr>:
+                  <expr_stmt><expr><call><name>lstrcpy</name> <argument_list>(<argument><expr><name>cSvnLineBuffer</name></expr></argument>, <argument><expr><name>g_cSvnLineRem2</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                  <break>break;</break>
+                </case><case>case <expr>2</expr>:
+                  <expr_stmt><expr><call><name>lstrcpy</name> <argument_list>(<argument><expr><name>cSvnLineBuffer</name></expr></argument>, <argument><expr><name>g_cSvnLinePath</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                  <break>break;</break>
+              </case>}</block></switch>
+          }</block></else></if>
+      }</block></while>
+
+    <expr_stmt><expr><call><name>fclose</name><argument_list>(<argument><expr><name>FH_AUSVN</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>fclose</name><argument_list>(<argument><expr><name>FH_AUBAT</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* Turn back to Read only if that was the original state */</comment>
+    <if>if <condition>(<expr><name>iAutoBatRo</name></expr>)</condition><then>
+      <block>{
+        <expr_stmt><expr><call><name>_chmod</name><argument_list>(<argument><expr><name>g_AuExBatFile</name></expr></argument>, <argument><expr><name>_S_IREAD</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      }</block></then></if>
+
+    <return>return <expr>0</expr>;</return>
+}</block></function>
+
+<comment type="block">/*** svn_removent ***/</comment>
+<comment type="block">/*
+ * Removing the path from the %PATH% environment in the registry on Win-NT's
+ */</comment>
+<function><type><name>int</name></type>
+<name>svn_removent</name> <parameter_list>(<param><decl><type><name>char</name></type> <name><name>cPathSvn</name><index>[<expr>255</expr>]</index></name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>long</name></type> <name>lRet</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name></type> <name><name>cPathTmp</name><index>[<expr><name>BUFSIZE</name></expr>]</index></name></decl>;</decl_stmt>
+
+    <decl_stmt><decl><type><name>HKEY</name></type> <name>hKey</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name></type> <name><name>cKey</name><index>[<expr><name>BUFSIZE</name></expr>]</index></name></decl>, <decl><type ref="prev"/><name><name>cPathNew</name><index>[<expr><name>BUFSIZE</name></expr>]</index></name></decl>, <decl><type ref="prev"/><name><name>cPathCur</name><index>[<expr><name>BUFSIZE</name></expr>]</index></name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>DWORD</name></type> <name>dwBufLen</name></decl>, <decl><type ref="prev"/><name>lpType</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name> *</type><name><name>pcPathCur</name><index>[<expr><name>BUFSIZE</name></expr>]</index></name></decl>;</decl_stmt>
+
+    <decl_stmt><decl><type><name>char</name> *</type> <name>pcSubPath</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr>*<name>pcPathCur</name>=<name>cPathCur</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name>dwBufLen</name>=<name>BUFSIZE</name></expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>lstrcpy</name> <argument_list>(<argument><expr><name>cPathTmp</name></expr></argument>, <argument><expr><name>cPathSvn</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr>! <call><name>svn_svnpath_exists</name><argument_list>(<argument><expr><name>cPathTmp</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+      <block>{
+        <expr_stmt><expr><call><name>exit</name> <argument_list>(<argument><expr>1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      }</block></then></if>
+
+    <expr_stmt><expr><call><name>lstrcpy</name><argument_list>(<argument><expr><name>cKey</name></expr></argument>, <argument><expr>"SYSTEM\\CurrentControlSet\\"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lstrcat</name><argument_list>(<argument><expr><name>cKey</name></expr></argument>, <argument><expr>"Control\\Session Manager\\Environment"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* Get value, value type and current path from HKLM and try to append
+     * the svnpath to it */</comment>
+    <expr_stmt><expr><name>lRet</name> = <call><name>svn_read_regval</name><argument_list>(<argument><expr><name>HKEY_LOCAL_MACHINE</name></expr></argument>, <argument><expr>"Path"</expr></argument>,
+                           <argument><expr><name>cKey</name></expr></argument>, <argument><expr>&amp;*<name>pcPathCur</name></expr></argument>, <argument><expr>&amp;<name>lpType</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* Reopen the key for writing */</comment>
+    <expr_stmt><expr><name>lRet</name> = <call><name>RegCreateKeyEx</name><argument_list>(
+              <argument><expr><name>HKEY_LOCAL_MACHINE</name></expr></argument>, <argument><expr><name>cKey</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+              <argument><expr><name>REG_OPTION_NON_VOLATILE</name></expr></argument>, <argument><expr><name>KEY_ALL_ACCESS</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+              <argument><expr>&amp;<name>hKey</name></expr></argument>, <argument><expr>&amp;<name>dwBufLen</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* Remove the Subversion path from the system path and put the new path
+     * on cPathNew*/</comment>
+
+    <expr_stmt><expr><name>pcSubPath</name> = <call><name>strtok</name> <argument_list>(<argument><expr><name>cPathCur</name></expr></argument>,<argument><expr>";"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>strcpy</name><argument_list>(<argument><expr><name>cPathNew</name></expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <while>while <condition>(<expr><name>pcSubPath</name> != <name>NULL</name></expr>)</condition>
+      <block>{
+        <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>pcSubPath</name></expr></argument>, <argument><expr><name>cPathSvn</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+          <block>{
+            <if>if <condition>(<expr><call><name>strlen</name><argument_list>(<argument><expr><name>cPathNew</name></expr></argument>)</argument_list></call>==0</expr>)</condition><then>
+              <block>{
+                <expr_stmt><expr><call><name>lstrcpy</name><argument_list>(<argument><expr><name>cPathNew</name></expr></argument>, <argument><expr><name>pcSubPath</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+              }</block></then>
+            <else>else
+              <block>{
+                <expr_stmt><expr><call><name>lstrcat</name><argument_list>(<argument><expr><name>cPathNew</name></expr></argument>, <argument><expr>";"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><call><name>lstrcat</name><argument_list>(<argument><expr><name>cPathNew</name></expr></argument>, <argument><expr><name>pcSubPath</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+              }</block></else></if>
+          }</block></then></if>
+        <expr_stmt><expr><name>pcSubPath</name> = <call><name>strtok</name> <argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr>";"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      }</block></while>
+
+    <expr_stmt><expr><name>lRet</name> = <call><name>RegSetValueExA</name><argument_list>(<argument><expr><name>hKey</name></expr></argument>, <argument><expr>"Path"</expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>lpType</name></expr></argument>,
+                          <argument><expr>(<name>BYTE</name>*)<name>cPathNew</name></expr></argument>, <argument><expr><call><name>strlen</name><argument_list>(<argument><expr><name>cPathNew</name></expr></argument>)</argument_list></call>+1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>RegCloseKey</name><argument_list>(<argument><expr><name>hKey</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* If it went wrong to do it with HKLM, then try HKCU */</comment>
+    <if>if <condition>(<expr><name>lRet</name> != 0</expr>)</condition><then>
+      <block>{
+        <expr_stmt><expr><call><name>strcpy</name><argument_list>(<argument><expr><name>cPathCur</name></expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><name>lRet</name> = <call><name>svn_read_regval</name><argument_list>(<argument><expr><name>HKEY_CURRENT_USER</name></expr></argument>, <argument><expr>"Path"</expr></argument>, <argument><expr>"Environment"</expr></argument>,
+                               <argument><expr>&amp;*<name>pcPathCur</name></expr></argument>, <argument><expr>&amp;<name>lpType</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <expr_stmt><expr><name>pcSubPath</name> = <call><name>strtok</name> <argument_list>(<argument><expr><name>cPathCur</name></expr></argument>,<argument><expr>";"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <expr_stmt><expr><call><name>strcpy</name><argument_list>(<argument><expr><name>cPathNew</name></expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <while>while <condition>(<expr><name>pcSubPath</name> != <name>NULL</name></expr>)</condition>
+          <block>{
+            <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>pcSubPath</name></expr></argument>, <argument><expr><name>cPathSvn</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+              <block>{
+                <if>if <condition>(<expr><call><name>strlen</name><argument_list>(<argument><expr><name>cPathNew</name></expr></argument>)</argument_list></call>==0</expr>)</condition><then>
+                  <block>{
+                    <expr_stmt><expr><call><name>lstrcpy</name><argument_list>(<argument><expr><name>cPathNew</name></expr></argument>, <argument><expr><name>pcSubPath</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                  }</block></then>
+                <else>else
+                  <block>{
+                    <expr_stmt><expr><call><name>lstrcat</name><argument_list>(<argument><expr><name>cPathNew</name></expr></argument>, <argument><expr>";"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                    <expr_stmt><expr><call><name>lstrcat</name><argument_list>(<argument><expr><name>cPathNew</name></expr></argument>, <argument><expr><name>pcSubPath</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                  }</block></else></if>
+              }</block></then></if>
+
+            <expr_stmt><expr><name>pcSubPath</name> = <call><name>strtok</name> <argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr>";"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          }</block></while>
+
+        <comment type="block">/* Reopen the key for writing */</comment>
+        <expr_stmt><expr><name>lRet</name> = <call><name>RegCreateKeyEx</name><argument_list>(
+                  <argument><expr><name>HKEY_CURRENT_USER</name></expr></argument>, <argument><expr>"Environment"</expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                  <argument><expr><name>REG_OPTION_NON_VOLATILE</name></expr></argument>, <argument><expr><name>KEY_ALL_ACCESS</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                  <argument><expr>&amp;<name>hKey</name></expr></argument>, <argument><expr>&amp;<name>dwBufLen</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <expr_stmt><expr><name>lRet</name> = <call><name>RegSetValueExA</name><argument_list>(<argument><expr><name>hKey</name></expr></argument>, <argument><expr>"Path"</expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>lpType</name></expr></argument>,
+                              <argument><expr>(<name>LPBYTE</name>)<name>cPathNew</name></expr></argument>, <argument><expr><call><name>strlen</name><argument_list>(<argument><expr><name>cPathNew</name></expr></argument>)</argument_list></call>+1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>lRet</name> != 0</expr>)</condition><then>
+          <block>{
+            <return>return <expr>(1)</expr>;</return>
+          }</block></then></if>
+
+        <expr_stmt><expr><call><name>RegCloseKey</name><argument_list>(<argument><expr><name>hKey</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      }</block></then></if>
+
+    <if>if <condition>(<expr><name>lRet</name> != 0</expr>)</condition><then>
+      <block>{
+        <return>return <expr>(<name>lRet</name>)</expr>;</return>
+      }</block></then>
+    <else>else
+      <block>{
+        <comment type="block">/* Tell the system about the new path */</comment>
+        <expr_stmt><expr><call><name>SendMessageTimeout</name><argument_list>(<argument><expr><name>HWND_BROADCAST</name></expr></argument>, <argument><expr><name>WM_SETTINGCHANGE</name></expr></argument>, <argument><expr>0</expr></argument>,
+                           <argument><expr>(<name>LPARAM</name>) "Environment"</expr></argument>, <argument><expr><name>SMTO_ABORTIFHUNG</name></expr></argument>,
+                            <argument><expr>5000</expr></argument>, <argument><expr>&amp;<name>lRet</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      }</block></else></if>
+
+    <return>return <expr>(0)</expr>;</return>
+}</block></function>
+
+<comment type="block">/*** svn_run_cmd ***/</comment>
+<comment type="block">/*
+ * Running the ordinary command line when adding/removing a path
+ */</comment>
+<function><type><name>int</name></type>
+<name>svn_run_cmd</name> <parameter_list>(<param><decl><type><name>char</name></type> <name><name>cAction</name><index>[<expr>10</expr>]</index></name></decl></param>, <param><decl><type><name>char</name></type> <name><name>cPath</name><index>[<expr>255</expr>]</index></name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>iRetVal</name><init>=<expr>1</expr></init></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr><call><name>svn_os_is_nt</name><argument_list>()</argument_list></call></expr>)</condition><then>
+      <block>{
+        <if>if <condition>(<expr>! <call><name>strcmp</name><argument_list>(<argument><expr><name>cAction</name></expr></argument>, <argument><expr>"add"</expr></argument>)</argument_list></call></expr>)</condition><then>
+          <block>{
+            <expr_stmt><expr><name>iRetVal</name>=<call><name>svn_addnt</name><argument_list>(<argument><expr><name>cPath</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          }</block></then>
+        <else>else <if>if <condition>(<expr>! <call><name>strcmp</name><argument_list>(<argument><expr><name>cAction</name></expr></argument>, <argument><expr>"remove"</expr></argument>)</argument_list></call></expr>)</condition><then>
+          <block>{
+            <expr_stmt><expr><name>iRetVal</name>=<call><name>svn_removent</name><argument_list>(<argument><expr><name>cPath</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          }</block></then></if></else></if>
+      }</block></then>
+    <else>else
+      <block>{
+        <if>if <condition>(<expr>! <call><name>strcmp</name><argument_list>(<argument><expr><name>cAction</name></expr></argument>, <argument><expr>"add"</expr></argument>)</argument_list></call></expr>)</condition><then>
+          <block>{
+            <expr_stmt><expr><name>iRetVal</name>=<call><name>svn_add9x</name><argument_list>(<argument><expr><name>cPath</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          }</block></then>
+        <else>else <if>if <condition>(<expr>! <call><name>strcmp</name><argument_list>(<argument><expr><name>cAction</name></expr></argument>, <argument><expr>"remove"</expr></argument>)</argument_list></call></expr>)</condition><then>
+          <block>{
+            <expr_stmt><expr><name>iRetVal</name>=<call><name>svn_remove9x</name><argument_list>(<argument><expr><name>cPath</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          }</block></then></if></else></if>
+      }</block></else></if>
+
+    <return>return <expr>(<name>iRetVal</name>)</expr>;</return>
+}</block></function>
+
+<comment type="block">/*** svn_set_auexlines ***/</comment>
+<comment type="block">/*
+ * Filling the g_cSvnLine* variables with the svn contents of Autoexec.bat
+ */</comment>
+<function><type><name>int</name></type>
+<name>svn_set_auexlines</name> <parameter_list>(<param><decl><type><name>char</name></type> <name><name>cPath</name><index>[<expr>255</expr>]</index></name></decl></param>)</parameter_list>
+<block>{
+    <expr_stmt><expr><call><name>lstrcpy</name> <argument_list>(<argument><expr><name>g_cSvnLineRem1</name></expr></argument>, <argument><expr>"REM *** For Subversion: "</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lstrcat</name> <argument_list>(<argument><expr><name>g_cSvnLineRem1</name></expr></argument>, <argument><expr>"Don't touch this and the two next lines ***\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>lstrcpy</name> <argument_list>(<argument><expr><name>g_cSvnLineRem2</name></expr></argument>, <argument><expr>"REM *** They will be removed when Subversion is "</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lstrcat</name> <argument_list>(<argument><expr><name>g_cSvnLineRem2</name></expr></argument>, <argument><expr>"uninstalled     ***\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>lstrcat</name> <argument_list>(<argument><expr><name>g_cSvnLinePath</name></expr></argument>, <argument><expr>"PATH=%PATH%;\""</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lstrcat</name> <argument_list>(<argument><expr><name>g_cSvnLinePath</name></expr></argument>, <argument><expr><name>cPath</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lstrcat</name> <argument_list>(<argument><expr><name>g_cSvnLinePath</name></expr></argument>, <argument><expr>"\"\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <return>return <expr>0</expr>;</return>
+}</block></function>
+
+<comment type="block">/*** svn_svnpath_exists ***/</comment>
+<comment type="block">/*
+ * Checking if the svn path is in the system's PATH. Returns 0 if not and 1 if
+ * it already exists
+ */</comment>
+<function><type><name>int</name></type>
+<name>svn_svnpath_exists</name> <parameter_list>(<param><decl><type><name>char</name></type> <name><name>cPath</name><index>[<expr>255</expr>]</index></name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>char</name></type> <name><name>cSysPath</name><index>[<expr>1024</expr>]</index></name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>DWORD</name></type> <name>dwLenPath</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>iRetVal</name><init>=<expr>0</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name> *</type> <name>pcSubPath</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>dwLenPath</name> = <call><name>GetEnvironmentVariable</name><argument_list>(<argument><expr>"PATH"</expr></argument>, <argument><expr><name>cSysPath</name></expr></argument>, <argument><expr>1024</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* Split %PATH% to its sub paths and compare each of them with cPath. */</comment>
+    <if>if <condition>(<expr><name>dwLenPath</name></expr>)</condition><then>
+      <block>{
+        <expr_stmt><expr><name>pcSubPath</name> = <call><name>strtok</name> <argument_list>(<argument><expr><name>cSysPath</name></expr></argument>,<argument><expr>";"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <while>while <condition>(<expr><name>pcSubPath</name> != <name>NULL</name></expr>)</condition>
+          <block>{
+            <if>if <condition>(<expr>! <call><name>strcmp</name><argument_list>(<argument><expr><call><name>strupr</name><argument_list>(<argument><expr><name>pcSubPath</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><call><name>strupr</name><argument_list>(<argument><expr><name>cPath</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call> &amp;&amp;
+                <call><name>strlen</name><argument_list>(<argument><expr><name>pcSubPath</name></expr></argument>)</argument_list></call> == <call><name>strlen</name><argument_list>(<argument><expr><name>cPath</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+              <block>{
+                <expr_stmt><expr><name>iRetVal</name> = 1</expr>;</expr_stmt>
+                <break>break;</break>
+              }</block></then></if>
+            <expr_stmt><expr><name>pcSubPath</name> = <call><name>strtok</name> <argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr>";"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          }</block></while>
+      }</block></then>
+    <else>else
+      <block>{
+        <expr_stmt><expr><call><name>exit</name> <argument_list>(<argument><expr>1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      }</block></else></if>
+    <return>return <expr><name>iRetVal</name></expr>;</return>
+}</block></function>
+
+</unit>

@@ -1,0 +1,215 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/cpython-2.6.1/source/Python/thread_pth.h">
+<comment type="block">/* GNU pth threads interface
+   http://www.gnu.org/software/pth
+   2000-05-03 Andy Dustman &lt;andy@dustman.net&gt;
+
+   Adapted from Posix threads interface 
+   12 May 1997 -- david arnold &lt;davida@pobox.com&gt;
+ */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;stdlib.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;string.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;pth.h&gt;</cpp:file></cpp:include>
+
+<comment type="block">/* A pth mutex isn't sufficient to model the Python lock type
+ * because pth mutexes can be acquired multiple times by the
+ * same thread.
+ *
+ * The pth_lock struct implements a Python lock as a "locked?" bit
+ * and a &lt;condition, mutex&gt; pair.  In general, if the bit can be acquired
+ * instantly, it is, else the pair is used to block the thread until the
+ * bit is cleared.
+ */</comment>
+
+<typedef>typedef <type><struct>struct <block>{
+	<decl_stmt><decl><type><name>char</name></type>             <name>locked</name></decl>;</decl_stmt> <comment type="block">/* 0=unlocked, 1=locked */</comment>
+	<comment type="block">/* a &lt;cond, mutex&gt; pair to handle an acquire of a locked lock */</comment>
+	<decl_stmt><decl><type><name>pth_cond_t</name></type>   <name>lock_released</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>pth_mutex_t</name></type>  <name>mut</name></decl>;</decl_stmt>
+}</block></struct></type> <name>pth_lock</name>;</typedef>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>CHECK_STATUS</name><parameter_list>(<param><type><name>name</name></type></param>)</parameter_list></cpp:macro>  <cpp:value>if (status == -1) { printf("%d ", status); perror(name); error = 1; }</cpp:value></cpp:define>
+
+<decl_stmt><decl><type><name>pth_attr_t</name></type> <name>PyThread_attr</name></decl>;</decl_stmt>
+
+<comment type="block">/*
+ * Initialization.
+ */</comment>
+
+<function><type><specifier>static</specifier> <name>void</name></type> <name>PyThread__init_thread</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>
+<block>{
+	<expr_stmt><expr><call><name>pth_init</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>PyThread_attr</name> = <call><name>pth_attr_new</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>pth_attr_set</name><argument_list>(<argument><expr><name>PyThread_attr</name></expr></argument>, <argument><expr><name>PTH_ATTR_STACK_SIZE</name></expr></argument>, <argument><expr>1&lt;&lt;18</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>pth_attr_set</name><argument_list>(<argument><expr><name>PyThread_attr</name></expr></argument>, <argument><expr><name>PTH_ATTR_JOINABLE</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<comment type="block">/*
+ * Thread support.
+ */</comment>
+
+
+<function><type><name>long</name></type> <name>PyThread_start_new_thread</name><parameter_list>(<param><function_decl><type><name>void</name></type> (*<name>func</name>)<parameter_list>(<param><decl><type><name>void</name> *</type></decl></param>)</parameter_list></function_decl></param>, <param><decl><type><name>void</name> *</type><name>arg</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>pth_t</name></type> <name>th</name></decl>;</decl_stmt>
+	<expr_stmt><expr><call><name>dprintf</name><argument_list>(<argument><expr>("PyThread_start_new_thread called\n")</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr>!<name>initialized</name></expr>)</condition><then>
+		<expr_stmt><expr><call><name>PyThread_init_thread</name><argument_list>()</argument_list></call></expr>;</expr_stmt></then></if>
+
+	<expr_stmt><expr><name>th</name> = <call><name>pth_spawn</name><argument_list>(<argument><expr><name>PyThread_attr</name></expr></argument>,
+				 <argument><expr>(<call><call><name>void</name>* <argument_list>(<argument><expr>*</expr></argument>)</argument_list></call><argument_list>(<argument><expr><name>void</name> *</expr></argument>)</argument_list></call>)<name>func</name></expr></argument>,
+				 <argument><expr>(<name>void</name> *)<name>arg</name></expr></argument>
+				 )</argument_list></call></expr>;</expr_stmt>
+
+	<return>return <expr><name>th</name></expr>;</return>
+}</block></function>
+
+<function><type><name>long</name></type> <name>PyThread_get_thread_ident</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><specifier>volatile</specifier> <name>pth_t</name></type> <name>threadid</name></decl>;</decl_stmt>
+	<if>if <condition>(<expr>!<name>initialized</name></expr>)</condition><then>
+		<expr_stmt><expr><call><name>PyThread_init_thread</name><argument_list>()</argument_list></call></expr>;</expr_stmt></then></if>
+	<comment type="block">/* Jump through some hoops for Alpha OSF/1 */</comment>
+	<expr_stmt><expr><name>threadid</name> = <call><name>pth_self</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr>(<name>long</name>) *(<name>long</name> *) &amp;<name>threadid</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>void</name></type> <name>do_PyThread_exit_thread</name><parameter_list>(<param><decl><type><name>int</name></type> <name>no_cleanup</name></decl></param>)</parameter_list>
+<block>{
+	<expr_stmt><expr><call><name>dprintf</name><argument_list>(<argument><expr>("PyThread_exit_thread called\n")</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr>!<name>initialized</name></expr>)</condition><then> <block>{
+		<if>if <condition>(<expr><name>no_cleanup</name></expr>)</condition><then>
+			<expr_stmt><expr><call><name>_exit</name><argument_list>(<argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+		<else>else
+			<expr_stmt><expr><call><name>exit</name><argument_list>(<argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+	}</block></then></if>
+}</block></function>
+
+<function><type><name>void</name></type> <name>PyThread_exit_thread</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>
+<block>{
+	<expr_stmt><expr><call><name>do_PyThread_exit_thread</name><argument_list>(<argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<function><type><name>void</name></type> <name>PyThread__exit_thread</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>
+<block>{
+	<expr_stmt><expr><call><name>do_PyThread_exit_thread</name><argument_list>(<argument><expr>1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>NO_EXIT_PROG</name></cpp:ifndef>
+<function><type><specifier>static</specifier> <name>void</name></type> <name>do_PyThread_exit_prog</name><parameter_list>(<param><decl><type><name>int</name></type> <name>status</name></decl></param>, <param><decl><type><name>int</name></type> <name>no_cleanup</name></decl></param>)</parameter_list>
+<block>{
+	<expr_stmt><expr><call><name>dprintf</name><argument_list>(<argument><expr>("PyThread_exit_prog(%d) called\n", <name>status</name>)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr>!<name>initialized</name></expr>)</condition><then>
+		<if>if <condition>(<expr><name>no_cleanup</name></expr>)</condition><then>
+			<expr_stmt><expr><call><name>_exit</name><argument_list>(<argument><expr><name>status</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+		<else>else
+			<expr_stmt><expr><call><name>exit</name><argument_list>(<argument><expr><name>status</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if></then></if>
+}</block></function>
+
+<function><type><name>void</name></type> <name>PyThread_exit_prog</name><parameter_list>(<param><decl><type><name>int</name></type> <name>status</name></decl></param>)</parameter_list>
+<block>{
+	<expr_stmt><expr><call><name>do_PyThread_exit_prog</name><argument_list>(<argument><expr><name>status</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<function><type><name>void</name></type> <name>PyThread__exit_prog</name><parameter_list>(<param><decl><type><name>int</name></type> <name>status</name></decl></param>)</parameter_list>
+<block>{
+	<expr_stmt><expr><call><name>do_PyThread_exit_prog</name><argument_list>(<argument><expr><name>status</name></expr></argument>, <argument><expr>1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* NO_EXIT_PROG */</comment>
+
+<comment type="block">/*
+ * Lock support.
+ */</comment>
+<function><type><name>PyThread_type_lock</name></type> <name>PyThread_allocate_lock</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>pth_lock</name> *</type><name>lock</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>status</name></decl>, <decl><type ref="prev"/><name>error</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+
+	<expr_stmt><expr><call><name>dprintf</name><argument_list>(<argument><expr>("PyThread_allocate_lock called\n")</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr>!<name>initialized</name></expr>)</condition><then>
+		<expr_stmt><expr><call><name>PyThread_init_thread</name><argument_list>()</argument_list></call></expr>;</expr_stmt></then></if>
+
+	<expr_stmt><expr><name>lock</name> = (<name>pth_lock</name> *) <call><name>malloc</name><argument_list>(<argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>pth_lock</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>memset</name><argument_list>(<argument><expr>(<name>void</name> *)<name>lock</name></expr></argument>, <argument><expr>'\0'</expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>pth_lock</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>lock</name></expr>)</condition><then> <block>{
+		<expr_stmt><expr><name><name>lock</name>-&gt;<name>locked</name></name> = 0</expr>;</expr_stmt>
+		<expr_stmt><expr><name>status</name> = <call><name>pth_mutex_init</name><argument_list>(<argument><expr>&amp;<name><name>lock</name>-&gt;<name>mut</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><call><name>CHECK_STATUS</name><argument_list>(<argument><expr>"pth_mutex_init"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><name>status</name> = <call><name>pth_cond_init</name><argument_list>(<argument><expr>&amp;<name><name>lock</name>-&gt;<name>lock_released</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><call><name>CHECK_STATUS</name><argument_list>(<argument><expr>"pth_cond_init"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<if>if <condition>(<expr><name>error</name></expr>)</condition><then> <block>{
+			<expr_stmt><expr><call><name>free</name><argument_list>(<argument><expr>(<name>void</name> *)<name>lock</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<expr_stmt><expr><name>lock</name> = <name>NULL</name></expr>;</expr_stmt>
+		}</block></then></if>
+	}</block></then></if>
+	<expr_stmt><expr><call><name>dprintf</name><argument_list>(<argument><expr>("PyThread_allocate_lock() -&gt; %p\n", <name>lock</name>)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr>(<name>PyThread_type_lock</name>) <name>lock</name></expr>;</return>
+}</block></function>
+
+<function><type><name>void</name></type> <name>PyThread_free_lock</name><parameter_list>(<param><decl><type><name>PyThread_type_lock</name></type> <name>lock</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>pth_lock</name> *</type><name>thelock</name> <init>= <expr>(<name>pth_lock</name> *)<name>lock</name></expr></init></decl>;</decl_stmt>
+
+	<expr_stmt><expr><call><name>dprintf</name><argument_list>(<argument><expr>("PyThread_free_lock(%p) called\n", <name>lock</name>)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+	<expr_stmt><expr><call><name>free</name><argument_list>(<argument><expr>(<name>void</name> *)<name>thelock</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<function><type><name>int</name></type> <name>PyThread_acquire_lock</name><parameter_list>(<param><decl><type><name>PyThread_type_lock</name></type> <name>lock</name></decl></param>, <param><decl><type><name>int</name></type> <name>waitflag</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>int</name></type> <name>success</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>pth_lock</name> *</type><name>thelock</name> <init>= <expr>(<name>pth_lock</name> *)<name>lock</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>status</name></decl>, <decl><type ref="prev"/><name>error</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+
+	<expr_stmt><expr><call><name>dprintf</name><argument_list>(<argument><expr>("PyThread_acquire_lock(%p, %d) called\n", <name>lock</name>, <name>waitflag</name>)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+	<expr_stmt><expr><name>status</name> = <call><name>pth_mutex_acquire</name><argument_list>(<argument><expr>&amp;<name><name>thelock</name>-&gt;<name>mut</name></name></expr></argument>, <argument><expr>!<name>waitflag</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>CHECK_STATUS</name><argument_list>(<argument><expr>"pth_mutex_acquire[1]"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>success</name> = <name><name>thelock</name>-&gt;<name>locked</name></name> == 0</expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>success</name></expr>)</condition><then> <expr_stmt><expr><name><name>thelock</name>-&gt;<name>locked</name></name> = 1</expr>;</expr_stmt></then></if>
+        <expr_stmt><expr><name>status</name> = <call><name>pth_mutex_release</name><argument_list>( <argument><expr>&amp;<name><name>thelock</name>-&gt;<name>mut</name></name></expr></argument> )</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>CHECK_STATUS</name><argument_list>(<argument><expr>"pth_mutex_release[1]"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <if>if <condition>( <expr>!<name>success</name> &amp;&amp; <name>waitflag</name></expr> )</condition><then> <block>{
+                <comment type="block">/* continue trying until we get the lock */</comment>
+
+                <comment type="block">/* mut must be locked by me -- part of the condition
+                 * protocol */</comment>
+                <expr_stmt><expr><name>status</name> = <call><name>pth_mutex_acquire</name><argument_list>( <argument><expr>&amp;<name><name>thelock</name>-&gt;<name>mut</name></name></expr></argument>, <argument><expr>!<name>waitflag</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument> )</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><call><name>CHECK_STATUS</name><argument_list>(<argument><expr>"pth_mutex_acquire[2]"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <while>while <condition>( <expr><name><name>thelock</name>-&gt;<name>locked</name></name></expr> )</condition> <block>{
+                        <expr_stmt><expr><name>status</name> = <call><name>pth_cond_await</name><argument_list>(<argument><expr>&amp;<name><name>thelock</name>-&gt;<name>lock_released</name></name></expr></argument>,
+                                                <argument><expr>&amp;<name><name>thelock</name>-&gt;<name>mut</name></name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                        <expr_stmt><expr><call><name>CHECK_STATUS</name><argument_list>(<argument><expr>"pth_cond_await"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                }</block></while>
+                <expr_stmt><expr><name><name>thelock</name>-&gt;<name>locked</name></name> = 1</expr>;</expr_stmt>
+                <expr_stmt><expr><name>status</name> = <call><name>pth_mutex_release</name><argument_list>( <argument><expr>&amp;<name><name>thelock</name>-&gt;<name>mut</name></name></expr></argument> )</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><call><name>CHECK_STATUS</name><argument_list>(<argument><expr>"pth_mutex_release[2]"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><name>success</name> = 1</expr>;</expr_stmt>
+        }</block></then></if>
+        <if>if <condition>(<expr><name>error</name></expr>)</condition><then> <expr_stmt><expr><name>success</name> = 0</expr>;</expr_stmt></then></if>
+        <expr_stmt><expr><call><name>dprintf</name><argument_list>(<argument><expr>("PyThread_acquire_lock(%p, %d) -&gt; %d\n", <name>lock</name>, <name>waitflag</name>, <name>success</name>)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>success</name></expr>;</return>
+}</block></function>
+
+<function><type><name>void</name></type> <name>PyThread_release_lock</name><parameter_list>(<param><decl><type><name>PyThread_type_lock</name></type> <name>lock</name></decl></param>)</parameter_list>
+<block>{
+        <decl_stmt><decl><type><name>pth_lock</name> *</type><name>thelock</name> <init>= <expr>(<name>pth_lock</name> *)<name>lock</name></expr></init></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>int</name></type> <name>status</name></decl>, <decl><type ref="prev"/><name>error</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+
+        <expr_stmt><expr><call><name>dprintf</name><argument_list>(<argument><expr>("PyThread_release_lock(%p) called\n", <name>lock</name>)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <expr_stmt><expr><name>status</name> = <call><name>pth_mutex_acquire</name><argument_list>( <argument><expr>&amp;<name><name>thelock</name>-&gt;<name>mut</name></name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>NULL</name></expr></argument> )</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>CHECK_STATUS</name><argument_list>(<argument><expr>"pth_mutex_acquire[3]"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <expr_stmt><expr><name><name>thelock</name>-&gt;<name>locked</name></name> = 0</expr>;</expr_stmt>
+
+        <expr_stmt><expr><name>status</name> = <call><name>pth_mutex_release</name><argument_list>( <argument><expr>&amp;<name><name>thelock</name>-&gt;<name>mut</name></name></expr></argument> )</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>CHECK_STATUS</name><argument_list>(<argument><expr>"pth_mutex_release[3]"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <comment type="block">/* wake up someone (anyone, if any) waiting on the lock */</comment>
+        <expr_stmt><expr><name>status</name> = <call><name>pth_cond_notify</name><argument_list>( <argument><expr>&amp;<name><name>thelock</name>-&gt;<name>lock_released</name></name></expr></argument>, <argument><expr>0</expr></argument> )</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>CHECK_STATUS</name><argument_list>(<argument><expr>"pth_cond_notify"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+</unit>

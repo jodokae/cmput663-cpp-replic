@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/cpython-2.6.1/source/RISCOS/sleep.c"><cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"oslib/osmodule.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;stdio.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"kernel.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;limits.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;errno.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"oslib/taskwindow.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"Python.h"</cpp:file></cpp:include>
+
+
+<function><type><name>int</name></type> <name>riscos_sleep</name><parameter_list>(<param><decl><type><name>double</name></type> <name>delay</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>os_t</name></type> <name>starttime</name></decl>, <decl><type ref="prev"/><name>endtime</name></decl>, <decl><type ref="prev"/><name>time</name></decl>;</decl_stmt> <comment type="block">/* monotonic times (centiseconds) */</comment>
+	<decl_stmt><decl><type><name>int</name> *</type><name>pollword</name></decl>, <decl><type ref="prev"/><name>ret</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>osbool</name></type> <name>claimed</name></decl>;</decl_stmt>
+
+        <comment type="block">/* calculate end time */</comment>
+	<expr_stmt><expr><name>starttime</name> = <call><name>os_read_monotonic_time</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>starttime</name> + 100.0*<name>delay</name> &gt;<name>INT_MAX</name></expr>)</condition><then>
+		<expr_stmt><expr><name>endtime</name> = <name>INT_MAX</name></expr>;</expr_stmt></then>
+	<else>else
+		<expr_stmt><expr><name>endtime</name> = <call>(<name>os_t</name>)<argument_list>(<argument><expr><name>starttime</name> + 100.0*<name>delay</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+
+	<comment type="block">/* allocate (in RMA) and set pollword for xupcall_sleep */</comment>
+	<expr_stmt><expr><name>pollword</name> = <call><name>osmodule_alloc</name><argument_list>(<argument><expr>4</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr>*<name>pollword</name> = 1</expr>;</expr_stmt>
+
+	<expr_stmt><expr><name>time</name> = <name>starttime</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name>ret</name> = 0</expr>;</expr_stmt>
+	<while>while <condition>( <expr><name>time</name>&lt;<name>endtime</name> &amp;&amp; <name>time</name>&gt;=<name>starttime</name></expr> )</condition> <block>{
+		<expr_stmt><expr><call><name>xupcall_sleep</name> <argument_list>(<argument><expr><name>pollword</name></expr></argument>, <argument><expr>&amp;<name>claimed</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<if>if <condition>(<expr><call><name>PyErr_CheckSignals</name><argument_list>()</argument_list></call></expr>)</condition><then> <block>{
+			<expr_stmt><expr><name>ret</name> = 1</expr>;</expr_stmt>
+			<break>break;</break>
+		}</block></then></if>
+		<expr_stmt><expr><name>time</name> = <call><name>os_read_monotonic_time</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+	}</block></while>
+
+	<comment type="block">/* deallocate pollword */</comment>
+	<expr_stmt><expr><call><name>osmodule_free</name><argument_list>(<argument><expr><name>pollword</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>ret</name></expr>;</return>
+}</block></function>
+</unit>

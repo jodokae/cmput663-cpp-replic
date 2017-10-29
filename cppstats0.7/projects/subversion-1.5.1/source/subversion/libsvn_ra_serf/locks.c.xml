@@ -1,0 +1,765 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/subversion-1.5.1/source/subversion/libsvn_ra_serf/locks.c"><comment type="block">/*
+ * locks.c :  entry point for locking RA functions for ra_serf
+ *
+ * ====================================================================
+ * Copyright (c) 2006 CollabNet.  All rights reserved.
+ *
+ * This software is licensed as described in the file COPYING, which
+ * you should have received as part of this distribution.  The terms
+ * are also available at http://subversion.tigris.org/license-1.html.
+ * If newer versions of this license are posted there, you may use a
+ * newer version instead, at your option.
+ *
+ * This software consists of voluntary contributions made by many
+ * individuals.  For exact contribution history, see the revision
+ * history and logs, available at http://subversion.tigris.org/.
+ * ====================================================================
+ */</comment>
+
+
+<escape char="0xc"/>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_uri.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;expat.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;serf.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_pools.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_ra.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_dav.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_xml.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"../libsvn_ra/ra_loader.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_config.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_delta.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_version.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_path.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_time.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_private_config.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"ra_serf.h"</cpp:file></cpp:include>
+
+<escape char="0xc"/>
+<comment type="block">/*
+ * This enum represents the current state of our XML parsing for a REPORT.
+ */</comment>
+<typedef>typedef <type><enum>enum <block>{
+  <decl><name>NONE</name> <init>= <expr>0</expr></init></decl>,
+  <decl><name>PROP</name></decl>,
+  <decl><name>LOCK_DISCOVERY</name></decl>,
+  <decl><name>ACTIVE_LOCK</name></decl>,
+  <decl><name>LOCK_TYPE</name></decl>,
+  <decl><name>LOCK_SCOPE</name></decl>,
+  <decl><name>DEPTH</name></decl>,
+  <decl><name>TIMEOUT</name></decl>,
+  <decl><name>LOCK_TOKEN</name></decl>,
+  <decl><name>COMMENT</name></decl>,
+}</block></enum></type> <name>lock_state_e</name>;</typedef>
+
+<typedef>typedef <type><struct>struct <block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>data</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>len</name></decl>;</decl_stmt>
+}</block></struct></type> <name>lock_prop_info_t</name>;</typedef>
+
+<typedef>typedef <type><struct>struct <block>{
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl>;</decl_stmt>
+
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl>;</decl_stmt>
+
+  <decl_stmt><decl><type><name>svn_lock_t</name> *</type><name>lock</name></decl>;</decl_stmt>
+
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>force</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_revnum_t</name></type> <name>revision</name></decl>;</decl_stmt>
+
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>read_headers</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Our HTTP status code and reason. */</comment>
+  <decl_stmt><decl><type><name>int</name></type> <name>status_code</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>reason</name></decl>;</decl_stmt>
+
+  <comment type="block">/* The currently collected value as we build it up */</comment>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>tmp</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>tmp_len</name></decl>;</decl_stmt>
+
+  <comment type="block">/* are we done? */</comment>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>done</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Any errors. */</comment>
+  <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>error</name></decl>;</decl_stmt>
+}</block></struct></type> <name>lock_info_t</name>;</typedef>
+
+<escape char="0xc"/>
+<function><type><specifier>static</specifier> <name>lock_prop_info_t</name>*</type>
+<name>push_state</name><parameter_list>(<param><decl><type><name>svn_ra_serf__xml_parser_t</name> *</type><name>parser</name></decl></param>,
+           <param><decl><type><name>lock_info_t</name> *</type><name>lock_ctx</name></decl></param>,
+           <param><decl><type><name>lock_state_e</name></type> <name>state</name></decl></param>)</parameter_list>
+<block>{
+  <expr_stmt><expr><call><name>svn_ra_serf__xml_push_state</name><argument_list>(<argument><expr><name>parser</name></expr></argument>, <argument><expr><name>state</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <switch>switch <condition>(<expr><name>state</name></expr>)</condition>
+    <block>{
+    <case>case <expr><name>LOCK_TYPE</name></expr>:
+    </case><case>case <expr><name>LOCK_SCOPE</name></expr>:
+    </case><case>case <expr><name>DEPTH</name></expr>:
+    </case><case>case <expr><name>TIMEOUT</name></expr>:
+    </case><case>case <expr><name>LOCK_TOKEN</name></expr>:
+    </case><case>case <expr><name>COMMENT</name></expr>:
+        <expr_stmt><expr><name><name>parser</name>-&gt;<name>state</name>-&gt;<name>private</name></name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name><name>parser</name>-&gt;<name>state</name>-&gt;<name>pool</name></name></expr></argument>,
+                                             <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>lock_prop_info_t</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <break>break;</break>
+      </case><default>default:
+        <break>break;</break>
+    </default>}</block></switch>
+
+  <return>return <expr><name><name>parser</name>-&gt;<name>state</name>-&gt;<name>private</name></name></expr>;</return>
+}</block></function>
+
+<comment type="block">/*
+ * Expat callback invoked on a start element tag for a PROPFIND response.
+ */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>start_lock</name><parameter_list>(<param><decl><type><name>svn_ra_serf__xml_parser_t</name> *</type><name>parser</name></decl></param>,
+           <param><decl><type><name>void</name> *</type><name>userData</name></decl></param>,
+           <param><decl><type><name>svn_ra_serf__dav_props_t</name></type> <name>name</name></decl></param>,
+           <param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>attrs</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>lock_info_t</name> *</type><name>ctx</name> <init>= <expr><name>userData</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>lock_state_e</name></type> <name>state</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name>state</name> = <name><name>parser</name>-&gt;<name>state</name>-&gt;<name>current_state</name></name></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name>state</name> == <name>NONE</name> &amp;&amp; <call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"prop"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>svn_ra_serf__xml_push_state</name><argument_list>(<argument><expr><name>parser</name></expr></argument>, <argument><expr><name>PROP</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>state</name> == <name>PROP</name> &amp;&amp;
+           <call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"lockdiscovery"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>push_state</name><argument_list>(<argument><expr><name>parser</name></expr></argument>, <argument><expr><name>ctx</name></expr></argument>, <argument><expr><name>LOCK_DISCOVERY</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>state</name> == <name>LOCK_DISCOVERY</name> &amp;&amp;
+           <call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"activelock"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>push_state</name><argument_list>(<argument><expr><name>parser</name></expr></argument>, <argument><expr><name>ctx</name></expr></argument>, <argument><expr><name>ACTIVE_LOCK</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>state</name> == <name>ACTIVE_LOCK</name></expr>)</condition><then>
+    <block>{
+      <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"locktype"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>push_state</name><argument_list>(<argument><expr><name>parser</name></expr></argument>, <argument><expr><name>ctx</name></expr></argument>, <argument><expr><name>LOCK_TYPE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+      <else>else <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"lockscope"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>push_state</name><argument_list>(<argument><expr><name>parser</name></expr></argument>, <argument><expr><name>ctx</name></expr></argument>, <argument><expr><name>LOCK_SCOPE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+      <else>else <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"depth"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>push_state</name><argument_list>(<argument><expr><name>parser</name></expr></argument>, <argument><expr><name>ctx</name></expr></argument>, <argument><expr><name>DEPTH</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+      <else>else <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"timeout"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>push_state</name><argument_list>(<argument><expr><name>parser</name></expr></argument>, <argument><expr><name>ctx</name></expr></argument>, <argument><expr><name>TIMEOUT</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+      <else>else <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"locktoken"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>push_state</name><argument_list>(<argument><expr><name>parser</name></expr></argument>, <argument><expr><name>ctx</name></expr></argument>, <argument><expr><name>LOCK_TOKEN</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+      <else>else <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"owner"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>push_state</name><argument_list>(<argument><expr><name>parser</name></expr></argument>, <argument><expr><name>ctx</name></expr></argument>, <argument><expr><name>COMMENT</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if></else></if></else></if></else></if></else></if></else></if>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>state</name> == <name>LOCK_TYPE</name></expr>)</condition><then>
+    <block>{
+      <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"write"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <block>{
+          <comment type="block">/* Do nothing. */</comment>
+        }</block></then>
+      <else>else
+        <block>{
+          <expr_stmt><expr><call><name>abort</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+        }</block></else></if>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>state</name> == <name>LOCK_SCOPE</name></expr>)</condition><then>
+    <block>{
+      <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"exclusive"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <block>{
+          <comment type="block">/* Do nothing. */</comment>
+        }</block></then>
+      <else>else
+        <block>{
+          <expr_stmt><expr><call><name>abort</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+        }</block></else></if>
+    }</block></then></if></else></if></else></if></else></if></else></if></else></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/*
+ * Expat callback invoked on an end element tag for a PROPFIND response.
+ */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>end_lock</name><parameter_list>(<param><decl><type><name>svn_ra_serf__xml_parser_t</name> *</type><name>parser</name></decl></param>,
+         <param><decl><type><name>void</name> *</type><name>userData</name></decl></param>,
+         <param><decl><type><name>svn_ra_serf__dav_props_t</name></type> <name>name</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>lock_info_t</name> *</type><name>ctx</name> <init>= <expr><name>userData</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>lock_state_e</name></type> <name>state</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name>state</name> = <name><name>parser</name>-&gt;<name>state</name>-&gt;<name>current_state</name></name></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name>state</name> == <name>PROP</name> &amp;&amp;
+      <call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"prop"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>svn_ra_serf__xml_pop_state</name><argument_list>(<argument><expr><name>parser</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>state</name> == <name>LOCK_DISCOVERY</name> &amp;&amp;
+           <call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"lockdiscovery"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>svn_ra_serf__xml_pop_state</name><argument_list>(<argument><expr><name>parser</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>state</name> == <name>ACTIVE_LOCK</name> &amp;&amp;
+           <call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"activelock"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>svn_ra_serf__xml_pop_state</name><argument_list>(<argument><expr><name>parser</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>state</name> == <name>LOCK_TYPE</name> &amp;&amp;
+           <call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"locktype"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>svn_ra_serf__xml_pop_state</name><argument_list>(<argument><expr><name>parser</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>state</name> == <name>LOCK_SCOPE</name> &amp;&amp;
+           <call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"lockscope"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>svn_ra_serf__xml_pop_state</name><argument_list>(<argument><expr><name>parser</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>state</name> == <name>DEPTH</name> &amp;&amp;
+           <call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"depth"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>svn_ra_serf__xml_pop_state</name><argument_list>(<argument><expr><name>parser</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>state</name> == <name>TIMEOUT</name> &amp;&amp;
+           <call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"timeout"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>lock_prop_info_t</name> *</type><name>info</name> <init>= <expr><name><name>parser</name>-&gt;<name>state</name>-&gt;<name>private</name></name></expr></init></decl>;</decl_stmt>
+
+      <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name><name>info</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr>"Infinite"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><name><name>ctx</name>-&gt;<name>lock</name>-&gt;<name>expiration_date</name></name> = 0</expr>;</expr_stmt>
+        }</block></then>
+      <else>else
+        <block>{
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_time_from_cstring</name><argument_list>(<argument><expr>&amp;<name><name>ctx</name>-&gt;<name>lock</name>-&gt;<name>creation_date</name></name></expr></argument>,
+                                        <argument><expr><name><name>info</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name><name>ctx</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></else></if>
+      <expr_stmt><expr><call><name>svn_ra_serf__xml_pop_state</name><argument_list>(<argument><expr><name>parser</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>state</name> == <name>LOCK_TOKEN</name> &amp;&amp;
+           <call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"locktoken"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>lock_prop_info_t</name> *</type><name>info</name> <init>= <expr><name><name>parser</name>-&gt;<name>state</name>-&gt;<name>private</name></name></expr></init></decl>;</decl_stmt>
+
+      <if>if <condition>(<expr>!<name><name>ctx</name>-&gt;<name>lock</name>-&gt;<name>token</name></name> &amp;&amp; <name><name>info</name>-&gt;<name>len</name></name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>apr_collapse_spaces</name><argument_list>(<argument><expr>(<name>char</name>*)<name><name>info</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name><name>info</name>-&gt;<name>data</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><name><name>ctx</name>-&gt;<name>lock</name>-&gt;<name>token</name></name> = <call><name>apr_pstrndup</name><argument_list>(<argument><expr><name><name>ctx</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>info</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name><name>info</name>-&gt;<name>len</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+      <comment type="block">/* We don't actually need the lock token. */</comment>
+      <expr_stmt><expr><call><name>svn_ra_serf__xml_pop_state</name><argument_list>(<argument><expr><name>parser</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>state</name> == <name>COMMENT</name> &amp;&amp;
+           <call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"owner"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>lock_prop_info_t</name> *</type><name>info</name> <init>= <expr><name><name>parser</name>-&gt;<name>state</name>-&gt;<name>private</name></name></expr></init></decl>;</decl_stmt>
+
+      <if>if <condition>(<expr><name><name>info</name>-&gt;<name>len</name></name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><name><name>ctx</name>-&gt;<name>lock</name>-&gt;<name>comment</name></name> = <call><name>apr_pstrndup</name><argument_list>(<argument><expr><name><name>ctx</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>info</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name><name>info</name>-&gt;<name>len</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+      <expr_stmt><expr><call><name>svn_ra_serf__xml_pop_state</name><argument_list>(<argument><expr><name>parser</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if></else></if></else></if></else></if></else></if></else></if></else></if></else></if></else></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>cdata_lock</name><parameter_list>(<param><decl><type><name>svn_ra_serf__xml_parser_t</name> *</type><name>parser</name></decl></param>,
+           <param><decl><type><name>void</name> *</type><name>userData</name></decl></param>,
+           <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>data</name></decl></param>,
+           <param><decl><type><name>apr_size_t</name></type> <name>len</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>lock_info_t</name> *</type><name>lock_ctx</name> <init>= <expr><name>userData</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>lock_state_e</name></type> <name>state</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>lock_prop_info_t</name> *</type><name>info</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>UNUSED_CTX</name><argument_list>(<argument><expr><name>lock_ctx</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name>state</name> = <name><name>parser</name>-&gt;<name>state</name>-&gt;<name>current_state</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name>info</name> = <name><name>parser</name>-&gt;<name>state</name>-&gt;<name>private</name></name></expr>;</expr_stmt>
+
+  <switch>switch <condition>(<expr><name>state</name></expr>)</condition>
+    <block>{
+    <case>case <expr><name>LOCK_TYPE</name></expr>:
+    </case><case>case <expr><name>LOCK_SCOPE</name></expr>:
+    </case><case>case <expr><name>DEPTH</name></expr>:
+    </case><case>case <expr><name>TIMEOUT</name></expr>:
+    </case><case>case <expr><name>LOCK_TOKEN</name></expr>:
+    </case><case>case <expr><name>COMMENT</name></expr>:
+        <expr_stmt><expr><call><name>svn_ra_serf__expand_string</name><argument_list>(<argument><expr>&amp;<name><name>info</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr>&amp;<name><name>info</name>-&gt;<name>len</name></name></expr></argument>,
+                                   <argument><expr><name>data</name></expr></argument>, <argument><expr><name>len</name></expr></argument>, <argument><expr><name><name>parser</name>-&gt;<name>state</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <break>break;</break>
+      </case><default>default:
+        <break>break;</break>
+    </default>}</block></switch>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>svn_ra_serf__dav_props_t</name></type> <name><name>lock_props</name><index>[]</index></name> <init>=
+<expr><block>{
+  <expr><block>{ <expr>"DAV:"</expr>, <expr>"lockdiscovery"</expr> }</block></expr>,
+  <expr><block>{ <expr><name>NULL</name></expr> }</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type>
+<name>set_lock_headers</name><parameter_list>(<param><decl><type><name>serf_bucket_t</name> *</type><name>headers</name></decl></param>,
+                 <param><decl><type><name>void</name> *</type><name>baton</name></decl></param>,
+                 <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>lock_info_t</name> *</type><name>lock_ctx</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr><name><name>lock_ctx</name>-&gt;<name>force</name></name> == <name>TRUE</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>serf_bucket_headers_set</name><argument_list>(<argument><expr><name>headers</name></expr></argument>, <argument><expr><name>SVN_DAV_OPTIONS_HEADER</name></expr></argument>,
+                              <argument><expr><name>SVN_DAV_OPTION_LOCK_STEAL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <if>if <condition>(<expr><call><name>SVN_IS_VALID_REVNUM</name><argument_list>(<argument><expr><name><name>lock_ctx</name>-&gt;<name>revision</name></name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>serf_bucket_headers_set</name><argument_list>(<argument><expr><name>headers</name></expr></argument>, <argument><expr><name>SVN_DAV_VERSION_NAME_HEADER</name></expr></argument>,
+                              <argument><expr><call><name>apr_ltoa</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name><name>lock_ctx</name>-&gt;<name>revision</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type>
+<name>handle_lock</name><parameter_list>(<param><decl><type><name>serf_request_t</name> *</type><name>request</name></decl></param>,
+            <param><decl><type><name>serf_bucket_t</name> *</type><name>response</name></decl></param>,
+            <param><decl><type><name>void</name> *</type><name>handler_baton</name></decl></param>,
+            <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_serf__xml_parser_t</name> *</type><name>xml_ctx</name> <init>= <expr><name>handler_baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>lock_info_t</name> *</type><name>ctx</name> <init>= <expr><name><name>xml_ctx</name>-&gt;<name>user_data</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_status_t</name></type> <name>status</name></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr><name><name>ctx</name>-&gt;<name>read_headers</name></name> == <name>FALSE</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>serf_bucket_t</name> *</type><name>headers</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>val</name></decl>;</decl_stmt>
+
+      <decl_stmt><decl><type><name>serf_status_line</name></type> <name>sl</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+
+      <expr_stmt><expr><name>rv</name> = <call><name>serf_bucket_response_status</name><argument_list>(<argument><expr><name>response</name></expr></argument>, <argument><expr>&amp;<name>sl</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name><name>ctx</name>-&gt;<name>status_code</name></name> = <name><name>sl</name>.<name>code</name></name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>ctx</name>-&gt;<name>reason</name></name> = <name><name>sl</name>.<name>reason</name></name></expr>;</expr_stmt>
+
+      <comment type="block">/* 423 == Locked */</comment>
+      <if>if <condition>(<expr><name><name>sl</name>.<name>code</name></name> == 423</expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><name><name>ctx</name>-&gt;<name>error</name></name> = <call><name>svn_ra_serf__handle_server_error</name><argument_list>(<argument><expr><name>request</name></expr></argument>, <argument><expr><name>response</name></expr></argument>,
+                                                        <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+          <comment type="block">/* Older servers may not give a descriptive error. */</comment>
+          <if>if <condition>(<expr>!<name><name>ctx</name>-&gt;<name>error</name></name></expr>)</condition><then>
+            <block>{
+              <expr_stmt><expr><name><name>ctx</name>-&gt;<name>error</name></name> = <call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_FS_PATH_ALREADY_LOCKED</name></expr></argument>,
+                                             <argument><expr><name>NULL</name></expr></argument>,
+                                             <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Lock request failed: %d %s"</expr></argument>)</argument_list></call></expr></argument>,
+                                             <argument><expr><name><name>ctx</name>-&gt;<name>status_code</name></name></expr></argument>, <argument><expr><name><name>ctx</name>-&gt;<name>reason</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></then></if>
+          <return>return <expr><name><name>ctx</name>-&gt;<name>error</name>-&gt;<name>apr_err</name></name></expr>;</return>
+        }</block></then></if>
+
+      <expr_stmt><expr><name>headers</name> = <call><name>serf_bucket_response_get_headers</name><argument_list>(<argument><expr><name>response</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name>val</name> = <call><name>serf_bucket_headers_get</name><argument_list>(<argument><expr><name>headers</name></expr></argument>, <argument><expr><name>SVN_DAV_LOCK_OWNER_HEADER</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>val</name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><name><name>ctx</name>-&gt;<name>lock</name>-&gt;<name>owner</name></name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name><name>ctx</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>val</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+
+      <expr_stmt><expr><name>val</name> = <call><name>serf_bucket_headers_get</name><argument_list>(<argument><expr><name>headers</name></expr></argument>, <argument><expr><name>SVN_DAV_CREATIONDATE_HEADER</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>val</name></expr>)</condition><then>
+        <block>{
+          <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name></decl>;</decl_stmt>
+
+          <expr_stmt><expr><name>err</name> = <call><name>svn_time_from_cstring</name><argument_list>(<argument><expr>&amp;<name><name>ctx</name>-&gt;<name>lock</name>-&gt;<name>creation_date</name></name></expr></argument>, <argument><expr><name>val</name></expr></argument>,
+                                      <argument><expr><name><name>ctx</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <if>if <condition>(<expr><name>err</name></expr>)</condition><then>
+            <block>{
+              <expr_stmt><expr><name><name>xml_ctx</name>-&gt;<name>error</name></name> = <name>err</name></expr>;</expr_stmt>
+              <return>return <expr><name><name>err</name>-&gt;<name>apr_err</name></name></expr>;</return>
+            }</block></then></if>
+        }</block></then></if>
+
+      <expr_stmt><expr><name><name>ctx</name>-&gt;<name>read_headers</name></name> = <name>TRUE</name></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <comment type="block">/* Forbidden when a lock doesn't exist. */</comment>
+  <if>if <condition>(<expr><name><name>ctx</name>-&gt;<name>status_code</name></name> == 403</expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><name>status</name> = <call><name>svn_ra_serf__handle_discard_body</name><argument_list>(<argument><expr><name>request</name></expr></argument>, <argument><expr><name>response</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><call><name>APR_STATUS_IS_EOF</name><argument_list>(<argument><expr><name>status</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><name><name>ctx</name>-&gt;<name>done</name></name> = <name>TRUE</name></expr>;</expr_stmt>
+          <expr_stmt><expr><name><name>ctx</name>-&gt;<name>error</name></name> = <call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_RA_DAV_REQUEST_FAILED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                         <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Lock request failed: %d %s"</expr></argument>)</argument_list></call></expr></argument>,
+                                         <argument><expr><name><name>ctx</name>-&gt;<name>status_code</name></name></expr></argument>, <argument><expr><name><name>ctx</name>-&gt;<name>reason</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+    }</block></then>
+  <else>else
+    <block>{
+      <expr_stmt><expr><name>status</name> = <call><name>svn_ra_serf__handle_xml_parser</name><argument_list>(<argument><expr><name>request</name></expr></argument>, <argument><expr><name>response</name></expr></argument>, <argument><expr><name>handler_baton</name></expr></argument>,
+                                              <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if>
+
+  <return>return <expr><name>status</name></expr>;</return>
+}</block></function>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>GET_LOCK</name></cpp:macro> <cpp:value>"&lt;?xml version=\"1.0\" encoding=\"utf-8\"?&gt;&lt;propfind xmlns=\"DAV:\"&gt;&lt;prop&gt;&lt;lockdiscovery/&gt;&lt;/prop&gt;&lt;/propfind&gt;"</cpp:value></cpp:define>
+
+<function><type><specifier>static</specifier> <name>serf_bucket_t</name>*</type>
+<name>create_getlock_body</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>,
+                    <param><decl><type><name>serf_bucket_alloc_t</name> *</type><name>alloc</name></decl></param>,
+                    <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>serf_bucket_t</name> *</type><name>buckets</name></decl>, *<decl><type ref="prev"/><name>tmp</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name>buckets</name> = <call><name>serf_bucket_aggregate_create</name><argument_list>(<argument><expr><name>alloc</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>tmp</name> = <call><name>SERF_BUCKET_SIMPLE_STRING_LEN</name><argument_list>(<argument><expr><name>GET_LOCK</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>GET_LOCK</name></expr></argument>)</argument_list></sizeof>-1</expr></argument>, <argument><expr><name>alloc</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>serf_bucket_aggregate_append</name><argument_list>(<argument><expr><name>buckets</name></expr></argument>, <argument><expr><name>tmp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>buckets</name></expr>;</return>
+}</block></function>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>LOCK_HEADER</name></cpp:macro> <cpp:value>"&lt;?xml version=\"1.0\" encoding=\"utf-8\"?&gt;&lt;lockinfo xmlns=\"DAV:\"&gt;"</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>LOCK_TRAILER</name></cpp:macro> <cpp:value>"&lt;/lockinfo&gt;"</cpp:value></cpp:define>
+
+<function><type><specifier>static</specifier> <name>serf_bucket_t</name>*</type>
+<name>create_lock_body</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>,
+                 <param><decl><type><name>serf_bucket_alloc_t</name> *</type><name>alloc</name></decl></param>,
+                 <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>lock_info_t</name> *</type><name>ctx</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>serf_bucket_t</name> *</type><name>buckets</name></decl>, *<decl><type ref="prev"/><name>tmp</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name>buckets</name> = <call><name>serf_bucket_aggregate_create</name><argument_list>(<argument><expr><name>alloc</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name>tmp</name> = <call><name>SERF_BUCKET_SIMPLE_STRING_LEN</name><argument_list>(<argument><expr><name>LOCK_HEADER</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>LOCK_HEADER</name></expr></argument>)</argument_list></sizeof>-1</expr></argument>,
+                                      <argument><expr><name>alloc</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>serf_bucket_aggregate_append</name><argument_list>(<argument><expr><name>buckets</name></expr></argument>, <argument><expr><name>tmp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>svn_ra_serf__add_tag_buckets</name><argument_list>(<argument><expr><name>buckets</name></expr></argument>, <argument><expr>"lockscope"</expr></argument>, <argument><expr>"&lt;exclusive/&gt;"</expr></argument>, <argument><expr><name>alloc</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>svn_ra_serf__add_tag_buckets</name><argument_list>(<argument><expr><name>buckets</name></expr></argument>, <argument><expr>"locktype"</expr></argument>, <argument><expr>"&lt;write/&gt;"</expr></argument>, <argument><expr><name>alloc</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name><name>ctx</name>-&gt;<name>lock</name>-&gt;<name>comment</name></name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>svn_stringbuf_t</name> *</type><name>xml_esc</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>svn_string_t</name></type> <name>val</name></decl>;</decl_stmt>
+
+      <expr_stmt><expr><name><name>val</name>.<name>data</name></name> = <name><name>ctx</name>-&gt;<name>lock</name>-&gt;<name>comment</name></name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>val</name>.<name>len</name></name> = <call><name>strlen</name><argument_list>(<argument><expr><name><name>ctx</name>-&gt;<name>lock</name>-&gt;<name>comment</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>svn_xml_escape_cdata_string</name><argument_list>(<argument><expr>&amp;<name>xml_esc</name></expr></argument>, <argument><expr>&amp;<name>val</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>svn_ra_serf__add_tag_buckets</name><argument_list>(<argument><expr><name>buckets</name></expr></argument>, <argument><expr>"owner"</expr></argument>, <argument><expr><name><name>xml_esc</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name>alloc</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <expr_stmt><expr><name>tmp</name> = <call><name>SERF_BUCKET_SIMPLE_STRING_LEN</name><argument_list>(<argument><expr><name>LOCK_TRAILER</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>LOCK_TRAILER</name></expr></argument>)</argument_list></sizeof>-1</expr></argument>,
+                                      <argument><expr><name>alloc</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>serf_bucket_aggregate_append</name><argument_list>(<argument><expr><name>buckets</name></expr></argument>, <argument><expr><name>tmp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>buckets</name></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_ra_serf__get_lock</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>ra_session</name></decl></param>,
+                      <param><decl><type><name>svn_lock_t</name> **</type><name>lock</name></decl></param>,
+                      <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+                      <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_serf__session_t</name> *</type><name>session</name> <init>= <expr><name><name>ra_session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_ra_serf__handler_t</name> *</type><name>handler</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_ra_serf__xml_parser_t</name> *</type><name>parser_ctx</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>lock_info_t</name> *</type><name>lock_ctx</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>req_url</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>status_code</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name>req_url</name> = <call><name>svn_path_url_add_component</name><argument_list>(<argument><expr><name><name>session</name>-&gt;<name>repos_url</name>.<name>path</name></name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name>lock_ctx</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>lock_ctx</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name><name>lock_ctx</name>-&gt;<name>pool</name></name> = <name>pool</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>lock_ctx</name>-&gt;<name>path</name></name> = <name>req_url</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>lock_ctx</name>-&gt;<name>lock</name></name> = <call><name>svn_lock_create</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>lock_ctx</name>-&gt;<name>lock</name>-&gt;<name>path</name></name> = <name>path</name></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name>handler</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>handler</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name><name>handler</name>-&gt;<name>method</name></name> = "PROPFIND"</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>handler</name>-&gt;<name>path</name></name> = <name>req_url</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>handler</name>-&gt;<name>body_type</name></name> = "text/xml"</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>handler</name>-&gt;<name>conn</name></name> = <name><name>session</name>-&gt;<name>conns</name><index>[<expr>0</expr>]</index></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>handler</name>-&gt;<name>session</name></name> = <name>session</name></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name>parser_ctx</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>parser_ctx</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name><name>parser_ctx</name>-&gt;<name>pool</name></name> = <name>pool</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>parser_ctx</name>-&gt;<name>user_data</name></name> = <name>lock_ctx</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>parser_ctx</name>-&gt;<name>start</name></name> = <name>start_lock</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>parser_ctx</name>-&gt;<name>end</name></name> = <name>end_lock</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>parser_ctx</name>-&gt;<name>cdata</name></name> = <name>cdata_lock</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>parser_ctx</name>-&gt;<name>done</name></name> = &amp;<name><name>lock_ctx</name>-&gt;<name>done</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>parser_ctx</name>-&gt;<name>status_code</name></name> = &amp;<name>status_code</name></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name><name>handler</name>-&gt;<name>body_delegate</name></name> = <name>create_getlock_body</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>handler</name>-&gt;<name>body_delegate_baton</name></name> = <name>lock_ctx</name></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name><name>handler</name>-&gt;<name>response_handler</name></name> = <name>handle_lock</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>handler</name>-&gt;<name>response_baton</name></name> = <name>parser_ctx</name></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>svn_ra_serf__request_create</name><argument_list>(<argument><expr><name>handler</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>err</name> = <call><name>svn_ra_serf__context_run_wait</name><argument_list>(<argument><expr>&amp;<name><name>lock_ctx</name>-&gt;<name>done</name></name></expr></argument>, <argument><expr><name>session</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name><name>lock_ctx</name>-&gt;<name>error</name></name> || <name><name>parser_ctx</name>-&gt;<name>error</name></name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <comment type="block">/* A 403 forbidden error indicates there's no lock, which we can ignore
+         here. */</comment>
+      <if>if <condition>(<expr><name><name>lock_ctx</name>-&gt;<name>error</name></name> &amp;&amp; <name><name>lock_ctx</name>-&gt;<name>status_code</name></name> == 403</expr>)</condition><then>
+        <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name><name>lock_ctx</name>-&gt;<name>error</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><name><name>parser_ctx</name>-&gt;<name>error</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <if>if <condition>(<expr><name>status_code</name> == 404</expr>)</condition><then>
+    <block>{
+      <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_ILLEGAL_URL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                              <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Malformed URL for repository"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+  <if>if <condition>(<expr><name>err</name></expr>)</condition><then>
+    <block>{
+      <comment type="block">/* TODO Shh.  We're telling a white lie for now. */</comment>
+      <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_NOT_IMPLEMENTED</name></expr></argument>, <argument><expr><name>err</name></expr></argument>,
+                              <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Server does not support locking features"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+
+  <expr_stmt><expr>*<name>lock</name> = <name><name>lock_ctx</name>-&gt;<name>lock</name></name></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_ra_serf__lock</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>ra_session</name></decl></param>,
+                  <param><decl><type><name>apr_hash_t</name> *</type><name>path_revs</name></decl></param>,
+                  <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>comment</name></decl></param>,
+                  <param><decl><type><name>svn_boolean_t</name></type> <name>force</name></decl></param>,
+                  <param><decl><type><name>svn_ra_lock_callback_t</name></type> <name>lock_func</name></decl></param>,
+                  <param><decl><type><name>void</name> *</type><name>lock_baton</name></decl></param>,
+                  <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_serf__session_t</name> *</type><name>session</name> <init>= <expr><name><name>ra_session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_hash_index_t</name> *</type><name>hi</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>subpool</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>apr_pool_create</name><argument_list>(<argument><expr>&amp;<name>subpool</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <for>for (<init><expr><name>hi</name> = <call><name>apr_hash_first</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>path_revs</name></expr></argument>)</argument_list></call></expr>;</init> <condition><expr><name>hi</name></expr>;</condition> <incr><expr><name>hi</name> = <call><name>apr_hash_next</name><argument_list>(<argument><expr><name>hi</name></expr></argument>)</argument_list></call></expr></incr>)
+    <block>{
+      <decl_stmt><decl><type><name>svn_ra_serf__handler_t</name> *</type><name>handler</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>svn_ra_serf__xml_parser_t</name> *</type><name>parser_ctx</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>req_url</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>lock_info_t</name> *</type><name>lock_ctx</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><specifier>const</specifier> <name>void</name> *</type><name>key</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>void</name> *</type><name>val</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name></decl>;</decl_stmt>
+
+      <expr_stmt><expr><call><name>svn_pool_clear</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name>lock_ctx</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>lock_ctx</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>apr_hash_this</name><argument_list>(<argument><expr><name>hi</name></expr></argument>, <argument><expr>&amp;<name>key</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr>&amp;<name>val</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>lock_ctx</name>-&gt;<name>pool</name></name> = <name>subpool</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>lock_ctx</name>-&gt;<name>path</name></name> = <name>key</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>lock_ctx</name>-&gt;<name>revision</name></name> = *((<name>svn_revnum_t</name>*)<name>val</name>)</expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>lock_ctx</name>-&gt;<name>lock</name></name> = <call><name>svn_lock_create</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>lock_ctx</name>-&gt;<name>lock</name>-&gt;<name>path</name></name> = <name>key</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>lock_ctx</name>-&gt;<name>lock</name>-&gt;<name>comment</name></name> = <name>comment</name></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name><name>lock_ctx</name>-&gt;<name>force</name></name> = <name>force</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name>req_url</name> = <call><name>svn_path_url_add_component</name><argument_list>(<argument><expr><name><name>session</name>-&gt;<name>repos_url</name>.<name>path</name></name></expr></argument>,
+                                           <argument><expr><name><name>lock_ctx</name>-&gt;<name>path</name></name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name>handler</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>handler</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name><name>handler</name>-&gt;<name>method</name></name> = "LOCK"</expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>handler</name>-&gt;<name>path</name></name> = <name>req_url</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>handler</name>-&gt;<name>body_type</name></name> = "text/xml"</expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>handler</name>-&gt;<name>conn</name></name> = <name><name>session</name>-&gt;<name>conns</name><index>[<expr>0</expr>]</index></name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>handler</name>-&gt;<name>session</name></name> = <name>session</name></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name>parser_ctx</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>parser_ctx</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name><name>parser_ctx</name>-&gt;<name>pool</name></name> = <name>subpool</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>parser_ctx</name>-&gt;<name>user_data</name></name> = <name>lock_ctx</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>parser_ctx</name>-&gt;<name>start</name></name> = <name>start_lock</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>parser_ctx</name>-&gt;<name>end</name></name> = <name>end_lock</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>parser_ctx</name>-&gt;<name>cdata</name></name> = <name>cdata_lock</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>parser_ctx</name>-&gt;<name>done</name></name> = &amp;<name><name>lock_ctx</name>-&gt;<name>done</name></name></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name><name>handler</name>-&gt;<name>header_delegate</name></name> = <name>set_lock_headers</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>handler</name>-&gt;<name>header_delegate_baton</name></name> = <name>lock_ctx</name></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name><name>handler</name>-&gt;<name>body_delegate</name></name> = <name>create_lock_body</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>handler</name>-&gt;<name>body_delegate_baton</name></name> = <name>lock_ctx</name></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name><name>handler</name>-&gt;<name>response_handler</name></name> = <name>handle_lock</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>handler</name>-&gt;<name>response_baton</name></name> = <name>parser_ctx</name></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>svn_ra_serf__request_create</name><argument_list>(<argument><expr><name>handler</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name>err</name> = <call><name>svn_ra_serf__context_run_wait</name><argument_list>(<argument><expr>&amp;<name><name>lock_ctx</name>-&gt;<name>done</name></name></expr></argument>, <argument><expr><name>session</name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name><name>lock_ctx</name>-&gt;<name>error</name></name> || <name><name>parser_ctx</name>-&gt;<name>error</name></name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><name><name>lock_ctx</name>-&gt;<name>error</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><name><name>parser_ctx</name>-&gt;<name>error</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+      <if>if <condition>(<expr><name>err</name></expr>)</condition><then>
+        <block>{
+          <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_DAV_REQUEST_FAILED</name></expr></argument>, <argument><expr><name>err</name></expr></argument>,
+                                  <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Lock request failed"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+        }</block></then></if>
+
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>lock_func</name><argument_list>(<argument><expr><name>lock_baton</name></expr></argument>, <argument><expr><name><name>lock_ctx</name>-&gt;<name>path</name></name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>, <argument><expr><name><name>lock_ctx</name>-&gt;<name>lock</name></name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                        <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></for>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<struct>struct <name>unlock_context_t</name> <block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>token</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>force</name></decl>;</decl_stmt>
+}</block>;</struct>
+
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type>
+<name>set_unlock_headers</name><parameter_list>(<param><decl><type><name>serf_bucket_t</name> *</type><name>headers</name></decl></param>,
+                   <param><decl><type><name>void</name> *</type><name>baton</name></decl></param>,
+                   <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>unlock_context_t</name> *</type><name>ctx</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>serf_bucket_headers_set</name><argument_list>(<argument><expr><name>headers</name></expr></argument>, <argument><expr>"Lock-Token"</expr></argument>, <argument><expr><name><name>ctx</name>-&gt;<name>token</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name><name>ctx</name>-&gt;<name>force</name></name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>serf_bucket_headers_set</name><argument_list>(<argument><expr><name>headers</name></expr></argument>, <argument><expr><name>SVN_DAV_OPTIONS_HEADER</name></expr></argument>,
+                              <argument><expr><name>SVN_DAV_OPTION_LOCK_BREAK</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_ra_serf__unlock</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>ra_session</name></decl></param>,
+                    <param><decl><type><name>apr_hash_t</name> *</type><name>path_tokens</name></decl></param>,
+                    <param><decl><type><name>svn_boolean_t</name></type> <name>force</name></decl></param>,
+                    <param><decl><type><name>svn_ra_lock_callback_t</name></type> <name>lock_func</name></decl></param>,
+                    <param><decl><type><name>void</name> *</type><name>lock_baton</name></decl></param>,
+                    <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_serf__session_t</name> *</type><name>session</name> <init>= <expr><name><name>ra_session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_hash_index_t</name> *</type><name>hi</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>subpool</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>apr_pool_create</name><argument_list>(<argument><expr>&amp;<name>subpool</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <for>for (<init><expr><name>hi</name> = <call><name>apr_hash_first</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>path_tokens</name></expr></argument>)</argument_list></call></expr>;</init> <condition><expr><name>hi</name></expr>;</condition> <incr><expr><name>hi</name> = <call><name>apr_hash_next</name><argument_list>(<argument><expr><name>hi</name></expr></argument>)</argument_list></call></expr></incr>)
+    <block>{
+      <decl_stmt><decl><type><name>svn_ra_serf__handler_t</name> *</type><name>handler</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>svn_ra_serf__simple_request_context_t</name> *</type><name>ctx</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>req_url</name></decl>, *<decl><type ref="prev"/><name>path</name></decl>, *<decl><type ref="prev"/><name>token</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><specifier>const</specifier> <name>void</name> *</type><name>key</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>void</name> *</type><name>val</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type>struct <name>unlock_context_t</name></type> <name>unlock_ctx</name></decl>;</decl_stmt>
+
+      <expr_stmt><expr><call><name>svn_pool_clear</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name>ctx</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>ctx</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>apr_hash_this</name><argument_list>(<argument><expr><name>hi</name></expr></argument>, <argument><expr>&amp;<name>key</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr>&amp;<name>val</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name>path</name> = <name>key</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name>token</name> = <name>val</name></expr>;</expr_stmt>
+
+      <if>if <condition>(<expr><name>force</name> == <name>TRUE</name> &amp;&amp; (!<name>token</name> || <name><name>token</name><index>[<expr>0</expr>]</index></name> == '\0')</expr>)</condition><then>
+        <block>{
+          <decl_stmt><decl><type><name>svn_lock_t</name> *</type><name>lock</name></decl>;</decl_stmt>
+
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_ra_serf__get_lock</name><argument_list>(<argument><expr><name>ra_session</name></expr></argument>, <argument><expr>&amp;<name>lock</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><name>token</name> = <name><name>lock</name>-&gt;<name>token</name></name></expr>;</expr_stmt>
+          <if>if <condition>(<expr>!<name>token</name></expr>)</condition><then>
+            <block>{
+              <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name></decl>;</decl_stmt>
+
+              <expr_stmt><expr><name>err</name> = <call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_RA_NOT_LOCKED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                      <argument><expr><call><name>_</name><argument_list>(<argument><expr>"'%s' is not locked in the repository"</expr></argument>)</argument_list></call></expr></argument>,
+                                      <argument><expr><name>path</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+              <if>if <condition>(<expr><name>lock_func</name></expr>)</condition><then>
+                <block>{
+                  <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err2</name></decl>;</decl_stmt>
+                  <expr_stmt><expr><name>err2</name> = <call><name>lock_func</name><argument_list>(<argument><expr><name>lock_baton</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>err</name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                  <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                  <if>if <condition>(<expr><name>err2</name></expr>)</condition><then>
+                    <return>return <expr><name>err2</name></expr>;</return></then></if>
+                }</block></then></if>
+              <continue>continue;</continue>
+            }</block></then></if>
+        }</block></then></if>
+
+      <expr_stmt><expr><name><name>unlock_ctx</name>.<name>force</name></name> = <name>force</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>unlock_ctx</name>.<name>token</name></name> = <call><name>apr_pstrcat</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>, <argument><expr>"&lt;"</expr></argument>, <argument><expr><name>token</name></expr></argument>, <argument><expr>"&gt;"</expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name>req_url</name> = <call><name>svn_path_url_add_component</name><argument_list>(<argument><expr><name><name>session</name>-&gt;<name>repos_url</name>.<name>path</name></name></expr></argument>, <argument><expr><name>path</name></expr></argument>,
+                                           <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name>handler</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>handler</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name><name>handler</name>-&gt;<name>method</name></name> = "UNLOCK"</expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>handler</name>-&gt;<name>path</name></name> = <name>req_url</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>handler</name>-&gt;<name>conn</name></name> = <name><name>session</name>-&gt;<name>conns</name><index>[<expr>0</expr>]</index></name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>handler</name>-&gt;<name>session</name></name> = <name>session</name></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name><name>handler</name>-&gt;<name>header_delegate</name></name> = <name>set_unlock_headers</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>handler</name>-&gt;<name>header_delegate_baton</name></name> = &amp;<name>unlock_ctx</name></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name><name>handler</name>-&gt;<name>response_handler</name></name> = <name>svn_ra_serf__handle_status_only</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>handler</name>-&gt;<name>response_baton</name></name> = <name>ctx</name></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>svn_ra_serf__request_create</name><argument_list>(<argument><expr><name>handler</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_ra_serf__context_run_wait</name><argument_list>(<argument><expr>&amp;<name><name>ctx</name>-&gt;<name>done</name></name></expr></argument>, <argument><expr><name>session</name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <if>if <condition>(<expr><name><name>ctx</name>-&gt;<name>status</name></name> != 204</expr>)</condition><then>
+        <block>{
+           <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_RA_DAV_REQUEST_FAILED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                    <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Unlock request failed: %d %s"</expr></argument>)</argument_list></call></expr></argument>,
+                                    <argument><expr><name><name>ctx</name>-&gt;<name>status</name></name></expr></argument>, <argument><expr><name><name>ctx</name>-&gt;<name>reason</name></name></expr></argument>)</argument_list></call></expr>;</return>
+        }</block></then></if>
+
+      <if>if <condition>(<expr><name>lock_func</name></expr>)</condition><then>
+        <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>lock_func</name><argument_list>(<argument><expr><name>lock_baton</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+    }</block></for>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+</unit>

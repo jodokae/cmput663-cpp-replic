@@ -1,0 +1,274 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/cpython-2.6.1/source/Mac/Modules/cg/CFMLateImport.h"><comment type="block">/*
+	File:		CFMLateImport.h
+
+	Contains:	Interface to CFM late import library.
+
+	Written by:	Quinn
+
+	Copyright:	Copyright © 1999 by Apple Computer, Inc., all rights reserved.
+
+				You may incorporate this Apple sample source code into your program(s) without
+				restriction. This Apple sample source code has been provided "AS IS" and the
+				responsibility for its operation is yours. You are not permitted to redistribute
+				this Apple sample source code as "Apple sample source code" after having made
+				changes. If you're going to re-distribute the source, we require that you make
+				it clear in the source that the code was descended from Apple sample source
+				code, but that you've made changes.
+
+	Change History (most recent first):
+
+         &lt;6&gt;     21/9/01    Quinn   Changes for CWPro7 Mach-O build.
+         &lt;5&gt;     19/9/01    Quinn   Change comments to reflect the fact that an unpacked data
+                                    section is no longer required.
+         &lt;4&gt;     19/9/01    Quinn   Simplified API and implementation after a suggestion by Eric
+                                    Grant. You no longer have to CFM export a dummy function; you
+                                    can just pass in the address of your fragment's init routine.
+         &lt;3&gt;    16/11/00    Quinn   Allow symbol finding via a callback and use that to implement
+                                    CFBundle support.
+         &lt;2&gt;    18/10/99    Quinn   Renamed CFMLateImport to CFMLateImportLibrary to allow for
+                                    possible future API expansion.
+         &lt;1&gt;     15/6/99    Quinn   First checked in.
+*/</comment>
+
+<cpp:pragma>#<cpp:directive>pragma</cpp:directive> once</cpp:pragma>
+
+<comment type="line">/////////////////////////////////////////////////////////////////</comment>
+
+<comment type="line">// MoreIsBetter Setup</comment>
+
+<comment type="line">//#include "MoreSetup.h"</comment>
+
+<comment type="line">// Mac OS Interfaces</comment>
+
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr>! <name>MORE_FRAMEWORK_INCLUDES</name></expr></cpp:if>
+	<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;MacTypes.h&gt;</cpp:file></cpp:include>
+	<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;CodeFragments.h&gt;</cpp:file></cpp:include>
+	<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;Devices.h&gt;</cpp:file></cpp:include>
+	<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;CFBundle.h&gt;</cpp:file></cpp:include>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<comment type="line">/////////////////////////////////////////////////////////////////</comment>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>__cplusplus</name></cpp:ifdef>
+<extern>extern "C" <block>{
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<comment type="block">/*	FAQ
+	---
+	
+	Q:	What does this library do?
+	A:	It allows you to resolve a weak linked library at runtime,
+	   	by supply a CFM connection to the library that should substitute
+	   	for the weak linked one.
+	
+	Q:	Does the substituted library have to have the same name as the
+		weak linked library.
+	A:	No.
+	
+	Q:	What's this useful for?
+	A:	The most obvious example of where this is useful is when
+		you rely on shared libraries that the user might delete
+		or move.  To can find the shared library (possibly even
+		using CatSearch), call GetDiskFragment to open a connection
+		to it, late import it using this library, and then the
+		rest of your code can continue to use the shared library
+		as if nothing had happened.  No more defining thousands
+		of stub routines which call through routine pointers.
+		
+		There are, however, numerous less obvious uses.  You can
+		use this code to make a 'self repairing' application.  If
+		the user removes your shared library from the Extensions
+		folder, the startup code for your application can offer
+		tor re-install it.  If the user agrees, you can then
+		re-install your shared library, late import it, and then
+		continue running your application if nothing happened.
+		
+		You can even use this code to free yourself from the
+		Extensions folder entirely.  Say you have a suite of
+		applications that currently installs a dozen shared 
+		libraries in the Extensions folder.  You can move those
+		libraries to another folder entirely and each application's
+		startup code can track down the library (using an alias
+		in the Preferences file) and late import it.
+		
+		An even cooler use is to provide easy abstraction layers.
+		Say you have a network code for both the MacTCP
+		API and the Open Transport API.  Typically, you would be
+		force to do this by having an abstraction layer where every
+		routine contains a switch between MacTCP and OT.  Your
+		OpenSocket routine might look like:
+
+			static int OpenSocket(void)
+			{
+			    if (gOTAvailable) {
+			        return OpenSocketOT();
+			    } else {
+			        return OpenSocketMacTCP();
+			    }
+			}
+		
+		With this code, you can avoid that entirely.  Simply
+		weak link to a shared library that you know is never
+		going to be implemented ("crea;MySocketsDummy") and then, 
+		at runtime, decide whether the system has MacTCP or OT
+		and late import the relevant real implementation
+		("crea;MySocketsMacTCP" or "crea;MySocketsOT").
+		One benefit of this approach is that only the MacTCP or
+		the OT code is resident in memory on any given system.
+*/</comment>
+
+<typedef>typedef <function_decl><type><name>pascal</name> <name>OSStatus</name></type> (*<name>CFMLateImportLookupProc</name>)<parameter_list>(<param><decl><type><name>ConstStr255Param</name></type> <name>symName</name></decl></param>, <param><decl><type><name>CFragSymbolClass</name></type> <name>symClass</name></decl></param>,
+													<param><decl><type><name>void</name> **</type><name>symAddr</name></decl></param>, <param><decl><type><name>void</name> *</type><name>refCon</name></decl></param>)</parameter_list>;</function_decl></typedef>
+	<comment type="line">// CFMLateImportLookupProc defines a callback for CFMLateImportCore.</comment>
+	<comment type="line">// The routine is expected to look up the address of the symbol named </comment>
+	<comment type="line">// symName and return it in *symAddr.  The symbol should be of class </comment>
+	<comment type="line">// symClass, although the callback decides whether a class mismatch is </comment>
+	<comment type="line">// an error.  refCon is an application defined value that was originally </comment>
+	<comment type="line">// passed in to CFMLateImportCore.</comment>
+	<comment type="line">//</comment>
+	<comment type="line">// If this routine returns an error, a symbol address of 0 is assumed. </comment>
+	<comment type="line">// If the symbol is marked as a weak import, the CFMLateImportCore will </comment>
+	<comment type="line">// continue, otherwise the CFMLateImportCore routine will fail with the </comment>
+	<comment type="line">// error.</comment>
+	
+<function_decl><type><specifier>extern</specifier> <name>pascal</name> <name>OSStatus</name></type> <name>CFMLateImportCore</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>CFragSystem7DiskFlatLocator</name> *</type><name>fragToFixLocator</name></decl></param>,
+										<param><decl><type><name>CFragConnectionID</name></type> <name>fragToFixConnID</name></decl></param>,
+										<param><decl><type><name>CFragInitFunction</name></type> <name>fragToFixInitRoutine</name></decl></param>,
+										<param><decl><type><name>ConstStr255Param</name></type> <name>weakLinkedLibraryName</name></decl></param>,
+										<param><decl><type><name>CFMLateImportLookupProc</name></type> <name>lookup</name></decl></param>,
+										<param><decl><type><name>void</name> *</type><name>refCon</name></decl></param>)</parameter_list>;</function_decl>
+	<comment type="line">// This routine will link you, at runtime, to some library </comment>
+	<comment type="line">// that you were weak linked to and wasn't present when your</comment>
+	<comment type="line">// fragment was prepared.  As well as the obvious functionality</comment>
+	<comment type="line">// of being able to resolve weak links after prepare time,</comment>
+	<comment type="line">// this functionality can be put to a number of less obvious uses,</comment>
+	<comment type="line">// some of which are discussed at the top of this header file.</comment>
+	<comment type="line">//</comment>
+	<comment type="line">// To call this routine, you need a number of pieces of information:</comment>
+	<comment type="line">//</comment>
+	<comment type="line">// 1. fragToFixLocator, fragToFixConnID:  The location of your own</comment>
+	<comment type="line">//    code fragment on disk and the CFM connection ID to your own</comment>
+	<comment type="line">//    code fragment.  Typically you get this information from your </comment>
+	<comment type="line">//    fragment's CFM init routine.  You must ensure that</comment>
+	<comment type="line">//    fragToFixLocator-&gt;fileSpec points to an FSSpec of the</comment>
+	<comment type="line">//    file which holds your code fragment.</comment>
+	<comment type="line">//</comment>
+	<comment type="line">//    IMPORTANT:</comment>
+	<comment type="line">//    The fact that you pass in a CFragSystem7DiskFlatLocator as the</comment>
+	<comment type="line">//    fragToFixLocator implies that the fragment to be fixed up must</comment>
+	<comment type="line">//    be in the data fork of a file.  The code could be modified</comment>
+	<comment type="line">//    to remove this requirement, but on disk code fragments are the most</comment>
+	<comment type="line">//    common case.</comment>
+	<comment type="line">//</comment>
+	<comment type="line">//    IMPORTANT:</comment>
+	<comment type="line">//    The fragment to fix may have a packed data section.  Packing the </comment>
+	<comment type="line">//    data section will reduce the size of your fragment on disk, but it </comment>
+	<comment type="line">//    will significantly increase the memory needed by this routine </comment>
+	<comment type="line">//    (it increases memory usage by the sum of the sizes of the packed </comment>
+	<comment type="line">//    and unpacked data section).  See below for instructions on how to </comment>
+	<comment type="line">//    create an unpacked data section.</comment>
+	<comment type="line">//</comment>
+	<comment type="line">// 2. fragToFixInitRoutine:  A pointer to your own code fragment's</comment>
+	<comment type="line">//    fragment initialiser routine.  You necessarily have one of these </comment>
+	<comment type="line">//    because you need it to get values for the fragToFixLocator and </comment>
+	<comment type="line">//    fragToFixConnID parameters.  Just pass its address in as a parameter </comment>
+	<comment type="line">//    as well. </comment>
+	<comment type="line">//</comment>
+	<comment type="line">// 3. weakLinkedLibraryName:  The name of the weak linked library which</comment>
+	<comment type="line">//    failed to link.  You must have weak linked to this library.</comment>
+	<comment type="line">//    It is oxymoric for you to pass a strong linked library here,</comment>
+	<comment type="line">//    because your code would not have prepared if a strong linked</comment>
+	<comment type="line">//    library failed to prepare, and so you couldn't supply a valid</comment>
+	<comment type="line">///   fragToFix.</comment>
+	<comment type="line">//</comment>
+	<comment type="line">// 4. lookup, refCon:  A pointer to a callback function that the </comment>
+	<comment type="line">//	  routine calls to look up the address of a symbol, and a refCon </comment>
+	<comment type="line">//    for that callback routine.</comment>
+	<comment type="line">//</comment>
+	<comment type="line">// Note:</comment>
+	<comment type="line">// The fragToFixLocator and fragToFixInitRoutine parameters</comment>
+	<comment type="line">// are artifacts of the way in which this functionality is implemented.</comment>
+	<comment type="line">// In an ideal world, where CFM exported decent introspection APIs</comment>
+	<comment type="line">// to third party developers, these parameters would not be necessary.</comment>
+	<comment type="line">// If you're using this code inside Apple, you probably should investigate</comment>
+	<comment type="line">// using the CFM private APIs for getting at the information these</comment>
+	<comment type="line">// parameters are needed for.  See the comments inside the implementation</comment>
+	<comment type="line">// for more details.</comment>
+	<comment type="line">//</comment>
+	<comment type="line">// Note:</comment>
+	<comment type="line">// The extra memory taken when you use a packed data section is also an </comment>
+	<comment type="line">// artifact of my workaround for the lack of CFM introspection APIs.  In </comment>
+	<comment type="line">// my opinion it's better to use an unpacked data section and consume more </comment>
+	<comment type="line">// space on disk while saving memory.  In CodeWarrior you can switch to an </comment>
+	<comment type="line">// unpacked data section by checking the "Expand Uninitialized Data" </comment>
+	<comment type="line">// checkbox in the "PPC PEF" settings panel.  In MPW, specified the</comment>
+	<comment type="line">// "-packdata off" option to PPCLink.</comment>
+	<comment type="line">//</comment>
+	<comment type="line">// When the routine returns, any symbols that you imported from the</comment>
+	<comment type="line">// library named weakLinkedLibraryName will be resolved to the address</comment>
+	<comment type="line">// of the symbol provided by the "lookup" callback routine.</comment>
+	<comment type="line">//</comment>
+	<comment type="line">// It is possible for an unresolved import to remain unresolved after</comment>
+	<comment type="line">// this routine returns.  If the symbol import is marked as weak (as</comment>
+	<comment type="line">// opposed to the library, which *must* be marked as weak) and the symbol</comment>
+	<comment type="line">// is not found by the "lookup" callback, the routine will simple skip </comment>
+	<comment type="line">// that symbol.  If the symbol isn't marked as weak, the routine will fail </comment>
+	<comment type="line">// in that case.</comment>
+	<comment type="line">//</comment>
+	<comment type="line">// Most of the possible error results are co-opted CFM errors.  These</comment>
+	<comment type="line">// include:</comment>
+	<comment type="line">//</comment>
+	<comment type="line">// cfragFragmentFormatErr  -- The fragment to fix is is an unknown format.</comment>
+	<comment type="line">// cfragNoSectionErr       -- Could not find the loader section in the fragment to fix.</comment>
+	<comment type="line">// cfragNoLibraryErr       -- The fragment to fix is not weak linked to weakLinkedLibraryName.</comment>
+	<comment type="line">// cfragFragmentUsageErr   -- The fragment to fix doesn't have a data section.</comment>
+	<comment type="line">//                         -- The fragment to fix is strong linked to weakLinkedLibraryName.</comment>
+	<comment type="line">//                         -- The fragment doesn't have an init routine.</comment>
+	<comment type="line">// cfragFragmentCorruptErr -- Encountered an undefined relocation opcode.</comment>
+	<comment type="line">// unimpErr                -- Encountered an unimplement relocation opcode.  The</comment>
+	<comment type="line">//                            relocation engine only implements a subset of the CFM</comment>
+	<comment type="line">//                            relocation opcodes, the subset most commonly used by</comment>
+	<comment type="line">//                            MPW and CodeWarrior PEF containers.  If you encounter</comment>
+	<comment type="line">//                            this error, you'll probably have to add the weird</comment>
+	<comment type="line">//                            relocation opcode to the engine, which shouldn't be</comment>
+	<comment type="line">//                            be too hard.</comment>
+	<comment type="line">// memFullErr			   -- It's likely that this error is triggered by the memory </comment>
+	<comment type="line">//                            needed to unpack your data section.  Either make your </comment>
+	<comment type="line">//                            data section smaller, or unpack it (see above).</comment>
+	<comment type="line">// errors returned by FindSymbol</comment>
+	<comment type="line">// errors returned by Memory Manager</comment>
+	<comment type="line">//</comment>
+	<comment type="line">// The routine needs enough memory to hold the loader section of the fragment</comment>
+	<comment type="line">// to fix in memory.  It allocates that memory using NewPtr and dispsoses of </comment>
+	<comment type="line">// it before it returns.  You may want to change the memory allocator, which</comment>
+	<comment type="line">// is very simple.</comment>
+
+<function_decl><type><specifier>extern</specifier> <name>pascal</name> <name>OSStatus</name></type> <name>CFMLateImportLibrary</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>CFragSystem7DiskFlatLocator</name> *</type><name>fragToFixLocator</name></decl></param>,
+										<param><decl><type><name>CFragConnectionID</name></type> <name>fragToFixConnID</name></decl></param>,
+										<param><decl><type><name>CFragInitFunction</name></type> <name>fragToFixInitRoutine</name></decl></param>,
+										<param><decl><type><name>ConstStr255Param</name></type> <name>weakLinkedLibraryName</name></decl></param>,
+										<param><decl><type><name>CFragConnectionID</name></type> <name>connIDToImport</name></decl></param>)</parameter_list>;</function_decl>
+	<comment type="line">// A wrapper around CFMLateImportCore that looks up symbols by calling </comment>
+	<comment type="line">// FindSymbol on a connection to a CFM library (connIDToImport).</comment>
+	<comment type="line">// You can get this connection ID through any standard CFM API, for example</comment>
+	<comment type="line">// GetSharedLibrary, GetDiskFragment, or GetMemFragment.</comment>
+	<comment type="line">//</comment>
+	<comment type="line">// IMPORTANT:</comment>
+	<comment type="line">// The fragment name for connIDToImport *does not* have to match</comment>
+	<comment type="line">// weakLinkedLibraryName.  This is part of the power of this library.</comment>
+
+<function_decl><type><specifier>extern</specifier> <name>pascal</name> <name>OSStatus</name></type> <name>CFMLateImportBundle</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>CFragSystem7DiskFlatLocator</name> *</type><name>fragToFixLocator</name></decl></param>,
+										<param><decl><type><name>CFragConnectionID</name></type> <name>fragToFixConnID</name></decl></param>,
+										<param><decl><type><name>CFragInitFunction</name></type> <name>fragToFixInitRoutine</name></decl></param>,
+										<param><decl><type><name>ConstStr255Param</name></type> <name>weakLinkedLibraryName</name></decl></param>,
+										<param><decl><type><name>CFBundleRef</name></type> <name>bundleToImport</name></decl></param>)</parameter_list>;</function_decl>
+	<comment type="line">// A wrapper around CFMLateImportCore that looks up symbols by calling </comment>
+	<comment type="line">// CFBundleGetFunctionPointerForName on a reference to a Core Foundation </comment>
+	<comment type="line">// bundle (bundleToImport).  You can get this reference through any </comment>
+	<comment type="line">// Core Foundation bundle API, for example CFBundleCreate.</comment>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>__cplusplus</name></cpp:ifdef>
+}</block></extern>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+</unit>

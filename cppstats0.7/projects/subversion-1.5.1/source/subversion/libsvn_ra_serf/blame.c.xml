@@ -1,0 +1,571 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/subversion-1.5.1/source/subversion/libsvn_ra_serf/blame.c"><comment type="block">/*
+ * blame.c :  entry point for blame RA functions for ra_serf
+ *
+ * ====================================================================
+ * Copyright (c) 2006-2007 CollabNet.  All rights reserved.
+ *
+ * This software is licensed as described in the file COPYING, which
+ * you should have received as part of this distribution.  The terms
+ * are also available at http://subversion.tigris.org/license-1.html.
+ * If newer versions of this license are posted there, you may use a
+ * newer version instead, at your option.
+ *
+ * This software consists of voluntary contributions made by many
+ * individuals.  For exact contribution history, see the revision
+ * history and logs, available at http://subversion.tigris.org/.
+ * ====================================================================
+ */</comment>
+
+
+<escape char="0xc"/>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_uri.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;expat.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;serf.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_pools.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_ra.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_dav.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_xml.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"../libsvn_ra/ra_loader.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_config.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_delta.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_version.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_path.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_base64.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_private_config.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"ra_serf.h"</cpp:file></cpp:include>
+
+<escape char="0xc"/>
+<comment type="block">/*
+ * This enum represents the current state of our XML parsing for a REPORT.
+ */</comment>
+<typedef>typedef <type><enum>enum <block>{
+  <decl><name>NONE</name> <init>= <expr>0</expr></init></decl>,
+  <decl><name>FILE_REVS_REPORT</name></decl>,
+  <decl><name>FILE_REV</name></decl>,
+  <decl><name>REV_PROP</name></decl>,
+  <decl><name>SET_PROP</name></decl>,
+  <decl><name>REMOVE_PROP</name></decl>,
+  <decl><name>MERGED_REVISION</name></decl>,
+  <decl><name>TXDELTA</name></decl>,
+}</block></enum></type> <name>blame_state_e</name>;</typedef>
+
+<typedef>typedef <type><struct>struct <block>{
+  <comment type="block">/* Current pool. */</comment>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl>;</decl_stmt>
+
+  <comment type="block">/* our suspicious file */</comment>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl>;</decl_stmt>
+
+  <comment type="block">/* the intended suspect */</comment>
+  <decl_stmt><decl><type><name>svn_revnum_t</name></type> <name>rev</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Hashtable of revision properties */</comment>
+  <decl_stmt><decl><type><name>apr_hash_t</name> *</type><name>rev_props</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Added and removed properties (svn_prop_t*'s) */</comment>
+  <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>prop_diffs</name></decl>;</decl_stmt>
+
+  <comment type="block">/* txdelta */</comment>
+  <decl_stmt><decl><type><name>svn_txdelta_window_handler_t</name></type> <name>txdelta</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>void</name> *</type><name>txdelta_baton</name></decl>;</decl_stmt>
+
+  <comment type="block">/* returned txdelta stream */</comment>
+  <decl_stmt><decl><type><name>svn_stream_t</name> *</type><name>stream</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Is this property base64-encoded? */</comment>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>prop_base64</name></decl>;</decl_stmt>
+
+  <comment type="block">/* The currently collected value as we build it up */</comment>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>prop_name</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>prop_attr</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>prop_attr_len</name></decl>;</decl_stmt>
+
+  <decl_stmt><decl><type><name>svn_string_t</name> *</type><name>prop_string</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Merged revision flag */</comment>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>merged_revision</name></decl>;</decl_stmt>
+
+}</block></struct></type> <name>blame_info_t</name>;</typedef>
+
+<typedef>typedef <type><struct>struct <block>{
+  <comment type="block">/* pool passed to get_file_revs */</comment>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl>;</decl_stmt>
+
+  <comment type="block">/* parameters set by our caller */</comment>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_revnum_t</name></type> <name>start</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_revnum_t</name></type> <name>end</name></decl>;</decl_stmt>
+
+  <comment type="block">/* are we done? */</comment>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>done</name></decl>;</decl_stmt>
+
+  <comment type="block">/* blame handler and baton */</comment>
+  <decl_stmt><decl><type><name>svn_file_rev_handler_t</name></type> <name>file_rev</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>void</name> *</type><name>file_rev_baton</name></decl>;</decl_stmt>
+}</block></struct></type> <name>blame_context_t</name>;</typedef>
+
+<escape char="0xc"/>
+<function><type><specifier>static</specifier> <name>blame_info_t</name> *</type>
+<name>push_state</name><parameter_list>(<param><decl><type><name>svn_ra_serf__xml_parser_t</name> *</type><name>parser</name></decl></param>,
+           <param><decl><type><name>blame_context_t</name> *</type><name>blame_ctx</name></decl></param>,
+           <param><decl><type><name>blame_state_e</name></type> <name>state</name></decl></param>)</parameter_list>
+<block>{
+  <expr_stmt><expr><call><name>svn_ra_serf__xml_push_state</name><argument_list>(<argument><expr><name>parser</name></expr></argument>, <argument><expr><name>state</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name>state</name> == <name>FILE_REV</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>blame_info_t</name> *</type><name>info</name></decl>;</decl_stmt>
+
+      <expr_stmt><expr><name>info</name> = <call><name>apr_palloc</name><argument_list>(<argument><expr><name><name>parser</name>-&gt;<name>state</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>info</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name><name>info</name>-&gt;<name>pool</name></name> = <name><name>parser</name>-&gt;<name>state</name>-&gt;<name>pool</name></name></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name><name>info</name>-&gt;<name>rev</name></name> = <name>SVN_INVALID_REVNUM</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>info</name>-&gt;<name>path</name></name> = <name>NULL</name></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name><name>info</name>-&gt;<name>rev_props</name></name> = <call><name>apr_hash_make</name><argument_list>(<argument><expr><name><name>info</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>info</name>-&gt;<name>prop_diffs</name></name> = <call><name>apr_array_make</name><argument_list>(<argument><expr><name><name>info</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>svn_prop_t</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name><name>info</name>-&gt;<name>stream</name></name> = <name>NULL</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>info</name>-&gt;<name>merged_revision</name></name> = <name>FALSE</name></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name><name>parser</name>-&gt;<name>state</name>-&gt;<name>private</name></name> = <name>info</name></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <return>return <expr><name><name>parser</name>-&gt;<name>state</name>-&gt;<name>private</name></name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>svn_string_t</name> *</type>
+<name>create_propval</name><parameter_list>(<param><decl><type><name>blame_info_t</name> *</type><name>info</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>svn_string_t</name> *</type><name>s</name></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr>!<name><name>info</name>-&gt;<name>prop_attr</name></name></expr>)</condition><then>
+    <block>{
+      <return>return <expr><call><name>svn_string_create</name><argument_list>(<argument><expr>""</expr></argument>, <argument><expr><name><name>info</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then>
+  <else>else
+    <block>{
+      <expr_stmt><expr><name><name>info</name>-&gt;<name>prop_attr</name></name> = <call><name>apr_pmemdup</name><argument_list>(<argument><expr><name><name>info</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>info</name>-&gt;<name>prop_attr</name></name></expr></argument>,
+                                    <argument><expr><name><name>info</name>-&gt;<name>prop_attr_len</name></name> + 1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if>
+
+  <comment type="block">/* Include the null term. */</comment>
+  <expr_stmt><expr><name>s</name> = <call><name>svn_string_ncreate</name><argument_list>(<argument><expr><name><name>info</name>-&gt;<name>prop_attr</name></name></expr></argument>, <argument><expr><name><name>info</name>-&gt;<name>prop_attr_len</name></name> + 1</expr></argument>, <argument><expr><name><name>info</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name><name>info</name>-&gt;<name>prop_base64</name></name> == <name>TRUE</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><name>s</name> = <call><name>svn_base64_decode_string</name><argument_list>(<argument><expr><name>s</name></expr></argument>, <argument><expr><name><name>info</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+  <return>return <expr><name>s</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>start_blame</name><parameter_list>(<param><decl><type><name>svn_ra_serf__xml_parser_t</name> *</type><name>parser</name></decl></param>,
+            <param><decl><type><name>void</name> *</type><name>userData</name></decl></param>,
+            <param><decl><type><name>svn_ra_serf__dav_props_t</name></type> <name>name</name></decl></param>,
+            <param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>attrs</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>blame_context_t</name> *</type><name>blame_ctx</name> <init>= <expr><name>userData</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>blame_state_e</name></type> <name>state</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name>state</name> = <name><name>parser</name>-&gt;<name>state</name>-&gt;<name>current_state</name></name></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name>state</name> == <name>NONE</name> &amp;&amp; <call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"file-revs-report"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>push_state</name><argument_list>(<argument><expr><name>parser</name></expr></argument>, <argument><expr><name>blame_ctx</name></expr></argument>, <argument><expr><name>FILE_REVS_REPORT</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>state</name> == <name>FILE_REVS_REPORT</name> &amp;&amp;
+           <call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"file-rev"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>blame_info_t</name> *</type><name>info</name></decl>;</decl_stmt>
+
+      <expr_stmt><expr><name>info</name> = <call><name>push_state</name><argument_list>(<argument><expr><name>parser</name></expr></argument>, <argument><expr><name>blame_ctx</name></expr></argument>, <argument><expr><name>FILE_REV</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name><name>info</name>-&gt;<name>path</name></name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name><name>info</name>-&gt;<name>pool</name></name></expr></argument>,
+                               <argument><expr><call><name>svn_xml_get_attr_value</name><argument_list>(<argument><expr>"path"</expr></argument>, <argument><expr><name>attrs</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>info</name>-&gt;<name>rev</name></name> = <call><name>SVN_STR_TO_REV</name><argument_list>(<argument><expr><call><name>svn_xml_get_attr_value</name><argument_list>(<argument><expr>"rev"</expr></argument>, <argument><expr><name>attrs</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>state</name> == <name>FILE_REV</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>blame_info_t</name> *</type><name>info</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>enc</name></decl>;</decl_stmt>
+
+      <expr_stmt><expr><name>info</name> = <name><name>parser</name>-&gt;<name>state</name>-&gt;<name>private</name></name></expr>;</expr_stmt>
+
+      <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"rev-prop"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>push_state</name><argument_list>(<argument><expr><name>parser</name></expr></argument>, <argument><expr><name>blame_ctx</name></expr></argument>, <argument><expr><name>REV_PROP</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+      <else>else <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"set-prop"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>push_state</name><argument_list>(<argument><expr><name>parser</name></expr></argument>, <argument><expr><name>blame_ctx</name></expr></argument>, <argument><expr><name>SET_PROP</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if></else></if>
+      <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"remove-prop"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>push_state</name><argument_list>(<argument><expr><name>parser</name></expr></argument>, <argument><expr><name>blame_ctx</name></expr></argument>, <argument><expr><name>REMOVE_PROP</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+      <else>else <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"merged-revision"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>push_state</name><argument_list>(<argument><expr><name>parser</name></expr></argument>, <argument><expr><name>blame_ctx</name></expr></argument>, <argument><expr><name>MERGED_REVISION</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+      <else>else <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"txdelta"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>blame_ctx</name>-&gt;<name>file_rev</name></name><argument_list>(<argument><expr><name><name>blame_ctx</name>-&gt;<name>file_rev_baton</name></name></expr></argument>,
+                                      <argument><expr><name><name>info</name>-&gt;<name>path</name></name></expr></argument>, <argument><expr><name><name>info</name>-&gt;<name>rev</name></name></expr></argument>,
+                                      <argument><expr><name><name>info</name>-&gt;<name>rev_props</name></name></expr></argument>, <argument><expr><name><name>info</name>-&gt;<name>merged_revision</name></name></expr></argument>,
+                                      <argument><expr>&amp;<name><name>info</name>-&gt;<name>txdelta</name></name></expr></argument>, <argument><expr>&amp;<name><name>info</name>-&gt;<name>txdelta_baton</name></name></expr></argument>,
+                                      <argument><expr><name><name>info</name>-&gt;<name>prop_diffs</name></name></expr></argument>, <argument><expr><name><name>info</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+          <expr_stmt><expr><name><name>info</name>-&gt;<name>stream</name></name> = <call><name>svn_base64_decode</name>
+              <argument_list>(<argument><expr><call><name>svn_txdelta_parse_svndiff</name><argument_list>(<argument><expr><name><name>info</name>-&gt;<name>txdelta</name></name></expr></argument>, <argument><expr><name><name>info</name>-&gt;<name>txdelta_baton</name></name></expr></argument>,
+                                         <argument><expr><name>TRUE</name></expr></argument>, <argument><expr><name><name>info</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name><name>info</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+          <expr_stmt><expr><call><name>push_state</name><argument_list>(<argument><expr><name>parser</name></expr></argument>, <argument><expr><name>blame_ctx</name></expr></argument>, <argument><expr><name>TXDELTA</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if></else></if></else></if>
+
+      <expr_stmt><expr><name>state</name> = <name><name>parser</name>-&gt;<name>state</name>-&gt;<name>current_state</name></name></expr>;</expr_stmt>
+
+      <switch>switch <condition>(<expr><name>state</name></expr>)</condition>
+        <block>{
+        <case>case <expr><name>REV_PROP</name></expr>:
+        </case><case>case <expr><name>SET_PROP</name></expr>:
+        </case><case>case <expr><name>REMOVE_PROP</name></expr>:
+          <expr_stmt><expr><name><name>info</name>-&gt;<name>prop_name</name></name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name><name>info</name>-&gt;<name>pool</name></name></expr></argument>,
+                                        <argument><expr><call><name>svn_xml_get_attr_value</name><argument_list>(<argument><expr>"name"</expr></argument>, <argument><expr><name>attrs</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><name><name>info</name>-&gt;<name>prop_attr</name></name> = <name>NULL</name></expr>;</expr_stmt>
+          <expr_stmt><expr><name><name>info</name>-&gt;<name>prop_attr_len</name></name> = 0</expr>;</expr_stmt>
+
+          <expr_stmt><expr><name>enc</name> = <call><name>svn_xml_get_attr_value</name><argument_list>(<argument><expr>"encoding"</expr></argument>, <argument><expr><name>attrs</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <if>if <condition>(<expr><name>enc</name> &amp;&amp; <call><name>strcmp</name><argument_list>(<argument><expr><name>enc</name></expr></argument>, <argument><expr>"base64"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+            <block>{
+              <expr_stmt><expr><name><name>info</name>-&gt;<name>prop_base64</name></name> = <name>TRUE</name></expr>;</expr_stmt>
+            }</block></then>
+          <else>else
+            <block>{
+              <expr_stmt><expr><name><name>info</name>-&gt;<name>prop_base64</name></name> = <name>FALSE</name></expr>;</expr_stmt>
+            }</block></else></if>
+          <break>break;</break>
+        </case><case>case <expr><name>MERGED_REVISION</name></expr>:
+            <expr_stmt><expr><name><name>info</name>-&gt;<name>merged_revision</name></name> = <name>TRUE</name></expr>;</expr_stmt>
+          <break>break;</break>
+        </case><default>default:
+          <break>break;</break>
+        </default>}</block></switch>
+    }</block></then></if></else></if></else></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>end_blame</name><parameter_list>(<param><decl><type><name>svn_ra_serf__xml_parser_t</name> *</type><name>parser</name></decl></param>,
+          <param><decl><type><name>void</name> *</type><name>userData</name></decl></param>,
+          <param><decl><type><name>svn_ra_serf__dav_props_t</name></type> <name>name</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>blame_context_t</name> *</type><name>blame_ctx</name> <init>= <expr><name>userData</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>blame_state_e</name></type> <name>state</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>blame_info_t</name> *</type><name>info</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name>state</name> = <name><name>parser</name>-&gt;<name>state</name>-&gt;<name>current_state</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name>info</name> = <name><name>parser</name>-&gt;<name>state</name>-&gt;<name>private</name></name></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name>state</name> == <name>NONE</name></expr>)</condition><then>
+    <block>{
+      <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+    }</block></then></if>
+
+  <if>if <condition>(<expr><name>state</name> == <name>FILE_REVS_REPORT</name> &amp;&amp;
+      <call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"file-revs-report"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>svn_ra_serf__xml_pop_state</name><argument_list>(<argument><expr><name>parser</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>state</name> == <name>FILE_REV</name> &amp;&amp;
+           <call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"file-rev"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+    <block>{
+      <comment type="block">/* no file changes. */</comment>
+      <if>if <condition>(<expr>!<name><name>info</name>-&gt;<name>stream</name></name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name><name>blame_ctx</name>-&gt;<name>file_rev</name></name><argument_list>(<argument><expr><name><name>blame_ctx</name>-&gt;<name>file_rev_baton</name></name></expr></argument>,
+                                      <argument><expr><name><name>info</name>-&gt;<name>path</name></name></expr></argument>, <argument><expr><name><name>info</name>-&gt;<name>rev</name></name></expr></argument>,
+                                      <argument><expr><name><name>info</name>-&gt;<name>rev_props</name></name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>,
+                                      <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                      <argument><expr><name><name>info</name>-&gt;<name>prop_diffs</name></name></expr></argument>, <argument><expr><name><name>info</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+      <expr_stmt><expr><call><name>svn_ra_serf__xml_pop_state</name><argument_list>(<argument><expr><name>parser</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>state</name> == <name>REV_PROP</name> &amp;&amp;
+           <call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"rev-prop"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name><name>info</name>-&gt;<name>rev_props</name></name></expr></argument>,
+                   <argument><expr><name><name>info</name>-&gt;<name>prop_name</name></name></expr></argument>, <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>,
+                   <argument><expr><call><name>create_propval</name><argument_list>(<argument><expr><name>info</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>svn_ra_serf__xml_pop_state</name><argument_list>(<argument><expr><name>parser</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else <if>if <condition>(<expr>(<name>state</name> == <name>SET_PROP</name> &amp;&amp;
+            <call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"set-prop"</expr></argument>)</argument_list></call> == 0) ||
+           (<name>state</name> == <name>REMOVE_PROP</name> &amp;&amp;
+            <call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"remove-prop"</expr></argument>)</argument_list></call> == 0)</expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>svn_prop_t</name> *</type><name>prop</name> <init>= <expr><call><name>apr_array_push</name><argument_list>(<argument><expr><name><name>info</name>-&gt;<name>prop_diffs</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+      <expr_stmt><expr><name><name>prop</name>-&gt;<name>name</name></name> = <name><name>info</name>-&gt;<name>prop_name</name></name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>prop</name>-&gt;<name>value</name></name> = <call><name>create_propval</name><argument_list>(<argument><expr><name>info</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>svn_ra_serf__xml_pop_state</name><argument_list>(<argument><expr><name>parser</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>state</name> == <name>MERGED_REVISION</name> &amp;&amp;
+           <call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"merged-revision"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>svn_ra_serf__xml_pop_state</name><argument_list>(<argument><expr><name>parser</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>state</name> == <name>TXDELTA</name> &amp;&amp;
+           <call><name>strcmp</name><argument_list>(<argument><expr><name><name>name</name>.<name>name</name></name></expr></argument>, <argument><expr>"txdelta"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>svn_stream_close</name><argument_list>(<argument><expr><name><name>info</name>-&gt;<name>stream</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>svn_ra_serf__xml_pop_state</name><argument_list>(<argument><expr><name>parser</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if></else></if></else></if></else></if></else></if></else></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>cdata_blame</name><parameter_list>(<param><decl><type><name>svn_ra_serf__xml_parser_t</name> *</type><name>parser</name></decl></param>,
+            <param><decl><type><name>void</name> *</type><name>userData</name></decl></param>,
+            <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>data</name></decl></param>,
+            <param><decl><type><name>apr_size_t</name></type> <name>len</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>blame_context_t</name> *</type><name>blame_ctx</name> <init>= <expr><name>userData</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>blame_state_e</name></type> <name>state</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>blame_info_t</name> *</type><name>info</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>UNUSED_CTX</name><argument_list>(<argument><expr><name>blame_ctx</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name>state</name> = <name><name>parser</name>-&gt;<name>state</name>-&gt;<name>current_state</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name>info</name> = <name><name>parser</name>-&gt;<name>state</name>-&gt;<name>private</name></name></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name>state</name> == <name>NONE</name></expr>)</condition><then>
+    <block>{
+      <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+    }</block></then></if>
+
+  <switch>switch <condition>(<expr><name>state</name></expr>)</condition>
+    <block>{
+      <case>case <expr><name>REV_PROP</name></expr>:
+      </case><case>case <expr><name>SET_PROP</name></expr>:
+        <expr_stmt><expr><call><name>svn_ra_serf__expand_string</name><argument_list>(<argument><expr>&amp;<name><name>info</name>-&gt;<name>prop_attr</name></name></expr></argument>, <argument><expr>&amp;<name><name>info</name>-&gt;<name>prop_attr_len</name></name></expr></argument>,
+                                   <argument><expr><name>data</name></expr></argument>, <argument><expr><name>len</name></expr></argument>, <argument><expr><name><name>parser</name>-&gt;<name>state</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <break>break;</break>
+      </case><case>case <expr><name>TXDELTA</name></expr>:
+        <if>if <condition>(<expr><name><name>info</name>-&gt;<name>stream</name></name></expr>)</condition><then>
+          <block>{
+            <decl_stmt><decl><type><name>apr_size_t</name></type> <name>ret_len</name></decl>;</decl_stmt>
+
+            <expr_stmt><expr><name>ret_len</name> = <name>len</name></expr>;</expr_stmt>
+
+            <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_stream_write</name><argument_list>(<argument><expr><name><name>info</name>-&gt;<name>stream</name></name></expr></argument>, <argument><expr><name>data</name></expr></argument>, <argument><expr>&amp;<name>ret_len</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          }</block></then></if>
+        <break>break;</break>
+      </case><default>default:
+        <break>break;</break>
+    </default>}</block></switch>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_ra_serf__get_file_revs</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>ra_session</name></decl></param>,
+                           <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+                           <param><decl><type><name>svn_revnum_t</name></type> <name>start</name></decl></param>,
+                           <param><decl><type><name>svn_revnum_t</name></type> <name>end</name></decl></param>,
+                           <param><decl><type><name>svn_boolean_t</name></type> <name>include_merged_revisions</name></decl></param>,
+                           <param><decl><type><name>svn_file_rev_handler_t</name></type> <name>rev_handler</name></decl></param>,
+                           <param><decl><type><name>void</name> *</type><name>rev_handler_baton</name></decl></param>,
+                           <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>blame_context_t</name> *</type><name>blame_ctx</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_ra_serf__session_t</name> *</type><name>session</name> <init>= <expr><name><name>ra_session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_ra_serf__handler_t</name> *</type><name>handler</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_ra_serf__xml_parser_t</name> *</type><name>parser_ctx</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>serf_bucket_t</name> *</type><name>buckets</name></decl>, *<decl><type ref="prev"/><name>tmp</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_hash_t</name> *</type><name>props</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>lopped_path</name></decl>, *<decl><type ref="prev"/><name>remaining_path</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>vcc_url</name></decl>, *<decl><type ref="prev"/><name>relative_url</name></decl>, *<decl><type ref="prev"/><name>baseline_url</name></decl>, *<decl><type ref="prev"/><name>basecoll_url</name></decl>, *<decl><type ref="prev"/><name>req_url</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>status_code</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name>blame_ctx</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>blame_ctx</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>blame_ctx</name>-&gt;<name>pool</name></name> = <name>pool</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>blame_ctx</name>-&gt;<name>file_rev</name></name> = <name>rev_handler</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>blame_ctx</name>-&gt;<name>file_rev_baton</name></name> = <name>rev_handler_baton</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>blame_ctx</name>-&gt;<name>start</name></name> = <name>start</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>blame_ctx</name>-&gt;<name>end</name></name> = <name>end</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>blame_ctx</name>-&gt;<name>done</name></name> = <name>FALSE</name></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name>buckets</name> = <call><name>serf_bucket_aggregate_create</name><argument_list>(<argument><expr><name><name>session</name>-&gt;<name>bkt_alloc</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name>tmp</name> = <call><name>SERF_BUCKET_SIMPLE_STRING_LEN</name><argument_list>(<argument><expr>"&lt;S:file-revs-report xmlns:S=\""</expr></argument>,
+                                  <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>"&lt;S:file-revs-report xmlns:S=\""</expr></argument>)</argument_list></sizeof>-1</expr></argument>,
+                                  <argument><expr><name><name>session</name>-&gt;<name>bkt_alloc</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>serf_bucket_aggregate_append</name><argument_list>(<argument><expr><name>buckets</name></expr></argument>, <argument><expr><name>tmp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name>tmp</name> = <call><name>SERF_BUCKET_SIMPLE_STRING_LEN</name><argument_list>(<argument><expr><name>SVN_XML_NAMESPACE</name></expr></argument>,
+                                      <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>SVN_XML_NAMESPACE</name></expr></argument>)</argument_list></sizeof>-1</expr></argument>,
+                                      <argument><expr><name><name>session</name>-&gt;<name>bkt_alloc</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>serf_bucket_aggregate_append</name><argument_list>(<argument><expr><name>buckets</name></expr></argument>, <argument><expr><name>tmp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name>tmp</name> = <call><name>SERF_BUCKET_SIMPLE_STRING_LEN</name><argument_list>(<argument><expr>"\"&gt;"</expr></argument>,
+                                      <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>"\"&gt;"</expr></argument>)</argument_list></sizeof>-1</expr></argument>,
+                                      <argument><expr><name><name>session</name>-&gt;<name>bkt_alloc</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>serf_bucket_aggregate_append</name><argument_list>(<argument><expr><name>buckets</name></expr></argument>, <argument><expr><name>tmp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>svn_ra_serf__add_tag_buckets</name><argument_list>(<argument><expr><name>buckets</name></expr></argument>,
+                               <argument><expr>"S:start-revision"</expr></argument>, <argument><expr><call><name>apr_ltoa</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>start</name></expr></argument>)</argument_list></call></expr></argument>,
+                               <argument><expr><name><name>session</name>-&gt;<name>bkt_alloc</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>svn_ra_serf__add_tag_buckets</name><argument_list>(<argument><expr><name>buckets</name></expr></argument>,
+                               <argument><expr>"S:end-revision"</expr></argument>, <argument><expr><call><name>apr_ltoa</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>end</name></expr></argument>)</argument_list></call></expr></argument>,
+                               <argument><expr><name><name>session</name>-&gt;<name>bkt_alloc</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name>include_merged_revisions</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>svn_ra_serf__add_tag_buckets</name><argument_list>(<argument><expr><name>buckets</name></expr></argument>,
+                                   <argument><expr>"S:include-merged-revisions"</expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                   <argument><expr><name><name>session</name>-&gt;<name>bkt_alloc</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <expr_stmt><expr><call><name>svn_ra_serf__add_tag_buckets</name><argument_list>(<argument><expr><name>buckets</name></expr></argument>,
+                               <argument><expr>"S:path"</expr></argument>, <argument><expr><name>path</name></expr></argument>,
+                               <argument><expr><name><name>session</name>-&gt;<name>bkt_alloc</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name>tmp</name> = <call><name>SERF_BUCKET_SIMPLE_STRING_LEN</name><argument_list>(<argument><expr>"&lt;/S:file-revs-report&gt;"</expr></argument>,
+                                      <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>"&lt;/S:file-revs-report&gt;"</expr></argument>)</argument_list></sizeof>-1</expr></argument>,
+                                      <argument><expr><name><name>session</name>-&gt;<name>bkt_alloc</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>serf_bucket_aggregate_append</name><argument_list>(<argument><expr><name>buckets</name></expr></argument>, <argument><expr><name>tmp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name>props</name> = <call><name>apr_hash_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Get the VCC from file url, or if the file doesn't exist in HEAD, from
+     its closest existing parent.  */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_ra_serf__search_for_base_props</name><argument_list>(<argument><expr><name>props</name></expr></argument>, <argument><expr>&amp;<name>remaining_path</name></expr></argument>,
+                                             <argument><expr>&amp;<name>lopped_path</name></expr></argument>,
+                                             <argument><expr><name>session</name></expr></argument>, <argument><expr><name><name>session</name>-&gt;<name>conns</name><index>[<expr>0</expr>]</index></name></expr></argument>,
+                                             <argument><expr><name><name>session</name>-&gt;<name>repos_url</name>.<name>path</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>vcc_url</name> = <call><name>svn_ra_serf__get_prop</name><argument_list>(<argument><expr><name>props</name></expr></argument>, <argument><expr><name>remaining_path</name></expr></argument>,
+                                  <argument><expr>"DAV:"</expr></argument>, <argument><expr>"version-controlled-configuration"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr>!<name>vcc_url</name></expr>)</condition><then>
+    <block>{
+      <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_DAV_OPTIONS_REQ_FAILED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                              <argument><expr><call><name>_</name><argument_list>(<argument><expr>"The OPTIONS response did not include the "
+                                "requested version-controlled-configuration "
+                                "value"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+
+  <comment type="block">/* Send the request to the baseline URL */</comment>
+  <expr_stmt><expr><name>relative_url</name> = <call><name>svn_ra_serf__get_prop</name><argument_list>(<argument><expr><name>props</name></expr></argument>, <argument><expr><name>remaining_path</name></expr></argument>,
+                                       <argument><expr><name>SVN_DAV_PROP_NS_DAV</name></expr></argument>,
+                                       <argument><expr>"baseline-relative-path"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr>!<name>relative_url</name></expr>)</condition><then>
+    <block>{
+      <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_DAV_OPTIONS_REQ_FAILED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                              <argument><expr><call><name>_</name><argument_list>(<argument><expr>"The OPTIONS response did not include the "
+                                "requested baseline-relative-path value"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+  <expr_stmt><expr><name>relative_url</name> = <call><name>svn_path_join</name><argument_list>(<argument><expr><name>relative_url</name></expr></argument>,
+                               <argument><expr><call><name>svn_path_uri_decode</name><argument_list>(<argument><expr><name>lopped_path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>,
+                               <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name>end</name> == <name>SVN_INVALID_REVNUM</name></expr>)</condition><then>
+    <block>{
+     <comment type="block">/* Use the "checked-in" property to determine the baseline url of the HEAD
+        revision. */</comment>
+     <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_ra_serf__retrieve_props</name><argument_list>(<argument><expr><name>props</name></expr></argument>, <argument><expr><name>session</name></expr></argument>, <argument><expr><name><name>session</name>-&gt;<name>conns</name><index>[<expr>0</expr>]</index></name></expr></argument>,
+                                          <argument><expr><name>vcc_url</name></expr></argument>, <argument><expr><name>SVN_INVALID_REVNUM</name></expr></argument>, <argument><expr>"0"</expr></argument>,
+                                          <argument><expr><name>checked_in_props</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name>baseline_url</name> = <call><name>svn_ra_serf__get_prop</name><argument_list>(<argument><expr><name>props</name></expr></argument>, <argument><expr><name>vcc_url</name></expr></argument>, <argument><expr>"DAV:"</expr></argument>, <argument><expr>"checked-in"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <if>if <condition>(<expr>!<name>baseline_url</name></expr>)</condition><then>
+        <block>{
+          <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_DAV_OPTIONS_REQ_FAILED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                  <argument><expr><call><name>_</name><argument_list>(<argument><expr>"The OPTIONS response did not include the "
+                                    "requested checked-in value"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+        }</block></then></if>
+
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_ra_serf__retrieve_props</name><argument_list>(<argument><expr><name>props</name></expr></argument>, <argument><expr><name>session</name></expr></argument>, <argument><expr><name><name>session</name>-&gt;<name>conns</name><index>[<expr>0</expr>]</index></name></expr></argument>,
+                                          <argument><expr><name>baseline_url</name></expr></argument>, <argument><expr><name>SVN_INVALID_REVNUM</name></expr></argument>,
+                                          <argument><expr>"0"</expr></argument>, <argument><expr><name>baseline_props</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name>basecoll_url</name> = <call><name>svn_ra_serf__get_prop</name><argument_list>(<argument><expr><name>props</name></expr></argument>, <argument><expr><name>baseline_url</name></expr></argument>,
+                                           <argument><expr>"DAV:"</expr></argument>, <argument><expr>"baseline-collection"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else
+    <block>{
+      <comment type="block">/* We're asking for a specific revision. No need to use "checked-in"
+         here, request the baseline-collection property with the specified
+         revision in the 'Label' header (added in svn_ra_serf__retrieve_props).
+      */</comment>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_ra_serf__retrieve_props</name><argument_list>(<argument><expr><name>props</name></expr></argument>, <argument><expr><name>session</name></expr></argument>, <argument><expr><name><name>session</name>-&gt;<name>conns</name><index>[<expr>0</expr>]</index></name></expr></argument>,
+                                          <argument><expr><name>vcc_url</name></expr></argument>, <argument><expr><name>end</name></expr></argument>,
+                                          <argument><expr>"0"</expr></argument>, <argument><expr><name>baseline_props</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name>basecoll_url</name> = <call><name>svn_ra_serf__get_ver_prop</name><argument_list>(<argument><expr><name>props</name></expr></argument>, <argument><expr><name>vcc_url</name></expr></argument>, <argument><expr><name>end</name></expr></argument>,
+                                               <argument><expr>"DAV:"</expr></argument>, <argument><expr>"baseline-collection"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if>
+  <if>if <condition>(<expr>!<name>basecoll_url</name></expr>)</condition><then>
+    <block>{
+      <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_DAV_OPTIONS_REQ_FAILED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                              <argument><expr><call><name>_</name><argument_list>(<argument><expr>"The OPTIONS response did not include the "
+                                "requested baseline-collection value"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+
+  <expr_stmt><expr><name>req_url</name> = <call><name>svn_path_url_add_component</name><argument_list>(<argument><expr><name>basecoll_url</name></expr></argument>, <argument><expr><name>relative_url</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name>handler</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>handler</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name><name>handler</name>-&gt;<name>method</name></name> = "REPORT"</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>handler</name>-&gt;<name>path</name></name> = <name>req_url</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>handler</name>-&gt;<name>body_buckets</name></name> = <name>buckets</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>handler</name>-&gt;<name>body_type</name></name> = "text/xml"</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>handler</name>-&gt;<name>conn</name></name> = <name><name>session</name>-&gt;<name>conns</name><index>[<expr>0</expr>]</index></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>handler</name>-&gt;<name>session</name></name> = <name>session</name></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name>parser_ctx</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>parser_ctx</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name><name>parser_ctx</name>-&gt;<name>pool</name></name> = <name>pool</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>parser_ctx</name>-&gt;<name>user_data</name></name> = <name>blame_ctx</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>parser_ctx</name>-&gt;<name>start</name></name> = <name>start_blame</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>parser_ctx</name>-&gt;<name>end</name></name> = <name>end_blame</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>parser_ctx</name>-&gt;<name>cdata</name></name> = <name>cdata_blame</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>parser_ctx</name>-&gt;<name>done</name></name> = &amp;<name><name>blame_ctx</name>-&gt;<name>done</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>parser_ctx</name>-&gt;<name>status_code</name></name> = &amp;<name>status_code</name></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name><name>handler</name>-&gt;<name>response_handler</name></name> = <name>svn_ra_serf__handle_xml_parser</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>handler</name>-&gt;<name>response_baton</name></name> = <name>parser_ctx</name></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>svn_ra_serf__request_create</name><argument_list>(<argument><expr><name>handler</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name>err</name> = <call><name>svn_ra_serf__context_run_wait</name><argument_list>(<argument><expr>&amp;<name><name>blame_ctx</name>-&gt;<name>done</name></name></expr></argument>, <argument><expr><name>session</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name><name>parser_ctx</name>-&gt;<name>error</name></name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name>err</name> = <name>SVN_NO_ERROR</name></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><name><name>parser_ctx</name>-&gt;<name>error</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <if>if <condition>(<expr><name>status_code</name> == 404</expr>)</condition><then>
+    <block>{
+      <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_RA_DAV_PATH_NOT_FOUND</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                               <argument><expr>"'%s' path not found"</expr></argument>,
+                               <argument><expr><name><name>handler</name>-&gt;<name>path</name></name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+  <return>return <expr><name>err</name></expr>;</return>
+}</block></function>
+</unit>

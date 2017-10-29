@@ -1,0 +1,627 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/cpython-2.6.1/source/Modules/_multiprocessing/semaphore.c"><comment type="block">/*
+ * A type which wraps a semaphore
+ *
+ * semaphore.c
+ *
+ * Copyright (c) 2006-2008, R Oudkerk --- see COPYING.txt
+ */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"multiprocessing.h"</cpp:file></cpp:include>
+
+<enum>enum <block>{ <decl><name>RECURSIVE_MUTEX</name></decl>, <decl><name>SEMAPHORE</name></decl> }</block>;</enum>
+
+<typedef>typedef <type><struct>struct <block>{
+	<decl_stmt><decl><type><name>PyObject_HEAD</name>
+	<name>SEM_HANDLE</name></type> <name>handle</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>long</name></type> <name>last_tid</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>count</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>maxvalue</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>kind</name></decl>;</decl_stmt>
+}</block></struct></type> <name>SemLockObject</name>;</typedef>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>ISMINE</name><parameter_list>(<param><type><name>o</name></type></param>)</parameter_list></cpp:macro> <cpp:value>(o-&gt;count &gt; 0 &amp;&amp; PyThread_get_thread_ident() == o-&gt;last_tid)</cpp:value></cpp:define>
+
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>MS_WINDOWS</name></cpp:ifdef>
+
+<comment type="block">/*
+ * Windows definitions
+ */</comment>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SEM_FAILED</name></cpp:macro> <cpp:value>NULL</cpp:value></cpp:define>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SEM_CLEAR_ERROR</name><parameter_list>()</parameter_list></cpp:macro> <cpp:value>SetLastError(0)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SEM_GET_LAST_ERROR</name><parameter_list>()</parameter_list></cpp:macro> <cpp:value>GetLastError()</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SEM_CREATE</name><parameter_list>(<param><type><name>name</name></type></param>, <param><type><name>val</name></type></param>, <param><type><name>max</name></type></param>)</parameter_list></cpp:macro> <cpp:value>CreateSemaphore(NULL, val, max, NULL)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SEM_CLOSE</name><parameter_list>(<param><type><name>sem</name></type></param>)</parameter_list></cpp:macro> <cpp:value>(CloseHandle(sem) ? 0 : -1)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SEM_GETVALUE</name><parameter_list>(<param><type><name>sem</name></type></param>, <param><type><name>pval</name></type></param>)</parameter_list></cpp:macro> <cpp:value>_GetSemaphoreValue(sem, pval)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SEM_UNLINK</name><parameter_list>(<param><type><name>name</name></type></param>)</parameter_list></cpp:macro> <cpp:value>0</cpp:value></cpp:define>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>_GetSemaphoreValue</name><parameter_list>(<param><decl><type><name>HANDLE</name></type> <name>handle</name></decl></param>, <param><decl><type><name>long</name> *</type><name>value</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>long</name></type> <name>previous</name></decl>;</decl_stmt>
+
+	<switch>switch <condition>(<expr><call><name>WaitForSingleObject</name><argument_list>(<argument><expr><name>handle</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>)</condition> <block>{
+	<case>case <expr><name>WAIT_OBJECT_0</name></expr>:
+		<if>if <condition>(<expr>!<call><name>ReleaseSemaphore</name><argument_list>(<argument><expr><name>handle</name></expr></argument>, <argument><expr>1</expr></argument>, <argument><expr>&amp;<name>previous</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+			<return>return <expr><name>MP_STANDARD_ERROR</name></expr>;</return></then></if>
+		<expr_stmt><expr>*<name>value</name> = <name>previous</name> + 1</expr>;</expr_stmt>
+		<return>return <expr>0</expr>;</return>
+	</case><case>case <expr><name>WAIT_TIMEOUT</name></expr>:
+		<expr_stmt><expr>*<name>value</name> = 0</expr>;</expr_stmt>
+		<return>return <expr>0</expr>;</return>
+	</case><default>default:
+		<return>return <expr><name>MP_STANDARD_ERROR</name></expr>;</return>
+	</default>}</block></switch>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>semlock_acquire</name><parameter_list>(<param><decl><type><name>SemLockObject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>kwds</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>int</name></type> <name>blocking</name> <init>= <expr>1</expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>double</name></type> <name>timeout</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>timeout_obj</name> <init>= <expr><name>Py_None</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>DWORD</name></type> <name>res</name></decl>, <decl><type ref="prev"/><name>full_msecs</name></decl>, <decl><type ref="prev"/><name>msecs</name></decl>, <decl><type ref="prev"/><name>start</name></decl>, <decl><type ref="prev"/><name>ticks</name></decl>;</decl_stmt>
+
+	<decl_stmt><decl><type><specifier>static</specifier> <name>char</name> *</type><name><name>kwlist</name><index>[]</index></name> <init>= <expr><block>{<expr>"block"</expr>, <expr>"timeout"</expr>, <expr><name>NULL</name></expr>}</block></expr></init></decl>;</decl_stmt>
+
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTupleAndKeywords</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr><name>kwds</name></expr></argument>, <argument><expr>"|iO"</expr></argument>, <argument><expr><name>kwlist</name></expr></argument>,
+					 <argument><expr>&amp;<name>blocking</name></expr></argument>, <argument><expr>&amp;<name>timeout_obj</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+	<comment type="block">/* calculate timeout */</comment>
+	<if>if <condition>(<expr>!<name>blocking</name></expr>)</condition><then> <block>{
+		<expr_stmt><expr><name>full_msecs</name> = 0</expr>;</expr_stmt>
+	}</block></then> <else>else <if>if <condition>(<expr><name>timeout_obj</name> == <name>Py_None</name></expr>)</condition><then> <block>{
+		<expr_stmt><expr><name>full_msecs</name> = <name>INFINITE</name></expr>;</expr_stmt>
+	}</block></then> <else>else <block>{
+		<expr_stmt><expr><name>timeout</name> = <call><name>PyFloat_AsDouble</name><argument_list>(<argument><expr><name>timeout_obj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<if>if <condition>(<expr><call><name>PyErr_Occurred</name><argument_list>()</argument_list></call></expr>)</condition><then>
+			<return>return <expr><name>NULL</name></expr>;</return></then></if>
+		<expr_stmt><expr><name>timeout</name> *= 1000.0</expr>;</expr_stmt>      <comment type="block">/* convert to millisecs */</comment>
+		<if>if <condition>(<expr><name>timeout</name> &lt; 0.0</expr>)</condition><then> <block>{
+			<expr_stmt><expr><name>timeout</name> = 0.0</expr>;</expr_stmt>
+		}</block></then> <else>else <if>if <condition>(<expr><name>timeout</name> &gt;= 0.5 * <name>INFINITE</name></expr>)</condition><then> <block>{ <comment type="block">/* 25 days */</comment>
+			<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_OverflowError</name></expr></argument>,
+					<argument><expr>"timeout is too large"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr><name>NULL</name></expr>;</return>
+		}</block></then></if></else></if>
+		<expr_stmt><expr><name>full_msecs</name> = <call>(<name>DWORD</name>)<argument_list>(<argument><expr><name>timeout</name> + 0.5</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	}</block></else></if></else></if>
+	
+	<comment type="block">/* check whether we already own the lock */</comment>
+	<if>if <condition>(<expr><name><name>self</name>-&gt;<name>kind</name></name> == <name>RECURSIVE_MUTEX</name> &amp;&amp; <call><name>ISMINE</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+		<expr_stmt><expr>++<name><name>self</name>-&gt;<name>count</name></name></expr>;</expr_stmt>
+		<expr_stmt><expr><name>Py_RETURN_TRUE</name></expr>;</expr_stmt>
+	}</block></then></if>
+
+	<comment type="block">/* check whether we can acquire without blocking */</comment>
+	<if>if <condition>(<expr><call><name>WaitForSingleObject</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>handle</name></name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call> == <name>WAIT_OBJECT_0</name></expr>)</condition><then> <block>{
+		<expr_stmt><expr><name><name>self</name>-&gt;<name>last_tid</name></name> = <call><name>GetCurrentThreadId</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr>++<name><name>self</name>-&gt;<name>count</name></name></expr>;</expr_stmt>
+		<expr_stmt><expr><name>Py_RETURN_TRUE</name></expr>;</expr_stmt>
+	}</block></then></if>
+	
+	<expr_stmt><expr><name>msecs</name> = <name>full_msecs</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name>start</name> = <call><name>GetTickCount</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+
+	<for>for ( <init>;</init> <condition>;</condition> <incr/>) <block>{
+		<decl_stmt><decl><type><name>HANDLE</name></type> <name><name>handles</name><index>[<expr>2</expr>]</index></name> <init>= <expr><block>{<expr><name><name>self</name>-&gt;<name>handle</name></name></expr>, <expr><name>sigint_event</name></expr>}</block></expr></init></decl>;</decl_stmt>
+		
+		<comment type="block">/* do the wait */</comment>
+		<function_decl><type><name>Py_BEGIN_ALLOW_THREADS</name></type>
+		<name>ResetEvent</name><parameter_list>(<param><decl><type><name>sigint_event</name></type></decl></param>)</parameter_list>;</function_decl>
+		<expr_stmt><expr><name>res</name> = <call><name>WaitForMultipleObjects</name><argument_list>(<argument><expr>2</expr></argument>, <argument><expr><name>handles</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>msecs</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<macro><name>Py_END_ALLOW_THREADS</name></macro>
+		
+		<comment type="block">/* handle result */</comment>
+		<if>if <condition>(<expr><name>res</name> != <name>WAIT_OBJECT_0</name> + 1</expr>)</condition><then>
+			<break>break;</break></then></if>
+		
+		<comment type="block">/* got SIGINT so give signal handler a chance to run */</comment>
+		<expr_stmt><expr><call><name>Sleep</name><argument_list>(<argument><expr>1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		
+		<comment type="block">/* if this is main thread let KeyboardInterrupt be raised */</comment>
+		<if>if <condition>(<expr><call><name>PyErr_CheckSignals</name><argument_list>()</argument_list></call></expr>)</condition><then>
+			<return>return <expr><name>NULL</name></expr>;</return></then></if>
+		
+		<comment type="block">/* recalculate timeout */</comment>
+		<if>if <condition>(<expr><name>msecs</name> != <name>INFINITE</name></expr>)</condition><then> <block>{
+			<expr_stmt><expr><name>ticks</name> = <call><name>GetTickCount</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+			<if>if <condition>(<expr><call>(<name>DWORD</name>)<argument_list>(<argument><expr><name>ticks</name> - <name>start</name></expr></argument>)</argument_list></call> &gt;= <name>full_msecs</name></expr>)</condition><then>
+				<expr_stmt><expr><name>Py_RETURN_FALSE</name></expr>;</expr_stmt></then></if>
+			<expr_stmt><expr><name>msecs</name> = <name>full_msecs</name> - (<name>ticks</name> - <name>start</name>)</expr>;</expr_stmt>
+		}</block></then></if>
+	}</block></for>
+	
+	<comment type="block">/* handle result */</comment>
+	<switch>switch <condition>(<expr><name>res</name></expr>)</condition> <block>{
+	<case>case <expr><name>WAIT_TIMEOUT</name></expr>:
+		<expr_stmt><expr><name>Py_RETURN_FALSE</name></expr>;</expr_stmt>
+	</case><case>case <expr><name>WAIT_OBJECT_0</name></expr>:
+		<expr_stmt><expr><name><name>self</name>-&gt;<name>last_tid</name></name> = <call><name>GetCurrentThreadId</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr>++<name><name>self</name>-&gt;<name>count</name></name></expr>;</expr_stmt>
+		<expr_stmt><expr><name>Py_RETURN_TRUE</name></expr>;</expr_stmt>
+	</case><case>case <expr><name>WAIT_FAILED</name></expr>:
+		<return>return <expr><call><name>PyErr_SetFromWindowsErr</name><argument_list>(<argument><expr>0</expr></argument>)</argument_list></call></expr>;</return>
+	</case><default>default:
+		<expr_stmt><expr><call><name>PyErr_Format</name><argument_list>(<argument><expr><name>PyExc_RuntimeError</name></expr></argument>, <argument><expr>"WaitForSingleObject() or "
+			     "WaitForMultipleObjects() gave unrecognized "
+			     "value %d"</expr></argument>, <argument><expr><name>res</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<return>return <expr><name>NULL</name></expr>;</return>
+	</default>}</block></switch>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>semlock_release</name><parameter_list>(<param><decl><type><name>SemLockObject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+	<if>if <condition>(<expr><name><name>self</name>-&gt;<name>kind</name></name> == <name>RECURSIVE_MUTEX</name></expr>)</condition><then> <block>{
+		<if>if <condition>(<expr>!<call><name>ISMINE</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+			<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_AssertionError</name></expr></argument>, <argument><expr>"attempt to "
+					"release recursive lock not owned "
+					"by thread"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr><name>NULL</name></expr>;</return>
+		}</block></then></if>
+		<if>if <condition>(<expr><name><name>self</name>-&gt;<name>count</name></name> &gt; 1</expr>)</condition><then> <block>{
+			<expr_stmt><expr>--<name><name>self</name>-&gt;<name>count</name></name></expr>;</expr_stmt>
+			<expr_stmt><expr><name>Py_RETURN_NONE</name></expr>;</expr_stmt>
+		}</block></then></if>
+		<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>count</name></name> == 1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	}</block></then></if>
+
+	<if>if <condition>(<expr>!<call><name>ReleaseSemaphore</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>handle</name></name></expr></argument>, <argument><expr>1</expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+		<if>if <condition>(<expr><call><name>GetLastError</name><argument_list>()</argument_list></call> == <name>ERROR_TOO_MANY_POSTS</name></expr>)</condition><then> <block>{
+			<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>, <argument><expr>"semaphore or lock "
+					"released too many times"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr><name>NULL</name></expr>;</return>
+		}</block></then> <else>else <block>{
+			<return>return <expr><call><name>PyErr_SetFromWindowsErr</name><argument_list>(<argument><expr>0</expr></argument>)</argument_list></call></expr>;</return>
+		}</block></else></if>
+	}</block></then></if>
+
+	<expr_stmt><expr>--<name><name>self</name>-&gt;<name>count</name></name></expr>;</expr_stmt>
+	<expr_stmt><expr><name>Py_RETURN_NONE</name></expr>;</expr_stmt>
+}</block></function>
+
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else> <comment type="block">/* !MS_WINDOWS */</comment>
+
+<comment type="block">/*
+ * Unix definitions
+ */</comment>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SEM_CLEAR_ERROR</name><parameter_list>()</parameter_list></cpp:macro></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SEM_GET_LAST_ERROR</name><parameter_list>()</parameter_list></cpp:macro> <cpp:value>0</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SEM_CREATE</name><parameter_list>(<param><type><name>name</name></type></param>, <param><type><name>val</name></type></param>, <param><type><name>max</name></type></param>)</parameter_list></cpp:macro> <cpp:value>sem_open(name, O_CREAT | O_EXCL, 0600, val)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SEM_CLOSE</name><parameter_list>(<param><type><name>sem</name></type></param>)</parameter_list></cpp:macro> <cpp:value>sem_close(sem)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SEM_GETVALUE</name><parameter_list>(<param><type><name>sem</name></type></param>, <param><type><name>pval</name></type></param>)</parameter_list></cpp:macro> <cpp:value>sem_getvalue(sem, pval)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SEM_UNLINK</name><parameter_list>(<param><type><name>name</name></type></param>)</parameter_list></cpp:macro> <cpp:value>sem_unlink(name)</cpp:value></cpp:define>
+
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>HAVE_BROKEN_SEM_UNLINK</name></expr></cpp:if>
+<cpp:define>#  <cpp:directive>define</cpp:directive> <cpp:macro><name>sem_unlink</name><parameter_list>(<param><type><name>name</name></type></param>)</parameter_list></cpp:macro> <cpp:value>0</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr>!<name>HAVE_SEM_TIMEDWAIT</name></expr></cpp:if>
+<cpp:define>#  <cpp:directive>define</cpp:directive> <cpp:macro><name>sem_timedwait</name><parameter_list>(<param><type><name>sem</name></type></param>,<param><type><name>deadline</name></type></param>)</parameter_list></cpp:macro> <cpp:value>sem_timedwait_save(sem,deadline,_save)</cpp:value></cpp:define>
+
+<function><type><name>int</name></type>
+<name>sem_timedwait_save</name><parameter_list>(<param><decl><type><name>sem_t</name> *</type><name>sem</name></decl></param>, <param><decl><type>struct <name>timespec</name> *</type><name>deadline</name></decl></param>, <param><decl><type><name>PyThreadState</name> *</type><name>_save</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>int</name></type> <name>res</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>unsigned</name> <name>long</name></type> <name>delay</name></decl>, <decl><type ref="prev"/><name>difference</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type>struct <name>timeval</name></type> <name>now</name></decl>, <decl><type ref="prev"/><name>tvdeadline</name></decl>, <decl><type ref="prev"/><name>tvdelay</name></decl>;</decl_stmt>
+
+	<expr_stmt><expr><name>errno</name> = 0</expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>tvdeadline</name>.<name>tv_sec</name></name> = <name><name>deadline</name>-&gt;<name>tv_sec</name></name></expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>tvdeadline</name>.<name>tv_usec</name></name> = <name><name>deadline</name>-&gt;<name>tv_nsec</name></name> / 1000</expr>;</expr_stmt>
+
+	<for>for (<init><expr><name>delay</name> = 0</expr> ;</init> <condition>;</condition> <incr><expr><name>delay</name> += 1000</expr></incr>) <block>{
+		<comment type="block">/* poll */</comment>
+		<if>if <condition>(<expr><call><name>sem_trywait</name><argument_list>(<argument><expr><name>sem</name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+			<return>return <expr>0</expr>;</return></then>
+		<else>else <if>if <condition>(<expr><name>errno</name> != <name>EAGAIN</name></expr>)</condition><then>
+			<return>return <expr><name>MP_STANDARD_ERROR</name></expr>;</return></then></if></else></if>
+
+		<comment type="block">/* get current time */</comment>
+		<if>if <condition>(<expr><call><name>gettimeofday</name><argument_list>(<argument><expr>&amp;<name>now</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+			<return>return <expr><name>MP_STANDARD_ERROR</name></expr>;</return></then></if>
+
+		<comment type="block">/* check for timeout */</comment>
+		<if>if <condition>(<expr><name><name>tvdeadline</name>.<name>tv_sec</name></name> &lt; <name><name>now</name>.<name>tv_sec</name></name> || 
+		    (<name><name>tvdeadline</name>.<name>tv_sec</name></name> == <name><name>now</name>.<name>tv_sec</name></name> &amp;&amp; 
+		     <name><name>tvdeadline</name>.<name>tv_usec</name></name> &lt;= <name><name>now</name>.<name>tv_usec</name></name>)</expr>)</condition><then> <block>{
+			<expr_stmt><expr><name>errno</name> = <name>ETIMEDOUT</name></expr>;</expr_stmt>
+			<return>return <expr><name>MP_STANDARD_ERROR</name></expr>;</return>
+		}</block></then></if>
+
+		<comment type="block">/* calculate how much time is left */</comment>
+		<expr_stmt><expr><name>difference</name> = (<name><name>tvdeadline</name>.<name>tv_sec</name></name> - <name><name>now</name>.<name>tv_sec</name></name>) * 1000000 + 
+			(<name><name>tvdeadline</name>.<name>tv_usec</name></name> - <name><name>now</name>.<name>tv_usec</name></name>)</expr>;</expr_stmt>
+
+		<comment type="block">/* check delay not too long -- maximum is 20 msecs */</comment>
+		<if>if <condition>(<expr><name>delay</name> &gt; 20000</expr>)</condition><then>
+			<expr_stmt><expr><name>delay</name> = 20000</expr>;</expr_stmt></then></if>
+		<if>if <condition>(<expr><name>delay</name> &gt; <name>difference</name></expr>)</condition><then>
+			<expr_stmt><expr><name>delay</name> = <name>difference</name></expr>;</expr_stmt></then></if>
+
+		<comment type="block">/* sleep */</comment>
+		<expr_stmt><expr><name><name>tvdelay</name>.<name>tv_sec</name></name> = <name>delay</name> / 1000000</expr>;</expr_stmt>
+		<expr_stmt><expr><name><name>tvdelay</name>.<name>tv_usec</name></name> = <name>delay</name> % 1000000</expr>;</expr_stmt>
+		<if>if <condition>(<expr><call><name>select</name><argument_list>(<argument><expr>0</expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr>&amp;<name>tvdelay</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+			<return>return <expr><name>MP_STANDARD_ERROR</name></expr>;</return></then></if>
+
+		<comment type="block">/* check for signals */</comment>
+		<decl_stmt><decl><type><name>Py_BLOCK_THREADS</name></type> 
+		<name>res</name> <init>= <expr><call><name>PyErr_CheckSignals</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<macro><name>Py_UNBLOCK_THREADS</name></macro>
+
+		<if>if <condition>(<expr><name>res</name></expr>)</condition><then> <block>{
+			<expr_stmt><expr><name>errno</name> = <name>EINTR</name></expr>;</expr_stmt>
+			<return>return <expr><name>MP_EXCEPTION_HAS_BEEN_SET</name></expr>;</return>
+		}</block></then></if>
+	}</block></for>
+}</block></function>
+
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* !HAVE_SEM_TIMEDWAIT */</comment>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>semlock_acquire</name><parameter_list>(<param><decl><type><name>SemLockObject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>kwds</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>int</name></type> <name>blocking</name> <init>= <expr>1</expr></init>, <name>res</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>double</name></type> <name>timeout</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>timeout_obj</name> <init>= <expr><name>Py_None</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type>struct <name>timespec</name></type> <name>deadline</name> <init>= <expr><block>{<expr>0</expr>}</block></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type>struct <name>timeval</name></type> <name>now</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>long</name></type> <name>sec</name></decl>, <decl><type ref="prev"/><name>nsec</name></decl>;</decl_stmt>
+
+	<decl_stmt><decl><type><specifier>static</specifier> <name>char</name> *</type><name><name>kwlist</name><index>[]</index></name> <init>= <expr><block>{<expr>"block"</expr>, <expr>"timeout"</expr>, <expr><name>NULL</name></expr>}</block></expr></init></decl>;</decl_stmt>
+
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTupleAndKeywords</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr><name>kwds</name></expr></argument>, <argument><expr>"|iO"</expr></argument>, <argument><expr><name>kwlist</name></expr></argument>,
+					 <argument><expr>&amp;<name>blocking</name></expr></argument>, <argument><expr>&amp;<name>timeout_obj</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+	<if>if <condition>(<expr><name><name>self</name>-&gt;<name>kind</name></name> == <name>RECURSIVE_MUTEX</name> &amp;&amp; <call><name>ISMINE</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+		<expr_stmt><expr>++<name><name>self</name>-&gt;<name>count</name></name></expr>;</expr_stmt>
+		<expr_stmt><expr><name>Py_RETURN_TRUE</name></expr>;</expr_stmt>
+	}</block></then></if>
+
+	<if>if <condition>(<expr><name>timeout_obj</name> != <name>Py_None</name></expr>)</condition><then> <block>{
+		<expr_stmt><expr><name>timeout</name> = <call><name>PyFloat_AsDouble</name><argument_list>(<argument><expr><name>timeout_obj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<if>if <condition>(<expr><call><name>PyErr_Occurred</name><argument_list>()</argument_list></call></expr>)</condition><then>
+			<return>return <expr><name>NULL</name></expr>;</return></then></if>
+		<if>if <condition>(<expr><name>timeout</name> &lt; 0.0</expr>)</condition><then>
+			<expr_stmt><expr><name>timeout</name> = 0.0</expr>;</expr_stmt></then></if>
+
+		<if>if <condition>(<expr><call><name>gettimeofday</name><argument_list>(<argument><expr>&amp;<name>now</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then> <block>{
+			<expr_stmt><expr><call><name>PyErr_SetFromErrno</name><argument_list>(<argument><expr><name>PyExc_OSError</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr><name>NULL</name></expr>;</return>
+		}</block></then></if>
+		<expr_stmt><expr><name>sec</name> = (<name>long</name>) <name>timeout</name></expr>;</expr_stmt>
+		<expr_stmt><expr><name>nsec</name> = <call>(<name>long</name>) <argument_list>(<argument><expr>1e9 * (<name>timeout</name> - <name>sec</name>) + 0.5</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><name><name>deadline</name>.<name>tv_sec</name></name> = <name><name>now</name>.<name>tv_sec</name></name> + <name>sec</name></expr>;</expr_stmt>
+		<expr_stmt><expr><name><name>deadline</name>.<name>tv_nsec</name></name> = <name><name>now</name>.<name>tv_usec</name></name> * 1000 + <name>nsec</name></expr>;</expr_stmt>
+		<expr_stmt><expr><name><name>deadline</name>.<name>tv_sec</name></name> += (<name><name>deadline</name>.<name>tv_nsec</name></name> / 1000000000)</expr>;</expr_stmt>
+		<expr_stmt><expr><name><name>deadline</name>.<name>tv_nsec</name></name> %= 1000000000</expr>;</expr_stmt>
+	}</block></then></if>
+
+	<do>do <block>{
+		<macro><name>Py_BEGIN_ALLOW_THREADS</name></macro>
+		<if>if <condition>(<expr><name>blocking</name> &amp;&amp; <name>timeout_obj</name> == <name>Py_None</name></expr>)</condition><then>
+			<expr_stmt><expr><name>res</name> = <call><name>sem_wait</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>handle</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+		<else>else <if>if <condition>(<expr>!<name>blocking</name></expr>)</condition><then>
+			<expr_stmt><expr><name>res</name> = <call><name>sem_trywait</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>handle</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+		<else>else
+			<expr_stmt><expr><name>res</name> = <call><name>sem_timedwait</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>handle</name></name></expr></argument>, <argument><expr>&amp;<name>deadline</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if></else></if>
+		<macro><name>Py_END_ALLOW_THREADS</name></macro>
+		<if>if <condition>(<expr><name>res</name> == <name>MP_EXCEPTION_HAS_BEEN_SET</name></expr>)</condition><then>
+			<break>break;</break></then></if>
+	}</block> while <condition>(<expr><name>res</name> &lt; 0 &amp;&amp; <name>errno</name> == <name>EINTR</name> &amp;&amp; !<call><name>PyErr_CheckSignals</name><argument_list>()</argument_list></call></expr>)</condition>;</do>
+
+	<if>if <condition>(<expr><name>res</name> &lt; 0</expr>)</condition><then> <block>{
+		<if>if <condition>(<expr><name>errno</name> == <name>EAGAIN</name> || <name>errno</name> == <name>ETIMEDOUT</name></expr>)</condition><then>
+			<expr_stmt><expr><name>Py_RETURN_FALSE</name></expr>;</expr_stmt></then>
+		<else>else <if>if <condition>(<expr><name>errno</name> == <name>EINTR</name></expr>)</condition><then>
+			<return>return <expr><name>NULL</name></expr>;</return></then>
+		<else>else
+			<return>return <expr><call><name>PyErr_SetFromErrno</name><argument_list>(<argument><expr><name>PyExc_OSError</name></expr></argument>)</argument_list></call></expr>;</return></else></if></else></if>
+	}</block></then></if>
+
+	<expr_stmt><expr>++<name><name>self</name>-&gt;<name>count</name></name></expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>last_tid</name></name> = <call><name>PyThread_get_thread_ident</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+
+	<expr_stmt><expr><name>Py_RETURN_TRUE</name></expr>;</expr_stmt>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>semlock_release</name><parameter_list>(<param><decl><type><name>SemLockObject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+	<if>if <condition>(<expr><name><name>self</name>-&gt;<name>kind</name></name> == <name>RECURSIVE_MUTEX</name></expr>)</condition><then> <block>{
+		<if>if <condition>(<expr>!<call><name>ISMINE</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+			<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_AssertionError</name></expr></argument>, <argument><expr>"attempt to "
+					"release recursive lock not owned "
+					"by thread"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr><name>NULL</name></expr>;</return>
+		}</block></then></if>
+		<if>if <condition>(<expr><name><name>self</name>-&gt;<name>count</name></name> &gt; 1</expr>)</condition><then> <block>{
+			<expr_stmt><expr>--<name><name>self</name>-&gt;<name>count</name></name></expr>;</expr_stmt>
+			<expr_stmt><expr><name>Py_RETURN_NONE</name></expr>;</expr_stmt>
+		}</block></then></if>
+		<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>count</name></name> == 1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	}</block></then> <else>else <block>{
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>HAVE_BROKEN_SEM_GETVALUE</name></expr></cpp:if>
+		<comment type="block">/* We will only check properly the maxvalue == 1 case */</comment>
+		<if>if <condition>(<expr><name><name>self</name>-&gt;<name>maxvalue</name></name> == 1</expr>)</condition><then> <block>{
+			<comment type="block">/* make sure that already locked */</comment>
+			<if>if <condition>(<expr><call><name>sem_trywait</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>handle</name></name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then> <block>{
+				<if>if <condition>(<expr><name>errno</name> != <name>EAGAIN</name></expr>)</condition><then> <block>{
+					<expr_stmt><expr><call><name>PyErr_SetFromErrno</name><argument_list>(<argument><expr><name>PyExc_OSError</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+					<return>return <expr><name>NULL</name></expr>;</return>
+				}</block></then></if>
+				<comment type="block">/* it is already locked as expected */</comment>
+			}</block></then> <else>else <block>{
+				<comment type="block">/* it was not locked so undo wait and raise  */</comment>
+				<if>if <condition>(<expr><call><name>sem_post</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>handle</name></name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then> <block>{
+					<expr_stmt><expr><call><name>PyErr_SetFromErrno</name><argument_list>(<argument><expr><name>PyExc_OSError</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+					<return>return <expr><name>NULL</name></expr>;</return>
+				}</block></then></if>
+				<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>, <argument><expr>"semaphore "
+						"or lock released too many "
+						"times"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+				<return>return <expr><name>NULL</name></expr>;</return>
+			}</block></else></if>
+		}</block></then></if>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+		<decl_stmt><decl><type><name>int</name></type> <name>sval</name></decl>;</decl_stmt>
+
+		<comment type="block">/* This check is not an absolute guarantee that the semaphore
+		   does not rise above maxvalue. */</comment>
+		<if>if <condition>(<expr><call><name>sem_getvalue</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>handle</name></name></expr></argument>, <argument><expr>&amp;<name>sval</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then> <block>{
+			<return>return <expr><call><name>PyErr_SetFromErrno</name><argument_list>(<argument><expr><name>PyExc_OSError</name></expr></argument>)</argument_list></call></expr>;</return>
+		}</block></then> <else>else <if>if <condition>(<expr><name>sval</name> &gt;= <name><name>self</name>-&gt;<name>maxvalue</name></name></expr>)</condition><then> <block>{
+			<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>, <argument><expr>"semaphore or lock "
+					"released too many times"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr><name>NULL</name></expr>;</return>
+		}</block></then></if></else></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	}</block></else></if>
+
+	<if>if <condition>(<expr><call><name>sem_post</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>handle</name></name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+		<return>return <expr><call><name>PyErr_SetFromErrno</name><argument_list>(<argument><expr><name>PyExc_OSError</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+	<expr_stmt><expr>--<name><name>self</name>-&gt;<name>count</name></name></expr>;</expr_stmt>
+	<expr_stmt><expr><name>Py_RETURN_NONE</name></expr>;</expr_stmt>
+}</block></function>
+
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* !MS_WINDOWS */</comment>
+
+<comment type="block">/*
+ * All platforms
+ */</comment>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>newsemlockobject</name><parameter_list>(<param><decl><type><name>PyTypeObject</name> *</type><name>type</name></decl></param>, <param><decl><type><name>SEM_HANDLE</name></type> <name>handle</name></decl></param>, <param><decl><type><name>int</name></type> <name>kind</name></decl></param>, <param><decl><type><name>int</name></type> <name>maxvalue</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>SemLockObject</name> *</type><name>self</name></decl>;</decl_stmt>
+
+	<expr_stmt><expr><name>self</name> = <call><name>PyObject_New</name><argument_list>(<argument><expr><name>SemLockObject</name></expr></argument>, <argument><expr><name>type</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr>!<name>self</name></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>handle</name></name> = <name>handle</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>kind</name></name> = <name>kind</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>count</name></name> = 0</expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>last_tid</name></name> = 0</expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>maxvalue</name></name> = <name>maxvalue</name></expr>;</expr_stmt>
+	<return>return <expr>(<name>PyObject</name>*)<name>self</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>semlock_new</name><parameter_list>(<param><decl><type><name>PyTypeObject</name> *</type><name>type</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>kwds</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>char</name></type> <name><name>buffer</name><index>[<expr>256</expr>]</index></name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>SEM_HANDLE</name></type> <name>handle</name> <init>= <expr><name>SEM_FAILED</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>kind</name></decl>, <decl><type ref="prev"/><name>maxvalue</name></decl>, <decl><type ref="prev"/><name>value</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>result</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><specifier>static</specifier> <name>char</name> *</type><name><name>kwlist</name><index>[]</index></name> <init>= <expr><block>{<expr>"kind"</expr>, <expr>"value"</expr>, <expr>"maxvalue"</expr>, <expr><name>NULL</name></expr>}</block></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><specifier>static</specifier> <name>int</name></type> <name>counter</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTupleAndKeywords</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr><name>kwds</name></expr></argument>, <argument><expr>"iii"</expr></argument>, <argument><expr><name>kwlist</name></expr></argument>, 
+					 <argument><expr>&amp;<name>kind</name></expr></argument>, <argument><expr>&amp;<name>value</name></expr></argument>, <argument><expr>&amp;<name>maxvalue</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+	<if>if <condition>(<expr><name>kind</name> != <name>RECURSIVE_MUTEX</name> &amp;&amp; <name>kind</name> != <name>SEMAPHORE</name></expr>)</condition><then> <block>{
+		<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>, <argument><expr>"unrecognized kind"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<return>return <expr><name>NULL</name></expr>;</return>
+	}</block></then></if>
+
+	<expr_stmt><expr><call><name>PyOS_snprintf</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>buffer</name></expr></argument>)</argument_list></sizeof></expr></argument>, <argument><expr>"/mp%d-%d"</expr></argument>, <argument><expr><call><name>getpid</name><argument_list>()</argument_list></call></expr></argument>, <argument><expr><name>counter</name>++</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+	<expr_stmt><expr><call><name>SEM_CLEAR_ERROR</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>handle</name> = <call><name>SEM_CREATE</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>, <argument><expr><name>value</name></expr></argument>, <argument><expr><name>maxvalue</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<comment type="block">/* On Windows we should fail if GetLastError()==ERROR_ALREADY_EXISTS */</comment>
+	<if>if <condition>(<expr><name>handle</name> == <name>SEM_FAILED</name> || <call><name>SEM_GET_LAST_ERROR</name><argument_list>()</argument_list></call> != 0</expr>)</condition><then>
+		<goto>goto <name>failure</name>;</goto></then></if>
+
+	<if>if <condition>(<expr><call><name>SEM_UNLINK</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+		<goto>goto <name>failure</name>;</goto></then></if>
+
+	<expr_stmt><expr><name>result</name> = <call><name>newsemlockobject</name><argument_list>(<argument><expr><name>type</name></expr></argument>, <argument><expr><name>handle</name></expr></argument>, <argument><expr><name>kind</name></expr></argument>, <argument><expr><name>maxvalue</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr>!<name>result</name></expr>)</condition><then>
+		<goto>goto <name>failure</name>;</goto></then></if>
+
+	<return>return <expr><name>result</name></expr>;</return>
+
+  <label><name>failure</name>:</label>
+	<if>if <condition>(<expr><name>handle</name> != <name>SEM_FAILED</name></expr>)</condition><then>
+		<expr_stmt><expr><call><name>SEM_CLOSE</name><argument_list>(<argument><expr><name>handle</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+	<expr_stmt><expr><call><name>mp_SetError</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>MP_STANDARD_ERROR</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>semlock_rebuild</name><parameter_list>(<param><decl><type><name>PyTypeObject</name> *</type><name>type</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>SEM_HANDLE</name></type> <name>handle</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>kind</name></decl>, <decl><type ref="prev"/><name>maxvalue</name></decl>;</decl_stmt>
+
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr><name>F_SEM_HANDLE</name> "ii"</expr></argument>, 
+			      <argument><expr>&amp;<name>handle</name></expr></argument>, <argument><expr>&amp;<name>kind</name></expr></argument>, <argument><expr>&amp;<name>maxvalue</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+	<return>return <expr><call><name>newsemlockobject</name><argument_list>(<argument><expr><name>type</name></expr></argument>, <argument><expr><name>handle</name></expr></argument>, <argument><expr><name>kind</name></expr></argument>, <argument><expr><name>maxvalue</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>semlock_dealloc</name><parameter_list>(<param><decl><type><name>SemLockObject</name>*</type> <name>self</name></decl></param>)</parameter_list>
+<block>{
+	<if>if <condition>(<expr><name><name>self</name>-&gt;<name>handle</name></name> != <name>SEM_FAILED</name></expr>)</condition><then>
+		<expr_stmt><expr><call><name>SEM_CLOSE</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>handle</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+	<expr_stmt><expr><call><name>PyObject_Del</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>semlock_count</name><parameter_list>(<param><decl><type><name>SemLockObject</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+	<return>return <expr><call><name>PyInt_FromLong</name><argument_list>(<argument><expr>(<name>long</name>)<name><name>self</name>-&gt;<name>count</name></name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>semlock_ismine</name><parameter_list>(<param><decl><type><name>SemLockObject</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+	<comment type="block">/* only makes sense for a lock */</comment>
+	<return>return <expr><call><name>PyBool_FromLong</name><argument_list>(<argument><expr><call><name>ISMINE</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>semlock_getvalue</name><parameter_list>(<param><decl><type><name>SemLockObject</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>HAVE_BROKEN_SEM_GETVALUE</name></expr></cpp:if>
+	<expr_stmt><expr><call><name>PyErr_SetNone</name><argument_list>(<argument><expr><name>PyExc_NotImplementedError</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>NULL</name></expr>;</return>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+	<decl_stmt><decl><type><name>int</name></type> <name>sval</name></decl>;</decl_stmt>
+	<if>if <condition>(<expr><call><name>SEM_GETVALUE</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>handle</name></name></expr></argument>, <argument><expr>&amp;<name>sval</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+		<return>return <expr><call><name>mp_SetError</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>MP_STANDARD_ERROR</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	<comment type="block">/* some posix implementations use negative numbers to indicate 
+	   the number of waiting threads */</comment>
+	<if>if <condition>(<expr><name>sval</name> &lt; 0</expr>)</condition><then>
+		<expr_stmt><expr><name>sval</name> = 0</expr>;</expr_stmt></then></if>
+	<return>return <expr><call><name>PyInt_FromLong</name><argument_list>(<argument><expr>(<name>long</name>)<name>sval</name></expr></argument>)</argument_list></call></expr>;</return>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>semlock_iszero</name><parameter_list>(<param><decl><type><name>SemLockObject</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>int</name></type> <name>sval</name></decl>;</decl_stmt>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>HAVE_BROKEN_SEM_GETVALUE</name></expr></cpp:if>
+	<if>if <condition>(<expr><call><name>sem_trywait</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>handle</name></name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then> <block>{
+		<if>if <condition>(<expr><name>errno</name> == <name>EAGAIN</name></expr>)</condition><then>
+			<expr_stmt><expr><name>Py_RETURN_TRUE</name></expr>;</expr_stmt></then></if>
+		<return>return <expr><call><name>mp_SetError</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>MP_STANDARD_ERROR</name></expr></argument>)</argument_list></call></expr>;</return>
+	}</block></then> <else>else <block>{
+		<if>if <condition>(<expr><call><name>sem_post</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>handle</name></name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+			<return>return <expr><call><name>mp_SetError</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>MP_STANDARD_ERROR</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+		<expr_stmt><expr><name>Py_RETURN_FALSE</name></expr>;</expr_stmt>
+	}</block></else></if>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+	<if>if <condition>(<expr><call><name>SEM_GETVALUE</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>handle</name></name></expr></argument>, <argument><expr>&amp;<name>sval</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+		<return>return <expr><call><name>mp_SetError</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>MP_STANDARD_ERROR</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	<return>return <expr><call><name>PyBool_FromLong</name><argument_list>(<argument><expr>(<name>long</name>)<name>sval</name> == 0</expr></argument>)</argument_list></call></expr>;</return>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>semlock_afterfork</name><parameter_list>(<param><decl><type><name>SemLockObject</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>count</name></name> = 0</expr>;</expr_stmt>
+	<expr_stmt><expr><name>Py_RETURN_NONE</name></expr>;</expr_stmt>
+}</block></function>
+
+<comment type="block">/*
+ * Semaphore methods
+ */</comment>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyMethodDef</name></type> <name><name>semlock_methods</name><index>[]</index></name> <init>= <expr><block>{
+	<expr><block>{<expr>"acquire"</expr>, <expr>(<name>PyCFunction</name>)<name>semlock_acquire</name></expr>, <expr><name>METH_VARARGS</name> | <name>METH_KEYWORDS</name></expr>,
+	 <expr>"acquire the semaphore/lock"</expr>}</block></expr>,
+	<expr><block>{<expr>"release"</expr>, <expr>(<name>PyCFunction</name>)<name>semlock_release</name></expr>, <expr><name>METH_NOARGS</name></expr>, 
+	 <expr>"release the semaphore/lock"</expr>}</block></expr>,
+	<expr><block>{<expr>"__enter__"</expr>, <expr>(<name>PyCFunction</name>)<name>semlock_acquire</name></expr>, <expr><name>METH_VARARGS</name></expr>,
+	 <expr>"enter the semaphore/lock"</expr>}</block></expr>,
+	<expr><block>{<expr>"__exit__"</expr>, <expr>(<name>PyCFunction</name>)<name>semlock_release</name></expr>, <expr><name>METH_VARARGS</name></expr>, 
+	 <expr>"exit the semaphore/lock"</expr>}</block></expr>,
+	<expr><block>{<expr>"_count"</expr>, <expr>(<name>PyCFunction</name>)<name>semlock_count</name></expr>, <expr><name>METH_NOARGS</name></expr>, 
+	 <expr>"num of `acquire()`s minus num of `release()`s for this process"</expr>}</block></expr>,
+	<expr><block>{<expr>"_is_mine"</expr>, <expr>(<name>PyCFunction</name>)<name>semlock_ismine</name></expr>, <expr><name>METH_NOARGS</name></expr>, 
+	 <expr>"whether the lock is owned by this thread"</expr>}</block></expr>,
+	<expr><block>{<expr>"_get_value"</expr>, <expr>(<name>PyCFunction</name>)<name>semlock_getvalue</name></expr>, <expr><name>METH_NOARGS</name></expr>, 
+	 <expr>"get the value of the semaphore"</expr>}</block></expr>, 
+	<expr><block>{<expr>"_is_zero"</expr>, <expr>(<name>PyCFunction</name>)<name>semlock_iszero</name></expr>, <expr><name>METH_NOARGS</name></expr>, 
+	 <expr>"returns whether semaphore has value zero"</expr>}</block></expr>, 
+	<expr><block>{<expr>"_rebuild"</expr>, <expr>(<name>PyCFunction</name>)<name>semlock_rebuild</name></expr>, <expr><name>METH_VARARGS</name> | <name>METH_CLASS</name></expr>, 
+	 <expr>""</expr>}</block></expr>, 
+	<expr><block>{<expr>"_after_fork"</expr>, <expr>(<name>PyCFunction</name>)<name>semlock_afterfork</name></expr>, <expr><name>METH_NOARGS</name></expr>,
+	 <expr>"rezero the net acquisition count after fork()"</expr>}</block></expr>,
+	<expr><block>{<expr><name>NULL</name></expr>}</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+
+<comment type="block">/*
+ * Member table
+ */</comment>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyMemberDef</name></type> <name><name>semlock_members</name><index>[]</index></name> <init>= <expr><block>{
+	<expr><block>{<expr>"handle"</expr>, <expr><name>T_SEM_HANDLE</name></expr>, <expr><call><name>offsetof</name><argument_list>(<argument><expr><name>SemLockObject</name></expr></argument>, <argument><expr><name>handle</name></expr></argument>)</argument_list></call></expr>, <expr><name>READONLY</name></expr>, 
+	 <expr>""</expr>}</block></expr>,
+	<expr><block>{<expr>"kind"</expr>, <expr><name>T_INT</name></expr>, <expr><call><name>offsetof</name><argument_list>(<argument><expr><name>SemLockObject</name></expr></argument>, <argument><expr><name>kind</name></expr></argument>)</argument_list></call></expr>, <expr><name>READONLY</name></expr>, 
+	 <expr>""</expr>}</block></expr>,
+	<expr><block>{<expr>"maxvalue"</expr>, <expr><name>T_INT</name></expr>, <expr><call><name>offsetof</name><argument_list>(<argument><expr><name>SemLockObject</name></expr></argument>, <argument><expr><name>maxvalue</name></expr></argument>)</argument_list></call></expr>, <expr><name>READONLY</name></expr>, 
+	 <expr>""</expr>}</block></expr>,
+	<expr><block>{<expr><name>NULL</name></expr>}</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+
+<comment type="block">/*
+ * Semaphore type
+ */</comment>
+
+<decl_stmt><decl><type><name>PyTypeObject</name></type> <name>SemLockType</name> <init>= <expr><block>{
+	<expr><call><name>PyVarObject_HEAD_INIT</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call>
+	<comment type="block">/* tp_name           */</comment> "_multiprocessing.SemLock"</expr>,
+	<comment type="block">/* tp_basicsize      */</comment> <expr><sizeof>sizeof<argument_list>(<argument><expr><name>SemLockObject</name></expr></argument>)</argument_list></sizeof></expr>,
+	<comment type="block">/* tp_itemsize       */</comment> <expr>0</expr>,
+	<comment type="block">/* tp_dealloc        */</comment> <expr>(<name>destructor</name>)<name>semlock_dealloc</name></expr>,
+	<comment type="block">/* tp_print          */</comment> <expr>0</expr>,
+	<comment type="block">/* tp_getattr        */</comment> <expr>0</expr>,
+	<comment type="block">/* tp_setattr        */</comment> <expr>0</expr>,
+	<comment type="block">/* tp_compare        */</comment> <expr>0</expr>,
+	<comment type="block">/* tp_repr           */</comment> <expr>0</expr>,
+	<comment type="block">/* tp_as_number      */</comment> <expr>0</expr>,
+	<comment type="block">/* tp_as_sequence    */</comment> <expr>0</expr>,
+	<comment type="block">/* tp_as_mapping     */</comment> <expr>0</expr>,
+	<comment type="block">/* tp_hash           */</comment> <expr>0</expr>,
+	<comment type="block">/* tp_call           */</comment> <expr>0</expr>,
+	<comment type="block">/* tp_str            */</comment> <expr>0</expr>,
+	<comment type="block">/* tp_getattro       */</comment> <expr>0</expr>,
+	<comment type="block">/* tp_setattro       */</comment> <expr>0</expr>,
+	<comment type="block">/* tp_as_buffer      */</comment> <expr>0</expr>,
+	<comment type="block">/* tp_flags          */</comment> <expr><name>Py_TPFLAGS_DEFAULT</name> | <name>Py_TPFLAGS_BASETYPE</name></expr>,
+	<comment type="block">/* tp_doc            */</comment> <expr>"Semaphore/Mutex type"</expr>,
+	<comment type="block">/* tp_traverse       */</comment> <expr>0</expr>,
+	<comment type="block">/* tp_clear          */</comment> <expr>0</expr>,
+	<comment type="block">/* tp_richcompare    */</comment> <expr>0</expr>,
+	<comment type="block">/* tp_weaklistoffset */</comment> <expr>0</expr>,
+	<comment type="block">/* tp_iter           */</comment> <expr>0</expr>,
+	<comment type="block">/* tp_iternext       */</comment> <expr>0</expr>,
+	<comment type="block">/* tp_methods        */</comment> <expr><name>semlock_methods</name></expr>,
+	<comment type="block">/* tp_members        */</comment> <expr><name>semlock_members</name></expr>,
+	<comment type="block">/* tp_getset         */</comment> <expr>0</expr>,
+	<comment type="block">/* tp_base           */</comment> <expr>0</expr>,
+	<comment type="block">/* tp_dict           */</comment> <expr>0</expr>,
+	<comment type="block">/* tp_descr_get      */</comment> <expr>0</expr>,
+	<comment type="block">/* tp_descr_set      */</comment> <expr>0</expr>,
+	<comment type="block">/* tp_dictoffset     */</comment> <expr>0</expr>,
+	<comment type="block">/* tp_init           */</comment> <expr>0</expr>,
+	<comment type="block">/* tp_alloc          */</comment> <expr>0</expr>,
+	<comment type="block">/* tp_new            */</comment> <expr><name>semlock_new</name></expr>,
+}</block></expr></init></decl>;</decl_stmt>
+</unit>

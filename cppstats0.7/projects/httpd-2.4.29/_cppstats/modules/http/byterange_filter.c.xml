@@ -1,0 +1,439 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="modules/http/byterange_filter.c"><cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_strings.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_buckets.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_lib.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_signal.h"</cpp:file></cpp:include>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>APR_WANT_STDIO</name></cpp:macro></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>APR_WANT_STRFUNC</name></cpp:macro></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>APR_WANT_MEMFUNC</name></cpp:macro></cpp:define>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_want.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"util_filter.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"ap_config.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"httpd.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_config.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_core.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_protocol.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_main.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_request.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_vhost.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_log.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_date.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"util_charset.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"util_ebcdic.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"util_time.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"mod_core.h"</cpp:file></cpp:include>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_HAVE_STDARG_H</name></expr></cpp:if>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;stdarg.h&gt;</cpp:file></cpp:include>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_HAVE_UNISTD_H</name></expr></cpp:if>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;unistd.h&gt;</cpp:file></cpp:include>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr>!<call><name>defined</name><argument_list>(<argument><expr><name>AP_DEFAULT_MAX_RANGES</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>AP_DEFAULT_MAX_RANGES</name></cpp:macro> <cpp:value>200</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr>!<call><name>defined</name><argument_list>(<argument><expr><name>AP_DEFAULT_MAX_OVERLAPS</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>AP_DEFAULT_MAX_OVERLAPS</name></cpp:macro> <cpp:value>20</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr>!<call><name>defined</name><argument_list>(<argument><expr><name>AP_DEFAULT_MAX_REVERSALS</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>AP_DEFAULT_MAX_REVERSALS</name></cpp:macro> <cpp:value>20</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>MAX_PREALLOC_RANGES</name></cpp:macro> <cpp:value>100</cpp:value></cpp:define>
+<expr_stmt><expr><call><name>APLOG_USE_MODULE</name><argument_list>(<argument><expr><name>http</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<typedef>typedef <type><struct>struct <name>indexes_t</name> <block>{
+<decl_stmt><decl><type><name>apr_off_t</name></type> <name>start</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_off_t</name></type> <name>end</name></decl>;</decl_stmt>
+}</block></struct></type> <name>indexes_t</name>;</typedef>
+<function><type><specifier>static</specifier> <name>int</name></type> <name>ap_set_byterange</name><parameter_list>(<param><decl><type><name>request_rec</name> *</type><name>r</name></decl></param>, <param><decl><type><name>apr_off_t</name></type> <name>clength</name></decl></param>,
+<param><decl><type><name>apr_array_header_t</name> **</type><name>indexes</name></decl></param>,
+<param><decl><type><name>int</name> *</type><name>overlaps</name></decl></param>, <param><decl><type><name>int</name> *</type><name>reversals</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>range</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>ct</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>char</name> *</type><name>cur</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>merged</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>num_ranges</name> <init>= <expr>0</expr></init>, <name>unsatisfiable</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_off_t</name></type> <name>ostart</name> <init>= <expr>0</expr></init>, <name>oend</name> <init>= <expr>0</expr></init>, <name>sum_lengths</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>in_merge</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>indexes_t</name> *</type><name>idx</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>ranges</name> <init>= <expr>1</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>it</name></decl>;</decl_stmt>
+<expr_stmt><expr>*<name>overlaps</name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr>*<name>reversals</name> = 0</expr>;</expr_stmt>
+<if>if <condition>(<expr><name><name>r</name>-&gt;<name>assbackwards</name></name></expr>)</condition><then> <block>{
+<return>return <expr>0</expr>;</return>
+}</block></then></if>
+<if>if <condition>(<expr>!(<name>range</name> = <call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_in</name></name></expr></argument>, <argument><expr>"Range"</expr></argument>)</argument_list></call>)</expr>)</condition><then> <block>{
+<expr_stmt><expr><name>range</name> = <call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_in</name></name></expr></argument>, <argument><expr>"Request-Range"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+<if>if <condition>(<expr>!<name>range</name> || <call><name>strncasecmp</name><argument_list>(<argument><expr><name>range</name></expr></argument>, <argument><expr>"bytes="</expr></argument>, <argument><expr>6</expr></argument>)</argument_list></call> || <name><name>r</name>-&gt;<name>status</name></name> != <name>HTTP_OK</name></expr>)</condition><then> <block>{
+<return>return <expr>0</expr>;</return>
+}</block></then></if>
+<if>if <condition>(<expr><call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_out</name></name></expr></argument>, <argument><expr>"Content-Range"</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<return>return <expr>0</expr>;</return>
+}</block></then></if>
+<if>if <condition>(<expr>(<name>ct</name> = <call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_out</name></name></expr></argument>, <argument><expr>"Content-Type"</expr></argument>)</argument_list></call>)
+&amp;&amp; (!<call><name>strncasecmp</name><argument_list>(<argument><expr><name>ct</name></expr></argument>, <argument><expr>"multipart/byteranges"</expr></argument>, <argument><expr>20</expr></argument>)</argument_list></call>
+|| !<call><name>strncasecmp</name><argument_list>(<argument><expr><name>ct</name></expr></argument>, <argument><expr>"multipart/x-byteranges"</expr></argument>, <argument><expr>22</expr></argument>)</argument_list></call>)</expr>)</condition><then> <block>{
+<return>return <expr>0</expr>;</return>
+}</block></then></if>
+<if>if <condition>(<expr><name>AP_CONDITION_NOMATCH</name> == <call><name>ap_condition_if_range</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>headers_out</name></name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<return>return <expr>0</expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>range</name> += 6</expr>;</expr_stmt>
+<expr_stmt><expr><name>it</name> = <name>range</name></expr>;</expr_stmt>
+<while>while <condition>(<expr>*<name>it</name></expr>)</condition> <block>{
+<if>if <condition>(<expr>*<name>it</name>++ == ','</expr>)</condition><then> <block>{
+<expr_stmt><expr><name>ranges</name>++</expr>;</expr_stmt>
+}</block></then></if>
+}</block></while>
+<expr_stmt><expr><name>it</name> = <name>range</name></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>ranges</name> &gt; <name>MAX_PREALLOC_RANGES</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>ranges</name> = <name>MAX_PREALLOC_RANGES</name></expr>;</expr_stmt>
+}</block></then></if>
+<expr_stmt><expr>*<name>indexes</name> = <call><name>apr_array_make</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>ranges</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>indexes_t</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<while>while <condition>(<expr>(<name>cur</name> = <call><name>ap_getword</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>&amp;<name>range</name></expr></argument>, <argument><expr>','</expr></argument>)</argument_list></call>)</expr>)</condition> <block>{
+<decl_stmt><decl><type><name>char</name> *</type><name>dash</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>char</name> *</type><name>errp</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_off_t</name></type> <name>number</name></decl>, <decl><type ref="prev"/><name>start</name></decl>, <decl><type ref="prev"/><name>end</name></decl>;</decl_stmt>
+<if>if <condition>(<expr>!*<name>cur</name></expr>)</condition><then>
+<break>break;</break></then></if>
+<if>if <condition>(<expr>!(<name>dash</name> = <call><name>strchr</name><argument_list>(<argument><expr><name>cur</name></expr></argument>, <argument><expr>'-'</expr></argument>)</argument_list></call>)</expr>)</condition><then> <block>{
+<return>return <expr>0</expr>;</return>
+}</block></then></if>
+<if>if <condition>(<expr><name>dash</name> == <name>cur</name></expr>)</condition><then> <block>{
+<if>if <condition>(<expr><call><name>apr_strtoff</name><argument_list>(<argument><expr>&amp;<name>number</name></expr></argument>, <argument><expr><name>dash</name>+1</expr></argument>, <argument><expr>&amp;<name>errp</name></expr></argument>, <argument><expr>10</expr></argument>)</argument_list></call> || *<name>errp</name></expr>)</condition><then> <block>{
+<return>return <expr>0</expr>;</return>
+}</block></then></if>
+<if>if <condition>(<expr><name>number</name> &lt; 1</expr>)</condition><then> <block>{
+<return>return <expr>0</expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>start</name> = <name>clength</name> - <name>number</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>end</name> = <name>clength</name> - 1</expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr>*<name>dash</name>++ = '\0'</expr>;</expr_stmt>
+<if>if <condition>(<expr><call><name>apr_strtoff</name><argument_list>(<argument><expr>&amp;<name>number</name></expr></argument>, <argument><expr><name>cur</name></expr></argument>, <argument><expr>&amp;<name>errp</name></expr></argument>, <argument><expr>10</expr></argument>)</argument_list></call> || *<name>errp</name></expr>)</condition><then> <block>{
+<return>return <expr>0</expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>start</name> = <name>number</name></expr>;</expr_stmt>
+<if>if <condition>(<expr>*<name>dash</name></expr>)</condition><then> <block>{
+<if>if <condition>(<expr><call><name>apr_strtoff</name><argument_list>(<argument><expr>&amp;<name>number</name></expr></argument>, <argument><expr><name>dash</name></expr></argument>, <argument><expr>&amp;<name>errp</name></expr></argument>, <argument><expr>10</expr></argument>)</argument_list></call> || *<name>errp</name></expr>)</condition><then> <block>{
+<return>return <expr>0</expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>end</name> = <name>number</name></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>start</name> &gt; <name>end</name></expr>)</condition><then> <block>{
+<return>return <expr>0</expr>;</return>
+}</block></then></if>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name>end</name> = <name>clength</name> - 1</expr>;</expr_stmt>
+<if>if <condition>(<expr><name>start</name> == 0</expr>)</condition><then> <block>{
+<expr_stmt><expr><name>num_ranges</name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><name>sum_lengths</name> = 0</expr>;</expr_stmt>
+<expr_stmt><expr><name>in_merge</name> = 1</expr>;</expr_stmt>
+<expr_stmt><expr><name>oend</name> = <name>end</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>ostart</name> = <name>start</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>apr_array_clear</name><argument_list>(<argument><expr>*<name>indexes</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+}</block></else></if>
+}</block></else></if>
+<if>if <condition>(<expr><name>start</name> &lt; 0</expr>)</condition><then> <block>{
+<expr_stmt><expr><name>start</name> = 0</expr>;</expr_stmt>
+}</block></then></if>
+<if>if <condition>(<expr><name>start</name> &gt;= <name>clength</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>unsatisfiable</name> = 1</expr>;</expr_stmt>
+<continue>continue;</continue>
+}</block></then></if>
+<if>if <condition>(<expr><name>end</name> &gt;= <name>clength</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>end</name> = <name>clength</name> - 1</expr>;</expr_stmt>
+}</block></then></if>
+<if>if <condition>(<expr>!<name>in_merge</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>ostart</name> = <name>start</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>oend</name> = <name>end</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>in_merge</name> = 1</expr>;</expr_stmt>
+<continue>continue;</continue>
+}</block></then></if>
+<expr_stmt><expr><name>in_merge</name> = 0</expr>;</expr_stmt>
+<if>if <condition>(<expr><name>start</name> &gt;= <name>ostart</name> &amp;&amp; <name>end</name> &lt;= <name>oend</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>in_merge</name> = 1</expr>;</expr_stmt>
+}</block></then></if>
+<if>if <condition>(<expr><name>start</name> &lt; <name>ostart</name> &amp;&amp; <name>end</name> &gt;= <name>ostart</name>-1</expr>)</condition><then> <block>{
+<expr_stmt><expr><name>ostart</name> = <name>start</name></expr>;</expr_stmt>
+<expr_stmt><expr>++*<name>reversals</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>in_merge</name> = 1</expr>;</expr_stmt>
+}</block></then></if>
+<if>if <condition>(<expr><name>end</name> &gt;= <name>oend</name> &amp;&amp; <name>start</name> &lt;= <name>oend</name>+1</expr> )</condition><then> <block>{
+<expr_stmt><expr><name>oend</name> = <name>end</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>in_merge</name> = 1</expr>;</expr_stmt>
+}</block></then></if>
+<if>if <condition>(<expr><name>in_merge</name></expr>)</condition><then> <block>{
+<expr_stmt><expr>++*<name>overlaps</name></expr>;</expr_stmt>
+<continue>continue;</continue>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name>idx</name> = (<name>indexes_t</name> *)<call><name>apr_array_push</name><argument_list>(<argument><expr>*<name>indexes</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>idx</name>-&gt;<name>start</name></name> = <name>ostart</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>idx</name>-&gt;<name>end</name></name> = <name>oend</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>sum_lengths</name> += <name>oend</name> - <name>ostart</name> + 1</expr>;</expr_stmt>
+<expr_stmt><expr><name>in_merge</name> = 1</expr>;</expr_stmt>
+<expr_stmt><expr><name>ostart</name> = <name>start</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>oend</name> = <name>end</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>num_ranges</name>++</expr>;</expr_stmt>
+}</block></else></if>
+}</block></while>
+<if>if <condition>(<expr><name>in_merge</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>idx</name> = (<name>indexes_t</name> *)<call><name>apr_array_push</name><argument_list>(<argument><expr>*<name>indexes</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>idx</name>-&gt;<name>start</name></name> = <name>ostart</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>idx</name>-&gt;<name>end</name></name> = <name>oend</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>sum_lengths</name> += <name>oend</name> - <name>ostart</name> + 1</expr>;</expr_stmt>
+<expr_stmt><expr><name>num_ranges</name>++</expr>;</expr_stmt>
+}</block></then> <else>else <if>if <condition>(<expr><name>num_ranges</name> == 0 &amp;&amp; <name>unsatisfiable</name></expr>)</condition><then> <block>{
+<return>return <expr>-1</expr>;</return>
+}</block></then></if></else></if>
+<if>if <condition>(<expr><name>sum_lengths</name> &gt; <name>clength</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>ap_log_rerror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_TRACE1</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>r</name></expr></argument>,
+<argument><expr>"Sum of ranges larger than file, ignoring."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr>0</expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>merged</name> = <call><name>apr_array_make</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>num_ranges</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>char</name> *</expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>idx</name> = <call>(<name>indexes_t</name> *)<argument_list>(<argument><expr>*<name>indexes</name></expr></argument>)</argument_list></call>-&gt;<name>elts</name></expr>;</expr_stmt>
+<for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name>(*<name>indexes</name>)-&gt;<name>nelts</name></name></expr>;</condition> <incr><expr><name>i</name>++</expr>, <expr><name>idx</name>++</expr></incr>) <block>{
+<decl_stmt><decl><type><name>char</name> **</type><name>new</name> <init>= <expr>(<name>char</name> **)<call><name>apr_array_push</name><argument_list>(<argument><expr><name>merged</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr>*<name>new</name> = <call><name>apr_psprintf</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>"%" <name>APR_OFF_T_FMT</name> "-%" <name>APR_OFF_T_FMT</name></expr></argument>,
+<argument><expr><name><name>idx</name>-&gt;<name>start</name></name></expr></argument>, <argument><expr><name><name>idx</name>-&gt;<name>end</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></for>
+<expr_stmt><expr><name><name>r</name>-&gt;<name>status</name></name> = <name>HTTP_PARTIAL_CONTENT</name></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>r</name>-&gt;<name>range</name></name> = <call><name>apr_array_pstrcat</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>merged</name></expr></argument>, <argument><expr>','</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>ap_log_rerror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_DEBUG</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>r</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>01583</expr></argument>)</argument_list></call>
+"Range: %s | %s (%d : %d : %"<name>APR_OFF_T_FMT</name>")"</expr></argument>,
+<argument><expr><name>it</name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>range</name></name></expr></argument>, <argument><expr>*<name>overlaps</name></expr></argument>, <argument><expr>*<name>reversals</name></expr></argument>, <argument><expr><name>clength</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>num_ranges</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>int</name></type> <name>use_range_x</name><parameter_list>(<param><decl><type><name>request_rec</name> *</type><name>r</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>ua</name></decl>;</decl_stmt>
+<return>return <expr>(<call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_in</name></name></expr></argument>, <argument><expr>"Request-Range"</expr></argument>)</argument_list></call>
+|| ((<name>ua</name> = <call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_in</name></name></expr></argument>, <argument><expr>"User-Agent"</expr></argument>)</argument_list></call>)
+&amp;&amp; <call><name>ap_strstr_c</name><argument_list>(<argument><expr><name>ua</name></expr></argument>, <argument><expr>"MSIE 3"</expr></argument>)</argument_list></call>))</expr>;</return>
+}</block></function>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>BYTERANGE_FMT</name></cpp:macro> <cpp:value>"%" APR_OFF_T_FMT "-%" APR_OFF_T_FMT "/%" APR_OFF_T_FMT</cpp:value></cpp:define>
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>copy_brigade_range</name><parameter_list>(<param><decl><type><name>apr_bucket_brigade</name> *</type><name>bb</name></decl></param>,
+<param><decl><type><name>apr_bucket_brigade</name> *</type><name>bbout</name></decl></param>,
+<param><decl><type><name>apr_off_t</name></type> <name>start</name></decl></param>,
+<param><decl><type><name>apr_off_t</name></type> <name>end</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>apr_bucket</name> *</type><name>first</name> <init>= <expr><name>NULL</name></expr></init>, *<name>last</name> <init>= <expr><name>NULL</name></expr></init>, *<name>out_first</name> <init>= <expr><name>NULL</name></expr></init>, *<name>e</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_uint64_t</name></type> <name>pos</name> <init>= <expr>0</expr></init>, <name>off_first</name> <init>= <expr>0</expr></init>, <name>off_last</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_uint64_t</name></type> <name>start64</name></decl>, <decl><type ref="prev"/><name>end64</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_off_t</name></type> <name>pofft</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><name>start64</name> = (<name>apr_uint64_t</name>)<name>start</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>end64</name> = (<name>apr_uint64_t</name>)<name>end</name></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>start</name> &lt; 0 || <name>end</name> &lt; 0 || <name>start64</name> &gt; <name>end64</name></expr>)</condition><then>
+<return>return <expr><name>APR_EINVAL</name></expr>;</return></then></if>
+<for>for (<init><expr><name>e</name> = <call><name>APR_BRIGADE_FIRST</name><argument_list>(<argument><expr><name>bb</name></expr></argument>)</argument_list></call></expr>;</init>
+<condition><expr><name>e</name> != <call><name>APR_BRIGADE_SENTINEL</name><argument_list>(<argument><expr><name>bb</name></expr></argument>)</argument_list></call></expr>;</condition>
+<incr><expr><name>e</name> = <call><name>APR_BUCKET_NEXT</name><argument_list>(<argument><expr><name>e</name></expr></argument>)</argument_list></call></expr></incr>) <block>{
+<decl_stmt><decl><type><name>apr_uint64_t</name></type> <name>elen64</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>AP_DEBUG_ASSERT</name><argument_list>(<argument><expr><name><name>e</name>-&gt;<name>length</name></name> != <call>(<name>apr_size_t</name>)<argument_list>(<argument><expr>-1</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>elen64</name> = (<name>apr_uint64_t</name>)<name><name>e</name>-&gt;<name>length</name></name></expr>;</expr_stmt>
+<if>if <condition>(<expr>!<name>first</name> &amp;&amp; (<name>elen64</name> + <name>pos</name> &gt; <name>start64</name>)</expr>)</condition><then> <block>{
+<expr_stmt><expr><name>first</name> = <name>e</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>off_first</name> = <name>pos</name></expr>;</expr_stmt>
+}</block></then></if>
+<if>if <condition>(<expr><name>elen64</name> + <name>pos</name> &gt; <name>end64</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>last</name> = <name>e</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>off_last</name> = <name>pos</name></expr>;</expr_stmt>
+<break>break;</break>
+}</block></then></if>
+<expr_stmt><expr><name>pos</name> += <name>elen64</name></expr>;</expr_stmt>
+}</block></for>
+<if>if <condition>(<expr>!<name>first</name> || !<name>last</name></expr>)</condition><then>
+<return>return <expr><name>APR_EINVAL</name></expr>;</return></then></if>
+<expr_stmt><expr><name>e</name> = <name>first</name></expr>;</expr_stmt>
+<while>while <condition>(<expr>1</expr>)</condition> <block>{
+<decl_stmt><decl><type><name>apr_bucket</name> *</type><name>copy</name></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>AP_DEBUG_ASSERT</name><argument_list>(<argument><expr><name>e</name> != <call><name>APR_BRIGADE_SENTINEL</name><argument_list>(<argument><expr><name>bb</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>rv</name> = <call><name>apr_bucket_copy</name><argument_list>(<argument><expr><name>e</name></expr></argument>, <argument><expr>&amp;<name>copy</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>apr_brigade_cleanup</name><argument_list>(<argument><expr><name>bbout</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>rv</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><call><name>APR_BRIGADE_INSERT_TAIL</name><argument_list>(<argument><expr><name>bbout</name></expr></argument>, <argument><expr><name>copy</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>e</name> == <name>first</name></expr>)</condition><then> <block>{
+<if>if <condition>(<expr><name>off_first</name> != <name>start64</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>rv</name> = <call><name>apr_bucket_split</name><argument_list>(<argument><expr><name>copy</name></expr></argument>, <argument><expr><call>(<name>apr_size_t</name>)<argument_list>(<argument><expr><name>start64</name> - <name>off_first</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>apr_brigade_cleanup</name><argument_list>(<argument><expr><name>bbout</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>rv</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>out_first</name> = <call><name>APR_BUCKET_NEXT</name><argument_list>(<argument><expr><name>copy</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>apr_bucket_delete</name><argument_list>(<argument><expr><name>copy</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name>out_first</name> = <name>copy</name></expr>;</expr_stmt>
+}</block></else></if>
+}</block></then></if>
+<if>if <condition>(<expr><name>e</name> == <name>last</name></expr>)</condition><then> <block>{
+<if>if <condition>(<expr><name>e</name> == <name>first</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>off_last</name> += <name>start64</name> - <name>off_first</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>copy</name> = <name>out_first</name></expr>;</expr_stmt>
+}</block></then></if>
+<if>if <condition>(<expr><name>end64</name> - <name>off_last</name> != (<name>apr_uint64_t</name>)<name><name>e</name>-&gt;<name>length</name></name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>rv</name> = <call><name>apr_bucket_split</name><argument_list>(<argument><expr><name>copy</name></expr></argument>, <argument><expr><call>(<name>apr_size_t</name>)<argument_list>(<argument><expr><name>end64</name> + 1 - <name>off_last</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>apr_brigade_cleanup</name><argument_list>(<argument><expr><name>bbout</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>rv</name></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>copy</name> = <call><name>APR_BUCKET_NEXT</name><argument_list>(<argument><expr><name>copy</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>copy</name> != <call><name>APR_BRIGADE_SENTINEL</name><argument_list>(<argument><expr><name>bbout</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>apr_bucket_delete</name><argument_list>(<argument><expr><name>copy</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+}</block></then></if>
+<break>break;</break>
+}</block></then></if>
+<expr_stmt><expr><name>e</name> = <call><name>APR_BUCKET_NEXT</name><argument_list>(<argument><expr><name>e</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></while>
+<expr_stmt><expr><call><name>AP_DEBUG_ASSERT</name><argument_list>(<argument><expr><name>APR_SUCCESS</name> == <call><name>apr_brigade_length</name><argument_list>(<argument><expr><name>bbout</name></expr></argument>, <argument><expr>1</expr></argument>, <argument><expr>&amp;<name>pofft</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>pos</name> = (<name>apr_uint64_t</name>)<name>pofft</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>AP_DEBUG_ASSERT</name><argument_list>(<argument><expr><name>pos</name> == <name>end64</name> - <name>start64</name> + 1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>send_416</name><parameter_list>(<param><decl><type><name>ap_filter_t</name> *</type><name>f</name></decl></param>, <param><decl><type><name>apr_bucket_brigade</name> *</type><name>tmpbb</name></decl></param>)</parameter_list> <block>{
+<decl_stmt><decl><type><name>apr_bucket</name> *</type><name>e</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>conn_rec</name> *</type><name>c</name> <init>= <expr><name><name>f</name>-&gt;<name>r</name>-&gt;<name>connection</name></name></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>ap_remove_output_filter</name><argument_list>(<argument><expr><name>f</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name><name>f</name>-&gt;<name>r</name>-&gt;<name>status</name></name> = <name>HTTP_OK</name></expr>;</expr_stmt>
+<expr_stmt><expr><name>e</name> = <call><name>ap_bucket_error_create</name><argument_list>(<argument><expr><name>HTTP_RANGE_NOT_SATISFIABLE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+<argument><expr><name><name>f</name>-&gt;<name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>c</name>-&gt;<name>bucket_alloc</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>APR_BRIGADE_INSERT_TAIL</name><argument_list>(<argument><expr><name>tmpbb</name></expr></argument>, <argument><expr><name>e</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>e</name> = <call><name>apr_bucket_eos_create</name><argument_list>(<argument><expr><name><name>c</name>-&gt;<name>bucket_alloc</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>APR_BRIGADE_INSERT_TAIL</name><argument_list>(<argument><expr><name>tmpbb</name></expr></argument>, <argument><expr><name>e</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><call><name>ap_pass_brigade</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>next</name></name></expr></argument>, <argument><expr><name>tmpbb</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+<macro><name>AP_CORE_DECLARE_NONSTD</name><argument_list>(<argument>apr_status_t</argument>)</argument_list></macro> <macro><name>ap_byterange_filter</name><argument_list>(<argument>ap_filter_t *f</argument>,
+<argument>apr_bucket_brigade *bb</argument>)</argument_list></macro> <block>{
+<decl_stmt><decl><type><name>request_rec</name> *</type><name>r</name> <init>= <expr><name><name>f</name>-&gt;<name>r</name></name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>conn_rec</name> *</type><name>c</name> <init>= <expr><name><name>r</name>-&gt;<name>connection</name></name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_bucket</name> *</type><name>e</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_bucket_brigade</name> *</type><name>bsend</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_bucket_brigade</name> *</type><name>tmpbb</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_off_t</name></type> <name>range_start</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_off_t</name></type> <name>range_end</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_off_t</name></type> <name>clength</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>found</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>num_ranges</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>char</name> *</type><name>bound_head</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>indexes</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>indexes_t</name> *</type><name>idx</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>original_status</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>max_ranges</name></decl>, <decl><type ref="prev"/><name>max_overlaps</name></decl>, <decl><type ref="prev"/><name>max_reversals</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>overlaps</name> <init>= <expr>0</expr></init>, <name>reversals</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>core_dir_config</name> *</type><name>core_conf</name> <init>= <expr><call><name>ap_get_core_module_config</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>per_dir_config</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><name>max_ranges</name> = ( (<name><name>core_conf</name>-&gt;<name>max_ranges</name></name> &gt;= 0 || <name><name>core_conf</name>-&gt;<name>max_ranges</name></name> == <name>AP_MAXRANGES_UNLIMITED</name>)
+? <name><name>core_conf</name>-&gt;<name>max_ranges</name></name>
+: <name>AP_DEFAULT_MAX_RANGES</name> )</expr>;</expr_stmt>
+<expr_stmt><expr><name>max_overlaps</name> = ( (<name><name>core_conf</name>-&gt;<name>max_overlaps</name></name> &gt;= 0 || <name><name>core_conf</name>-&gt;<name>max_overlaps</name></name> == <name>AP_MAXRANGES_UNLIMITED</name>)
+? <name><name>core_conf</name>-&gt;<name>max_overlaps</name></name>
+: <name>AP_DEFAULT_MAX_OVERLAPS</name> )</expr>;</expr_stmt>
+<expr_stmt><expr><name>max_reversals</name> = ( (<name><name>core_conf</name>-&gt;<name>max_reversals</name></name> &gt;= 0 || <name><name>core_conf</name>-&gt;<name>max_reversals</name></name> == <name>AP_MAXRANGES_UNLIMITED</name>)
+? <name><name>core_conf</name>-&gt;<name>max_reversals</name></name>
+: <name>AP_DEFAULT_MAX_REVERSALS</name> )</expr>;</expr_stmt>
+<for>for (<init><expr><name>e</name> = <call><name>APR_BRIGADE_FIRST</name><argument_list>(<argument><expr><name>bb</name></expr></argument>)</argument_list></call></expr>;</init>
+<condition><expr>(<name>e</name> != <call><name>APR_BRIGADE_SENTINEL</name><argument_list>(<argument><expr><name>bb</name></expr></argument>)</argument_list></call> &amp;&amp; !<call><name>APR_BUCKET_IS_EOS</name><argument_list>(<argument><expr><name>e</name></expr></argument>)</argument_list></call>
+&amp;&amp; <name><name>e</name>-&gt;<name>length</name></name> != (<name>apr_size_t</name>)-1)</expr>;</condition>
+<incr><expr><name>e</name> = <call><name>APR_BUCKET_NEXT</name><argument_list>(<argument><expr><name>e</name></expr></argument>)</argument_list></call></expr></incr>) <block>{
+<expr_stmt><expr><name>clength</name> += <name><name>e</name>-&gt;<name>length</name></name></expr>;</expr_stmt>
+}</block></for>
+<if>if <condition>(<expr>!<call><name>APR_BUCKET_IS_EOS</name><argument_list>(<argument><expr><name>e</name></expr></argument>)</argument_list></call> || <name>clength</name> &lt;= 0</expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>ap_remove_output_filter</name><argument_list>(<argument><expr><name>f</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><call><name>ap_pass_brigade</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>next</name></name></expr></argument>, <argument><expr><name>bb</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>original_status</name> = <name><name>r</name>-&gt;<name>status</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name>num_ranges</name> = <call><name>ap_set_byterange</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><name>clength</name></expr></argument>, <argument><expr>&amp;<name>indexes</name></expr></argument>, <argument><expr>&amp;<name>overlaps</name></expr></argument>, <argument><expr>&amp;<name>reversals</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>num_ranges</name> == 0 ||
+(<name>max_ranges</name> &gt;= 0 &amp;&amp; <name>num_ranges</name> &gt; <name>max_ranges</name>) ||
+(<name>max_overlaps</name> &gt;= 0 &amp;&amp; <name>overlaps</name> &gt; <name>max_overlaps</name>) ||
+(<name>max_reversals</name> &gt;= 0 &amp;&amp; <name>reversals</name> &gt; <name>max_reversals</name>)</expr>)</condition><then> <block>{
+<expr_stmt><expr><name><name>r</name>-&gt;<name>status</name></name> = <name>original_status</name></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>ap_remove_output_filter</name><argument_list>(<argument><expr><name>f</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><call><name>ap_pass_brigade</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>next</name></name></expr></argument>, <argument><expr><name>bb</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></then></if>
+<expr_stmt><expr><name>bsend</name> = <call><name>apr_brigade_create</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>c</name>-&gt;<name>bucket_alloc</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>num_ranges</name> &lt; 0</expr>)</condition><then>
+<return>return <expr><call><name>send_416</name><argument_list>(<argument><expr><name>f</name></expr></argument>, <argument><expr><name>bsend</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+<if>if <condition>(<expr><name>num_ranges</name> &gt; 1</expr>)</condition><then> <block>{
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>orig_ct</name> <init>= <expr><call><name>ap_make_content_type</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>content_type</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+<expr_stmt><expr><call><name>ap_set_content_type</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><call><name>apr_pstrcat</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>"multipart"</expr></argument>,
+<argument><expr><call><name>use_range_x</name><argument_list>(<argument><expr><name>r</name></expr></argument>)</argument_list></call> ? "/x-" : "/"</expr></argument>,
+<argument><expr>"byteranges; boundary="</expr></argument>,
+<argument><expr><name>ap_multipart_boundary</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>orig_ct</name></expr>)</condition><then> <block>{
+<expr_stmt><expr><name>bound_head</name> = <call><name>apr_pstrcat</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>,
+<argument><expr><name>CRLF</name> "--"</expr></argument>, <argument><expr><name>ap_multipart_boundary</name></expr></argument>,
+<argument><expr><name>CRLF</name> "Content-type: "</expr></argument>,
+<argument><expr><name>orig_ct</name></expr></argument>,
+<argument><expr><name>CRLF</name> "Content-range: bytes "</expr></argument>,
+<argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<expr_stmt><expr><name>bound_head</name> = <call><name>apr_pstrcat</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>,
+<argument><expr><name>CRLF</name> "--"</expr></argument>, <argument><expr><name>ap_multipart_boundary</name></expr></argument>,
+<argument><expr><name>CRLF</name> "Content-range: bytes "</expr></argument>,
+<argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+<expr_stmt><expr><call><name>ap_xlate_proto_to_ascii</name><argument_list>(<argument><expr><name>bound_head</name></expr></argument>, <argument><expr><call><name>strlen</name><argument_list>(<argument><expr><name>bound_head</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+<expr_stmt><expr><name>tmpbb</name> = <call><name>apr_brigade_create</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>c</name>-&gt;<name>bucket_alloc</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>idx</name> = (<name>indexes_t</name> *)<name><name>indexes</name>-&gt;<name>elts</name></name></expr>;</expr_stmt>
+<for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name><name>indexes</name>-&gt;<name>nelts</name></name></expr>;</condition> <incr><expr><name>i</name>++</expr>, <expr><name>idx</name>++</expr></incr>) <block>{
+<expr_stmt><expr><name>range_start</name> = <name><name>idx</name>-&gt;<name>start</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name>range_end</name> = <name><name>idx</name>-&gt;<name>end</name></name></expr>;</expr_stmt>
+<expr_stmt><expr><name>rv</name> = <call><name>copy_brigade_range</name><argument_list>(<argument><expr><name>bb</name></expr></argument>, <argument><expr><name>tmpbb</name></expr></argument>, <argument><expr><name>range_start</name></expr></argument>, <argument><expr><name>range_end</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name></expr> )</condition><then> <block>{
+<expr_stmt><expr><call><name>ap_log_rerror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_ERR</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name>r</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>01584</expr></argument>)</argument_list></call>
+"copy_brigade_range() failed [%" <name>APR_OFF_T_FMT</name>
+"-%" <name>APR_OFF_T_FMT</name> ",%" <name>APR_OFF_T_FMT</name> "]"</expr></argument>,
+<argument><expr><name>range_start</name></expr></argument>, <argument><expr><name>range_end</name></expr></argument>, <argument><expr><name>clength</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<continue>continue;</continue>
+}</block></then></if>
+<expr_stmt><expr><name>found</name> = 1</expr>;</expr_stmt>
+<if>if <condition>(<expr><name>num_ranges</name> == 1</expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>apr_table_setn</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_out</name></name></expr></argument>, <argument><expr>"Content-Range"</expr></argument>,
+<argument><expr><call><name>apr_psprintf</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>"bytes " <name>BYTERANGE_FMT</name></expr></argument>,
+<argument><expr><name>range_start</name></expr></argument>, <argument><expr><name>range_end</name></expr></argument>, <argument><expr><name>clength</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then> <else>else <block>{
+<decl_stmt><decl><type><name>char</name> *</type><name>ts</name></decl>;</decl_stmt>
+<expr_stmt><expr><name>e</name> = <call><name>apr_bucket_pool_create</name><argument_list>(<argument><expr><name>bound_head</name></expr></argument>, <argument><expr><call><name>strlen</name><argument_list>(<argument><expr><name>bound_head</name></expr></argument>)</argument_list></call></expr></argument>,
+<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>c</name>-&gt;<name>bucket_alloc</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>APR_BRIGADE_INSERT_TAIL</name><argument_list>(<argument><expr><name>bsend</name></expr></argument>, <argument><expr><name>e</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>ts</name> = <macro><name>apr_psprintf</name><argument_list>(<argument>r-&gt;pool</argument>, <argument>BYTERANGE_FMT CRLF CRLF</argument>,
+<argument>range_start</argument>, <argument>range_end</argument>, <argument>clength</argument>)</argument_list></macro></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>ap_xlate_proto_to_ascii</name><argument_list>(<argument><expr><name>ts</name></expr></argument>, <argument><expr><call><name>strlen</name><argument_list>(<argument><expr><name>ts</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>e</name> = <call><name>apr_bucket_pool_create</name><argument_list>(<argument><expr><name>ts</name></expr></argument>, <argument><expr><call><name>strlen</name><argument_list>(<argument><expr><name>ts</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>,
+<argument><expr><name><name>c</name>-&gt;<name>bucket_alloc</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>APR_BRIGADE_INSERT_TAIL</name><argument_list>(<argument><expr><name>bsend</name></expr></argument>, <argument><expr><name>e</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></else></if>
+<expr_stmt><expr><call><name>APR_BRIGADE_CONCAT</name><argument_list>(<argument><expr><name>bsend</name></expr></argument>, <argument><expr><name>tmpbb</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr><name>i</name> &amp;&amp; !(<name>i</name> &amp; 0x1F)</expr>)</condition><then> <block>{
+<expr_stmt><expr><call><name>apr_table_unset</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_out</name></name></expr></argument>, <argument><expr>"Content-Length"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<if>if <condition>(<expr>(<name>rv</name> = <call><name>ap_pass_brigade</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>next</name></name></expr></argument>, <argument><expr><name>bsend</name></expr></argument>)</argument_list></call>) != <name>APR_SUCCESS</name></expr>)</condition><then>
+<return>return <expr><name>rv</name></expr>;</return></then></if>
+<expr_stmt><expr><call><name>apr_brigade_cleanup</name><argument_list>(<argument><expr><name>bsend</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+}</block></for>
+<if>if <condition>(<expr><name>found</name> == 0</expr>)</condition><then> <block>{
+<return>return <expr><call><name>send_416</name><argument_list>(<argument><expr><name>f</name></expr></argument>, <argument><expr><name>bsend</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></then></if>
+<if>if <condition>(<expr><name>num_ranges</name> &gt; 1</expr>)</condition><then> <block>{
+<decl_stmt><decl><type><name>char</name> *</type><name>end</name></decl>;</decl_stmt>
+<expr_stmt><expr><name>end</name> = <call><name>apr_pstrcat</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>CRLF</name> "--"</expr></argument>, <argument><expr><name>ap_multipart_boundary</name></expr></argument>, <argument><expr>"--" <name>CRLF</name></expr></argument>,
+<argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>ap_xlate_proto_to_ascii</name><argument_list>(<argument><expr><name>end</name></expr></argument>, <argument><expr><call><name>strlen</name><argument_list>(<argument><expr><name>end</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><name>e</name> = <call><name>apr_bucket_pool_create</name><argument_list>(<argument><expr><name>end</name></expr></argument>, <argument><expr><call><name>strlen</name><argument_list>(<argument><expr><name>end</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>c</name>-&gt;<name>bucket_alloc</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>APR_BRIGADE_INSERT_TAIL</name><argument_list>(<argument><expr><name>bsend</name></expr></argument>, <argument><expr><name>e</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></then></if>
+<expr_stmt><expr><name>e</name> = <call><name>apr_bucket_eos_create</name><argument_list>(<argument><expr><name><name>c</name>-&gt;<name>bucket_alloc</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>APR_BRIGADE_INSERT_TAIL</name><argument_list>(<argument><expr><name>bsend</name></expr></argument>, <argument><expr><name>e</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>apr_brigade_cleanup</name><argument_list>(<argument><expr><name>bb</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<expr_stmt><expr><call><name>apr_brigade_destroy</name><argument_list>(<argument><expr><name>tmpbb</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<return>return <expr><call><name>ap_pass_brigade</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>next</name></name></expr></argument>, <argument><expr><name>bsend</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block>
+</unit>

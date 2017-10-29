@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/cpython-2.6.1/source/Python/strtod.c"><cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"pyconfig.h"</cpp:file></cpp:include>
+
+<comment type="block">/* comp.sources.misc strtod(), as posted in comp.lang.tcl,
+   with bugfix for "123000.0" and acceptance of space after 'e' sign nuked.
+
+   ************************************************************
+   * YOU MUST EDIT THE MACHINE-DEPENDENT DEFINITIONS BELOW!!! *
+   ************************************************************
+*/</comment>
+
+<comment type="block">/*  File   : stdtod.c (Modified version of str2dbl.c)
+    Author : Richard A. O'Keefe @ Quintus Computer Systems, Inc.
+    Updated: Tuesday August 2nd, 1988
+    Defines: double strtod (char *str, char**ptr)
+*/</comment>
+
+<comment type="block">/*  This is an implementation of the strtod() function described in the 
+    System V manuals, with a different name to avoid linker problems.
+    All that str2dbl() does itself is check that the argument is well-formed
+    and is in range.  It leaves the work of conversion to atof(), which is
+    assumed to exist and deliver correct results (if they can be represented).
+
+    There are two reasons why this should be provided to the net:
+    (a) some UNIX systems do not yet have strtod(), or do not have it
+        available in the BSD "universe" (but they do have atof()).
+    (b) some of the UNIX systems that *do* have it get it wrong.
+	(some crash with large arguments, some assign the wrong *ptr value).
+    There is a reason why *we* are providing it: we need a correct version
+    of strtod(), and if we give this one away maybe someone will look for
+    mistakes in it and fix them for us (:-).
+*/</comment>
+    
+<comment type="block">/*  The following constants are machine-specific.  MD{MIN,MAX}EXPT are
+    integers and MD{MIN,MAX}FRAC are strings such that
+	0.${MDMAXFRAC}e${MDMAXEXPT} is the largest representable double,
+	0.${MDMINFRAC}e${MDMINEXPT} is the smallest representable +ve double
+    MD{MIN,MAX}FRAC must not have any trailing zeros.
+    The values here are for IEEE-754 64-bit floats.
+    It is not perfectly clear to me whether an IEEE infinity should be
+    returned for overflow, nor what a portable way of writing one is,
+    so HUGE is just 0.MAXFRAC*10**MAXEXPT (this seems still to be the
+    UNIX convention).
+
+    I do know about &lt;values.h&gt;, but the whole point of this file is that
+    we can't always trust that stuff to be there or to be correct.
+*/</comment>
+<decl_stmt><decl><type><specifier>static</specifier>	<name>int</name></type>	<name>MDMINEXPT</name>	<init>= <expr>-323</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier>	<name>char</name></type>	<name><name>MDMINFRAC</name><index>[]</index></name>	<init>= <expr>"494065645841246544"</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier>	<name>double</name></type>	<name>ZERO</name>		<init>= <expr>0.0</expr></init></decl>;</decl_stmt>
+
+<decl_stmt><decl><type><specifier>static</specifier>	<name>int</name></type>	<name>MDMAXEXPT</name>	<init>= <expr>309</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier>	<name>char</name></type>	<name><name>MDMAXFRAC</name><index>[]</index></name>	<init>= <expr>"17976931348623157"</expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier>	<name>double</name></type>	<name>HUGE</name>		<init>= <expr>1.7976931348623157e308</expr></init></decl>;</decl_stmt>
+
+<function_decl><type><specifier>extern</specifier>	<name>double</name></type>	<name>atof</name><parameter_list>(<param><decl><type><specifier>const</specifier></type> <name>char</name> *</decl></param>)</parameter_list>;</function_decl>		<comment type="block">/* Only called when result known to be ok */</comment>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>HAVE_ERRNO_H</name></cpp:ifdef>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;errno.h&gt;</cpp:file></cpp:include>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<decl_stmt><decl><type><specifier>extern</specifier>	<name>int</name></type>	<name>errno</name></decl>;</decl_stmt>
+
+<function><type><name>double</name></type> <name>strtod</name><parameter_list>(<param><decl><type><name>char</name> *</type><name>str</name></decl></param>, <param><decl><type><name>char</name> **</type><name>ptr</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>int</name></type> <name>sign</name></decl>, <decl><type ref="prev"/><name>scale</name></decl>, <decl><type ref="prev"/><name>dotseen</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>esign</name></decl>, <decl><type ref="prev"/><name>expt</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>char</name> *</type><name>save</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>register</name> <name>char</name> *</type><name>sp</name></decl>, *<decl><type ref="prev"/><name>dp</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>register</name> <name>int</name></type> <name>c</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>char</name> *</type><name>buforg</name></decl>, *<decl><type ref="prev"/><name>buflim</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>char</name></type> <name><name>buffer</name><index>[<expr>64</expr>]</index></name></decl>;</decl_stmt>		<comment type="block">/* 45-digit significant + */</comment>
+					<comment type="block">/* 13-digit exponent */</comment>
+	<expr_stmt><expr><name>sp</name> = <name>str</name></expr>;</expr_stmt>
+	<while>while <condition>(<expr>*<name>sp</name> == ' '</expr>)</condition> <expr_stmt><expr><name>sp</name>++</expr>;</expr_stmt></while>
+	<expr_stmt><expr><name>sign</name> = 1</expr>;</expr_stmt>
+	<if>if <condition>(<expr>*<name>sp</name> == '-'</expr>)</condition><then> <expr_stmt><expr><name>sign</name> -= 2</expr>, <expr><name>sp</name>++</expr>;</expr_stmt></then></if>
+	<expr_stmt><expr><name>dotseen</name> = 0</expr>, <expr><name>scale</name> = 0</expr>;</expr_stmt>
+	<expr_stmt><expr><name>dp</name> = <name>buffer</name></expr>;</expr_stmt>	
+	<expr_stmt><expr>*<name>dp</name>++ = '0'</expr>;</expr_stmt> <expr_stmt><expr>*<name>dp</name>++ = '.'</expr>;</expr_stmt>
+	<expr_stmt><expr><name>buforg</name> = <name>dp</name></expr>, <expr><name>buflim</name> = <name>buffer</name>+48</expr>;</expr_stmt>
+	<for>for (<init><expr><name>save</name> = <name>sp</name></expr>;</init> <condition><expr><name>c</name> = *<name>sp</name></expr>;</condition> <incr><expr><name>sp</name>++</expr></incr>)
+	    <if>if <condition>(<expr><name>c</name> == '.'</expr>)</condition><then> <block>{
+		<if>if <condition>(<expr><name>dotseen</name></expr>)</condition><then> <break>break;</break></then></if>
+		<expr_stmt><expr><name>dotseen</name>++</expr>;</expr_stmt>
+	    }</block></then> <else>else
+	    <if>if <condition>(<expr><call>(<name>unsigned</name>)<argument_list>(<argument><expr><name>c</name>-'0'</expr></argument>)</argument_list></call> &gt; <call>(<name>unsigned</name>)<argument_list>(<argument><expr>'9'-'0'</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+		<break>break;</break>
+	    }</block></then> <else>else
+	    <if>if <condition>(<expr><name>c</name> == '0'</expr>)</condition><then> <block>{
+		<if>if <condition>(<expr><name>dp</name> != <name>buforg</name></expr>)</condition><then> <block>{
+		    <comment type="block">/* This is not the first digit, so we want to keep it */</comment>
+		    <if>if <condition>(<expr><name>dp</name> &lt; <name>buflim</name></expr>)</condition><then> <expr_stmt><expr>*<name>dp</name>++ = <name>c</name></expr>;</expr_stmt></then></if>
+		    <if>if <condition>(<expr>!<name>dotseen</name></expr>)</condition><then> <expr_stmt><expr><name>scale</name>++</expr>;</expr_stmt></then></if>
+		}</block></then> <else>else <block>{
+		    <comment type="block">/* No non-zero digits seen yet */</comment>
+		    <comment type="block">/* If a . has been seen, scale must be adjusted */</comment>
+		    <if>if <condition>(<expr><name>dotseen</name></expr>)</condition><then> <expr_stmt><expr><name>scale</name>--</expr>;</expr_stmt></then></if>
+		}</block></else></if>
+	    }</block></then> <else>else <block>{
+		<comment type="block">/* This is a nonzero digit, so we want to keep it */</comment>
+		<if>if <condition>(<expr><name>dp</name> &lt; <name>buflim</name></expr>)</condition><then> <expr_stmt><expr>*<name>dp</name>++ = <name>c</name></expr>;</expr_stmt></then></if>
+		<comment type="block">/* If it precedes a ., scale must be adjusted */</comment>
+		<if>if <condition>(<expr>!<name>dotseen</name></expr>)</condition><then> <expr_stmt><expr><name>scale</name>++</expr>;</expr_stmt></then></if>
+	    }</block></else></if></else></if></else></if></for>
+	<if>if <condition>(<expr><name>sp</name> == <name>save</name></expr>)</condition><then> <block>{
+	    <if>if <condition>(<expr><name>ptr</name></expr>)</condition><then> <expr_stmt><expr>*<name>ptr</name> = <name>str</name></expr>;</expr_stmt></then></if>
+	    <expr_stmt><expr><name>errno</name> = <name>EDOM</name></expr>;</expr_stmt>		<comment type="block">/* what should this be? */</comment>
+	    <return>return <expr><name>ZERO</name></expr>;</return>
+	}</block></then></if>
+	
+	<while>while <condition>(<expr><name>dp</name> &gt; <name>buforg</name> &amp;&amp; <name><name>dp</name><index>[<expr>-1</expr>]</index></name> == '0'</expr>)</condition> <expr_stmt><expr>--<name>dp</name></expr>;</expr_stmt></while>
+	<if>if <condition>(<expr><name>dp</name> == <name>buforg</name></expr>)</condition><then> <expr_stmt><expr>*<name>dp</name>++ = '0'</expr>;</expr_stmt></then></if>
+	<expr_stmt><expr>*<name>dp</name> = '\0'</expr>;</expr_stmt>
+	<comment type="block">/*  Now the contents of buffer are
+	    +--+--------+-+--------+
+	    |0.|fraction|\|leftover|
+	    +--+--------+-+--------+
+			 ^dp points here
+	    where fraction begins with 0 iff it is "0", and has at most
+	    45 digits in it, and leftover is at least 16 characters.
+	*/</comment>
+	<expr_stmt><expr><name>save</name> = <name>sp</name></expr>, <expr><name>expt</name> = 0</expr>, <expr><name>esign</name> = 1</expr>;</expr_stmt>
+	<do>do <block>{
+	    <expr_stmt><expr><name>c</name> = *<name>sp</name>++</expr>;</expr_stmt>
+	    <if>if <condition>(<expr><name>c</name> != 'e' &amp;&amp; <name>c</name> != 'E'</expr>)</condition><then> <break>break;</break></then></if>
+	    <expr_stmt><expr><name>c</name> = *<name>sp</name>++</expr>;</expr_stmt>
+	    <if>if <condition>(<expr><name>c</name> == '-'</expr>)</condition><then> <expr_stmt><expr><name>esign</name> -= 2</expr>, <expr><name>c</name> = *<name>sp</name>++</expr>;</expr_stmt></then> <else>else
+	    <if>if <condition>(<expr><name>c</name> == '+'</expr> <comment type="block">/* || c == ' ' */</comment> )</condition><then> <expr_stmt><expr><name>c</name> = *<name>sp</name>++</expr>;</expr_stmt></then></if></else></if>
+	    <if>if <condition>(<expr><call>(<name>unsigned</name>)<argument_list>(<argument><expr><name>c</name>-'0'</expr></argument>)</argument_list></call> &gt; <call>(<name>unsigned</name>)<argument_list>(<argument><expr>'9'-'0'</expr></argument>)</argument_list></call></expr>)</condition><then> <break>break;</break></then></if>
+	    <while>while <condition>(<expr><name>c</name> == '0'</expr>)</condition> <expr_stmt><expr><name>c</name> = *<name>sp</name>++</expr>;</expr_stmt></while>
+	    <for>for (<init>;</init> <condition><expr><call>(<name>unsigned</name>)<argument_list>(<argument><expr><name>c</name>-'0'</expr></argument>)</argument_list></call> &lt;= <call>(<name>unsigned</name>)<argument_list>(<argument><expr>'9'-'0'</expr></argument>)</argument_list></call></expr>;</condition> <incr><expr><name>c</name> = *<name>sp</name>++</expr></incr>)
+		<expr_stmt><expr><name>expt</name> = <name>expt</name>*10 + <name>c</name>-'0'</expr>;</expr_stmt></for>	    
+	    <if>if <condition>(<expr><name>esign</name> &lt; 0</expr>)</condition><then> <expr_stmt><expr><name>expt</name> = -<name>expt</name></expr>;</expr_stmt></then></if>
+	    <expr_stmt><expr><name>save</name> = <name>sp</name>-1</expr>;</expr_stmt>
+	}</block> while <condition>(<expr>0</expr>)</condition>;</do>
+	<if>if <condition>(<expr><name>ptr</name></expr>)</condition><then> <expr_stmt><expr>*<name>ptr</name> = <name>save</name></expr>;</expr_stmt></then></if>
+	<expr_stmt><expr><name>expt</name> += <name>scale</name></expr>;</expr_stmt>
+	<comment type="block">/*  Now the number is sign*0.fraction*10**expt  */</comment>
+	<expr_stmt><expr><name>errno</name> = <name>ERANGE</name></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>expt</name> &gt; <name>MDMAXEXPT</name></expr>)</condition><then> <block>{
+	    <return>return <expr><name>HUGE</name>*<name>sign</name></expr>;</return>
+	}</block></then> <else>else
+	<if>if <condition>(<expr><name>expt</name> == <name>MDMAXEXPT</name></expr>)</condition><then> <block>{
+	    <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>buforg</name></expr></argument>, <argument><expr><name>MDMAXFRAC</name></expr></argument>)</argument_list></call> &gt; 0</expr>)</condition><then> <return>return <expr><name>HUGE</name>*<name>sign</name></expr>;</return></then></if>
+	}</block></then> <else>else
+	<if>if <condition>(<expr><name>expt</name> &lt; <name>MDMINEXPT</name></expr>)</condition><then> <block>{
+	    <return>return <expr><name>ZERO</name>*<name>sign</name></expr>;</return>
+	}</block></then> <else>else
+	<if>if <condition>(<expr><name>expt</name> == <name>MDMINEXPT</name></expr>)</condition><then> <block>{
+	    <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>buforg</name></expr></argument>, <argument><expr><name>MDMINFRAC</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then> <return>return <expr><name>ZERO</name>*<name>sign</name></expr>;</return></then></if>
+	}</block></then></if></else></if></else></if></else></if>
+	<comment type="block">/*  We have now established that the number can be  */</comment>
+	<comment type="block">/*  represented without overflow or underflow  */</comment>
+	<expr_stmt><expr>(<name>void</name>) <call><name>sprintf</name><argument_list>(<argument><expr><name>dp</name></expr></argument>, <argument><expr>"E%d"</expr></argument>, <argument><expr><name>expt</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>errno</name> = 0</expr>;</expr_stmt>
+	<return>return <expr><call><name>atof</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>)</argument_list></call>*<name>sign</name></expr>;</return>
+}</block></function>
+</unit>

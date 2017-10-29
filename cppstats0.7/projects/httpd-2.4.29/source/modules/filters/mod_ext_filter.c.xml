@@ -1,0 +1,958 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/httpd-2.4.29/modules/filters/mod_ext_filter.c"><comment type="block">/* Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */</comment>
+
+<comment type="block">/*
+ * mod_ext_filter allows Unix-style filters to filter http content.
+ */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"httpd.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_config.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_log.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_protocol.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_core.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_buckets.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"util_filter.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"util_script.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"util_time.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_strings.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_hash.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_lib.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_poll.h"</cpp:file></cpp:include>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>APR_WANT_STRFUNC</name></cpp:macro></cpp:define>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_want.h"</cpp:file></cpp:include>
+
+<typedef>typedef <type><struct>struct <name>ef_server_t</name> <block>{
+    <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_hash_t</name> *</type><name>h</name></decl>;</decl_stmt>
+}</block></struct></type> <name>ef_server_t</name>;</typedef>
+
+<typedef>typedef <type><struct>struct <name>ef_filter_t</name> <block>{
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>name</name></decl>;</decl_stmt>
+    <enum>enum <block>{<decl><name>INPUT_FILTER</name><init>=<expr>1</expr></init></decl>, <decl><name>OUTPUT_FILTER</name></decl>}</block> <decl><name>mode</name></decl>;</enum>
+    <decl_stmt><decl><type><name>ap_filter_type</name></type> <name>ftype</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>command</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>enable_env</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>disable_env</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name> **</type><name>args</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>intype</name></decl>;</decl_stmt>             <comment type="block">/* list of IMTs we process (well, just one for now) */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>INTYPE_ALL</name></cpp:macro> <cpp:value>(char *)1</cpp:value></cpp:define>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>outtype</name></decl>;</decl_stmt>            <comment type="block">/* IMT of filtered output */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>OUTTYPE_UNCHANGED</name></cpp:macro> <cpp:value>(char *)1</cpp:value></cpp:define>
+    <decl_stmt><decl><type><name>int</name></type> <name>preserves_content_length</name></decl>;</decl_stmt>
+}</block></struct></type> <name>ef_filter_t</name>;</typedef>
+
+<typedef>typedef <type><struct>struct <name>ef_dir_t</name> <block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>log_stderr</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>onfail</name></decl>;</decl_stmt>
+}</block></struct></type> <name>ef_dir_t</name>;</typedef>
+
+<typedef>typedef <type><struct>struct <name>ef_ctx_t</name> <block>{
+    <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_proc_t</name> *</type><name>proc</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_procattr_t</name> *</type><name>procattr</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>ef_dir_t</name> *</type><name>dc</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>ef_filter_t</name> *</type><name>filter</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>noop</name></decl>, <name>hit_eos</name>;</decl_stmt>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_FILES_AS_SOCKETS</name></expr></cpp:if>
+    <decl_stmt><decl><type><name>apr_pollset_t</name> *</type><name>pollset</name></decl>;</decl_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+}</block></struct></type> <name>ef_ctx_t</name>;</typedef>
+
+<decl_stmt><decl><type><name>module</name> <name>AP_MODULE_DECLARE_DATA</name></type> <name>ext_filter_module</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>server_rec</name> *</type><name>main_server</name></decl>;</decl_stmt>
+
+<function_decl><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>ef_output_filter</name><parameter_list>(<param><decl><type><name>ap_filter_t</name> *</type></decl></param>, <param><decl><type><name>apr_bucket_brigade</name> *</type></decl></param>)</parameter_list>;</function_decl>
+<function_decl><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>ef_input_filter</name><parameter_list>(<param><decl><type><name>ap_filter_t</name> *</type></decl></param>, <param><decl><type><name>apr_bucket_brigade</name> *</type></decl></param>,
+                                    <param><decl><type><name>ap_input_mode_t</name></type></decl></param>, <param><decl><type><name>apr_read_type_e</name></type></decl></param>,
+                                    <param><decl><type><name>apr_off_t</name></type></decl></param>)</parameter_list>;</function_decl>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>ERRFN_USERDATA_KEY</name></cpp:macro>         <cpp:value>"EXTFILTCHILDERRFN"</cpp:value></cpp:define>
+
+<function><type><specifier>static</specifier> <name>void</name> *</type><name>create_ef_dir_conf</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>, <param><decl><type><name>char</name> *</type><name>dummy</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>ef_dir_t</name> *</type><name>dc</name> <init>= <expr>(<name>ef_dir_t</name> *)<call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>ef_dir_t</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name><name>dc</name>-&gt;<name>log_stderr</name></name> = -1</expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>dc</name>-&gt;<name>onfail</name></name> = -1</expr>;</expr_stmt>
+
+    <return>return <expr><name>dc</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>void</name> *</type><name>create_ef_server_conf</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>, <param><decl><type><name>server_rec</name> *</type><name>s</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>ef_server_t</name> *</type><name>conf</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>conf</name> = (<name>ef_server_t</name> *)<call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>ef_server_t</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>conf</name>-&gt;<name>p</name></name> = <name>p</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>conf</name>-&gt;<name>h</name></name> = <call><name>apr_hash_make</name><argument_list>(<argument><expr><name><name>conf</name>-&gt;<name>p</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>conf</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>void</name> *</type><name>merge_ef_dir_conf</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>, <param><decl><type><name>void</name> *</type><name>basev</name></decl></param>, <param><decl><type><name>void</name> *</type><name>overridesv</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>ef_dir_t</name> *</type><name>a</name> <init>= <expr>(<name>ef_dir_t</name> *)<call><name>apr_pcalloc</name> <argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>ef_dir_t</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>ef_dir_t</name> *</type><name>base</name> <init>= <expr>(<name>ef_dir_t</name> *)<name>basev</name></expr></init>, *<name>over</name> <init>= <expr>(<name>ef_dir_t</name> *)<name>overridesv</name></expr></init></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr><name><name>over</name>-&gt;<name>log_stderr</name></name> != -1</expr>)</condition><then> <block>{   <comment type="block">/* if admin coded something... */</comment>
+        <expr_stmt><expr><name><name>a</name>-&gt;<name>log_stderr</name></name> = <name><name>over</name>-&gt;<name>log_stderr</name></name></expr>;</expr_stmt>
+    }</block></then>
+    <else>else <block>{
+        <expr_stmt><expr><name><name>a</name>-&gt;<name>log_stderr</name></name> = <name><name>base</name>-&gt;<name>log_stderr</name></name></expr>;</expr_stmt>
+    }</block></else></if>
+
+    <if>if <condition>(<expr><name><name>over</name>-&gt;<name>onfail</name></name> != -1</expr>)</condition><then> <block>{   <comment type="block">/* if admin coded something... */</comment>
+        <expr_stmt><expr><name><name>a</name>-&gt;<name>onfail</name></name> = <name><name>over</name>-&gt;<name>onfail</name></name></expr>;</expr_stmt>
+    }</block></then>
+    <else>else <block>{
+        <expr_stmt><expr><name><name>a</name>-&gt;<name>onfail</name></name> = <name><name>base</name>-&gt;<name>onfail</name></name></expr>;</expr_stmt>
+    }</block></else></if>
+
+    <return>return <expr><name>a</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *</type><name>add_options</name><parameter_list>(<param><decl><type><name>cmd_parms</name> *</type><name>cmd</name></decl></param>, <param><decl><type><name>void</name> *</type><name>in_dc</name></decl></param>,
+                               <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>arg</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>ef_dir_t</name> *</type><name>dc</name> <init>= <expr><name>in_dc</name></expr></init></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>!<call><name>strcasecmp</name><argument_list>(<argument><expr><name>arg</name></expr></argument>, <argument><expr>"LogStderr"</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name><name>dc</name>-&gt;<name>log_stderr</name></name> = 1</expr>;</expr_stmt>
+    }</block></then>
+    <else>else <if>if <condition>(<expr>!<call><name>strcasecmp</name><argument_list>(<argument><expr><name>arg</name></expr></argument>, <argument><expr>"NoLogStderr"</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name><name>dc</name>-&gt;<name>log_stderr</name></name> = 0</expr>;</expr_stmt>
+    }</block></then>
+    <else>else <if>if <condition>(<expr>!<call><name>strcasecmp</name><argument_list>(<argument><expr><name>arg</name></expr></argument>, <argument><expr>"Onfail=remove"</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name><name>dc</name>-&gt;<name>onfail</name></name> = 1</expr>;</expr_stmt>
+    }</block></then>
+    <else>else <if>if <condition>(<expr>!<call><name>strcasecmp</name><argument_list>(<argument><expr><name>arg</name></expr></argument>, <argument><expr>"Onfail=abort"</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name><name>dc</name>-&gt;<name>onfail</name></name> = 0</expr>;</expr_stmt>
+    }</block></then>
+    <else>else <block>{
+        <return>return <expr><call><name>apr_pstrcat</name><argument_list>(<argument><expr><name><name>cmd</name>-&gt;<name>temp_pool</name></name></expr></argument>,
+                           <argument><expr>"Invalid ExtFilterOptions option: "</expr></argument>,
+                           <argument><expr><name>arg</name></expr></argument>,
+                           <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></else></if></else></if></else></if></else></if>
+
+    <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *</type><name>parse_cmd</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>args</name></decl></param>, <param><decl><type><name>ef_filter_t</name> *</type><name>filter</name></decl></param>)</parameter_list>
+<block>{
+    <if>if <condition>(<expr>**<name>args</name> == '"'</expr>)</condition><then> <block>{
+        <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>start</name> <init>= <expr>*<name>args</name> + 1</expr></init></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>char</name> *</type><name>parms</name></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>int</name></type> <name>escaping</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+
+        <expr_stmt><expr>++*<name>args</name></expr>;</expr_stmt> <comment type="block">/* move past leading " */</comment>
+        <comment type="block">/* find true end of args string (accounting for escaped quotes) */</comment>
+        <while>while <condition>(<expr>**<name>args</name> &amp;&amp; (**<name>args</name> != '"' || (**<name>args</name> == '"' &amp;&amp; <name>escaping</name>))</expr>)</condition> <block>{
+            <if>if <condition>(<expr><name>escaping</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><name>escaping</name> = 0</expr>;</expr_stmt>
+            }</block></then>
+            <else>else <if>if <condition>(<expr>**<name>args</name> == '\\'</expr>)</condition><then> <block>{
+                <expr_stmt><expr><name>escaping</name> = 1</expr>;</expr_stmt>
+            }</block></then></if></else></if>
+            <expr_stmt><expr>++*<name>args</name></expr>;</expr_stmt>
+        }</block></while>
+        <if>if <condition>(<expr>**<name>args</name> != '"'</expr>)</condition><then> <block>{
+            <return>return <expr>"Expected cmd= delimiter"</expr>;</return>
+        }</block></then></if>
+        <comment type="block">/* copy *just* the arg string for parsing, */</comment>
+        <expr_stmt><expr><name>parms</name> = <call><name>apr_pstrndup</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>start</name></expr></argument>, <argument><expr>*<name>args</name> - <name>start</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr>++*<name>args</name></expr>;</expr_stmt> <comment type="block">/* move past trailing " */</comment>
+
+        <comment type="block">/* parse and tokenize the args. */</comment>
+        <expr_stmt><expr><name>rv</name> = <call><name>apr_tokenize_to_argv</name><argument_list>(<argument><expr><name>parms</name></expr></argument>, <argument><expr>&amp;(<name><name>filter</name>-&gt;<name>args</name></name>)</expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+            <return>return <expr>"cmd= parse error"</expr>;</return>
+        }</block></then></if>
+    }</block></then>
+    <else>else
+    <block>{
+        <comment type="block">/* simple path */</comment>
+        <comment type="block">/* Allocate space for two argv pointers and parse the args. */</comment>
+        <expr_stmt><expr><name><name>filter</name>-&gt;<name>args</name></name> = (<name>char</name> **)<call><name>apr_palloc</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>2 * <sizeof>sizeof<argument_list>(<argument><expr><name>char</name> *</expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>filter</name>-&gt;<name>args</name><index>[<expr>0</expr>]</index></name> = <call><name>ap_getword_white</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>args</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>filter</name>-&gt;<name>args</name><index>[<expr>1</expr>]</index></name> = <name>NULL</name></expr>;</expr_stmt> <comment type="block">/* end of args */</comment>
+    }</block></else></if>
+    <if>if <condition>(<expr>!<name><name>filter</name>-&gt;<name>args</name><index>[<expr>0</expr>]</index></name></expr>)</condition><then> <block>{
+        <return>return <expr>"Invalid cmd= parameter"</expr>;</return>
+    }</block></then></if>
+    <expr_stmt><expr><name><name>filter</name>-&gt;<name>command</name></name> = <name><name>filter</name>-&gt;<name>args</name><index>[<expr>0</expr>]</index></name></expr>;</expr_stmt>
+
+    <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *</type><name>define_filter</name><parameter_list>(<param><decl><type><name>cmd_parms</name> *</type><name>cmd</name></decl></param>, <param><decl><type><name>void</name> *</type><name>dummy</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>ef_server_t</name> *</type><name>conf</name> <init>= <expr><call><name>ap_get_module_config</name><argument_list>(<argument><expr><name><name>cmd</name>-&gt;<name>server</name>-&gt;<name>module_config</name></name></expr></argument>,
+                                             <argument><expr>&amp;<name>ext_filter_module</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>token</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>name</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name> *</type><name>normalized_name</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>ef_filter_t</name> *</type><name>filter</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>name</name> = <call><name>ap_getword_white</name><argument_list>(<argument><expr><name><name>cmd</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>&amp;<name>args</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr>!<name>name</name></expr>)</condition><then> <block>{
+        <return>return <expr>"Filter name not found"</expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/* During request processing, we find information about the filter
+     * by looking up the filter name provided by core server in our
+     * hash table.  But the core server has normalized the filter
+     * name by converting it to lower case.  Thus, when adding the
+     * filter to our hash table we have to use lower case as well.
+     */</comment>
+    <expr_stmt><expr><name>normalized_name</name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name><name>cmd</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>ap_str_tolower</name><argument_list>(<argument><expr><name>normalized_name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr><call><name>apr_hash_get</name><argument_list>(<argument><expr><name><name>conf</name>-&gt;<name>h</name></name></expr></argument>, <argument><expr><name>normalized_name</name></expr></argument>, <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <return>return <expr><call><name>apr_psprintf</name><argument_list>(<argument><expr><name><name>cmd</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>"ExtFilter %s is already defined"</expr></argument>,
+                            <argument><expr><name>name</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><name>filter</name> = (<name>ef_filter_t</name> *)<call><name>apr_pcalloc</name><argument_list>(<argument><expr><name><name>conf</name>-&gt;<name>p</name></name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>ef_filter_t</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>filter</name>-&gt;<name>name</name></name> = <name>name</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>filter</name>-&gt;<name>mode</name></name> = <name>OUTPUT_FILTER</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>filter</name>-&gt;<name>ftype</name></name> = <name>AP_FTYPE_RESOURCE</name></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name><name>conf</name>-&gt;<name>h</name></name></expr></argument>, <argument><expr><name>normalized_name</name></expr></argument>, <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>, <argument><expr><name>filter</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <while>while <condition>(<expr>*<name>args</name></expr>)</condition> <block>{
+        <while>while <condition>(<expr><call><name>apr_isspace</name><argument_list>(<argument><expr>*<name>args</name></expr></argument>)</argument_list></call></expr>)</condition> <block>{
+            <expr_stmt><expr>++<name>args</name></expr>;</expr_stmt>
+        }</block></while>
+
+        <comment type="block">/* Nasty parsing...  I wish I could simply use ap_getword_white()
+         * here and then look at the token, but ap_getword_white() doesn't
+         * do the right thing when we have cmd="word word word"
+         */</comment>
+        <if>if <condition>(<expr>!<call><name>strncasecmp</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"preservescontentlength"</expr></argument>, <argument><expr>22</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>token</name> = <call><name>ap_getword_white</name><argument_list>(<argument><expr><name><name>cmd</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>&amp;<name>args</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <if>if <condition>(<expr>!<call><name>strcasecmp</name><argument_list>(<argument><expr><name>token</name></expr></argument>, <argument><expr>"preservescontentlength"</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+                <expr_stmt><expr><name><name>filter</name>-&gt;<name>preserves_content_length</name></name> = 1</expr>;</expr_stmt>
+            }</block></then>
+            <else>else <block>{
+                <return>return <expr><call><name>apr_psprintf</name><argument_list>(<argument><expr><name><name>cmd</name>-&gt;<name>pool</name></name></expr></argument>,
+                                    <argument><expr>"mangled argument `%s'"</expr></argument>,
+                                    <argument><expr><name>token</name></expr></argument>)</argument_list></call></expr>;</return>
+            }</block></else></if>
+            <continue>continue;</continue>
+        }</block></then></if>
+
+        <if>if <condition>(<expr>!<call><name>strncasecmp</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"mode="</expr></argument>, <argument><expr>5</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>args</name> += 5</expr>;</expr_stmt>
+            <expr_stmt><expr><name>token</name> = <call><name>ap_getword_white</name><argument_list>(<argument><expr><name><name>cmd</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>&amp;<name>args</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <if>if <condition>(<expr>!<call><name>strcasecmp</name><argument_list>(<argument><expr><name>token</name></expr></argument>, <argument><expr>"output"</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+                <expr_stmt><expr><name><name>filter</name>-&gt;<name>mode</name></name> = <name>OUTPUT_FILTER</name></expr>;</expr_stmt>
+            }</block></then>
+            <else>else <if>if <condition>(<expr>!<call><name>strcasecmp</name><argument_list>(<argument><expr><name>token</name></expr></argument>, <argument><expr>"input"</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+                <expr_stmt><expr><name><name>filter</name>-&gt;<name>mode</name></name> = <name>INPUT_FILTER</name></expr>;</expr_stmt>
+            }</block></then>
+            <else>else <block>{
+                <return>return <expr><call><name>apr_psprintf</name><argument_list>(<argument><expr><name><name>cmd</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>"Invalid mode: `%s'"</expr></argument>,
+                                    <argument><expr><name>token</name></expr></argument>)</argument_list></call></expr>;</return>
+            }</block></else></if></else></if>
+            <continue>continue;</continue>
+        }</block></then></if>
+
+        <if>if <condition>(<expr>!<call><name>strncasecmp</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"ftype="</expr></argument>, <argument><expr>6</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>args</name> += 6</expr>;</expr_stmt>
+            <expr_stmt><expr><name>token</name> = <call><name>ap_getword_white</name><argument_list>(<argument><expr><name><name>cmd</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>&amp;<name>args</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>filter</name>-&gt;<name>ftype</name></name> = <call><name>atoi</name><argument_list>(<argument><expr><name>token</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <continue>continue;</continue>
+        }</block></then></if>
+
+        <if>if <condition>(<expr>!<call><name>strncasecmp</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"enableenv="</expr></argument>, <argument><expr>10</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>args</name> += 10</expr>;</expr_stmt>
+            <expr_stmt><expr><name>token</name> = <call><name>ap_getword_white</name><argument_list>(<argument><expr><name><name>cmd</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>&amp;<name>args</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>filter</name>-&gt;<name>enable_env</name></name> = <name>token</name></expr>;</expr_stmt>
+            <continue>continue;</continue>
+        }</block></then></if>
+
+        <if>if <condition>(<expr>!<call><name>strncasecmp</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"disableenv="</expr></argument>, <argument><expr>11</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>args</name> += 11</expr>;</expr_stmt>
+            <expr_stmt><expr><name>token</name> = <call><name>ap_getword_white</name><argument_list>(<argument><expr><name><name>cmd</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>&amp;<name>args</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>filter</name>-&gt;<name>disable_env</name></name> = <name>token</name></expr>;</expr_stmt>
+            <continue>continue;</continue>
+        }</block></then></if>
+
+        <if>if <condition>(<expr>!<call><name>strncasecmp</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"intype="</expr></argument>, <argument><expr>7</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>args</name> += 7</expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>filter</name>-&gt;<name>intype</name></name> = <call><name>ap_getword_white</name><argument_list>(<argument><expr><name><name>cmd</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>&amp;<name>args</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <continue>continue;</continue>
+        }</block></then></if>
+
+        <if>if <condition>(<expr>!<call><name>strncasecmp</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"outtype="</expr></argument>, <argument><expr>8</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>args</name> += 8</expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>filter</name>-&gt;<name>outtype</name></name> = <call><name>ap_getword_white</name><argument_list>(<argument><expr><name><name>cmd</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>&amp;<name>args</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <continue>continue;</continue>
+        }</block></then></if>
+
+        <if>if <condition>(<expr>!<call><name>strncasecmp</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr>"cmd="</expr></argument>, <argument><expr>4</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>args</name> += 4</expr>;</expr_stmt>
+            <if>if <condition>(<expr>(<name>token</name> = <call><name>parse_cmd</name><argument_list>(<argument><expr><name><name>cmd</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>&amp;<name>args</name></expr></argument>, <argument><expr><name>filter</name></expr></argument>)</argument_list></call>)</expr>)</condition><then> <block>{
+                <return>return <expr><name>token</name></expr>;</return>
+            }</block></then></if>
+            <continue>continue;</continue>
+        }</block></then></if>
+
+        <return>return <expr><call><name>apr_psprintf</name><argument_list>(<argument><expr><name><name>cmd</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>"Unexpected parameter: `%s'"</expr></argument>,
+                            <argument><expr><name>args</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></while>
+
+    <comment type="block">/* parsing is done...  register the filter
+     */</comment>
+    <if>if <condition>(<expr><name><name>filter</name>-&gt;<name>mode</name></name> == <name>OUTPUT_FILTER</name></expr>)</condition><then> <block>{
+        <comment type="block">/* XXX need a way to ensure uniqueness among all filters */</comment>
+        <expr_stmt><expr><call><name>ap_register_output_filter</name><argument_list>(<argument><expr><name><name>filter</name>-&gt;<name>name</name></name></expr></argument>, <argument><expr><name>ef_output_filter</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name><name>filter</name>-&gt;<name>ftype</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+    <else>else <if>if <condition>(<expr><name><name>filter</name>-&gt;<name>mode</name></name> == <name>INPUT_FILTER</name></expr>)</condition><then> <block>{
+        <comment type="block">/* XXX need a way to ensure uniqueness among all filters */</comment>
+        <expr_stmt><expr><call><name>ap_register_input_filter</name><argument_list>(<argument><expr><name><name>filter</name>-&gt;<name>name</name></name></expr></argument>, <argument><expr><name>ef_input_filter</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name><name>filter</name>-&gt;<name>ftype</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+    <else>else <block>{
+        <expr_stmt><expr><call><name>ap_assert</name><argument_list>(<argument><expr>1 != 1</expr></argument>)</argument_list></call></expr>;</expr_stmt> <comment type="block">/* we set the field wrong somehow */</comment>
+    }</block></else></if></else></if>
+
+    <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>command_rec</name></type> <name><name>cmds</name><index>[]</index></name> <init>=
+<expr><block>{
+    <expr><call><name>AP_INIT_ITERATE</name><argument_list>(<argument><expr>"ExtFilterOptions"</expr></argument>,
+                    <argument><expr><name>add_options</name></expr></argument>,
+                    <argument><expr><name>NULL</name></expr></argument>,
+                    <argument><expr><name>ACCESS_CONF</name></expr></argument>, <comment type="block">/* same as SetInputFilter/SetOutputFilter */</comment>
+                    <argument><expr>"valid options: LogStderr, NoLogStderr"</expr></argument>)</argument_list></call></expr>,
+    <expr><call><name>AP_INIT_RAW_ARGS</name><argument_list>(<argument><expr>"ExtFilterDefine"</expr></argument>,
+                     <argument><expr><name>define_filter</name></expr></argument>,
+                     <argument><expr><name>NULL</name></expr></argument>,
+                     <argument><expr><name>RSRC_CONF</name></expr></argument>,
+                     <argument><expr>"Define an external filter"</expr></argument>)</argument_list></call></expr>,
+    <expr><block>{<expr><name>NULL</name></expr>}</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+
+<function><type><specifier>static</specifier> <name>int</name></type> <name>ef_init</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>plog</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>ptemp</name></decl></param>, <param><decl><type><name>server_rec</name> *</type><name>main_s</name></decl></param>)</parameter_list>
+<block>{
+    <expr_stmt><expr><name>main_server</name> = <name>main_s</name></expr>;</expr_stmt>
+    <return>return <expr><name>OK</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>void</name></type> <name>register_hooks</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>)</parameter_list>
+<block>{
+    <expr_stmt><expr><call><name>ap_hook_post_config</name><argument_list>(<argument><expr><name>ef_init</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>APR_HOOK_MIDDLE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>set_resource_limits</name><parameter_list>(<param><decl><type><name>request_rec</name> *</type><name>r</name></decl></param>,
+                                        <param><decl><type><name>apr_procattr_t</name> *</type><name>procattr</name></decl></param>)</parameter_list>
+<block>{
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>RLIMIT_CPU</name></expr></argument>)</argument_list></call>  || <call><name>defined</name><argument_list>(<argument><expr><name>RLIMIT_NPROC</name></expr></argument>)</argument_list></call> || \
+    <call><name>defined</name><argument_list>(<argument><expr><name>RLIMIT_DATA</name></expr></argument>)</argument_list></call> || <call><name>defined</name><argument_list>(<argument><expr><name>RLIMIT_VMEM</name></expr></argument>)</argument_list></call> || <call><name>defined</name> <argument_list>(<argument><expr><name>RLIMIT_AS</name></expr></argument>)</argument_list></call></expr></cpp:if>
+    <decl_stmt><decl><type><name>core_dir_config</name> *</type><name>conf</name> <init>=
+        <expr>(<name>core_dir_config</name> *)<call><name>ap_get_core_module_config</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>per_dir_config</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>RLIMIT_CPU</name></cpp:ifdef>
+    <expr_stmt><expr><name>rv</name> = <call><name>apr_procattr_limit_set</name><argument_list>(<argument><expr><name>procattr</name></expr></argument>, <argument><expr><name>APR_LIMIT_CPU</name></expr></argument>, <argument><expr><name><name>conf</name>-&gt;<name>limit_cpu</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>ap_assert</name><argument_list>(<argument><expr><name>rv</name> == <name>APR_SUCCESS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt> <comment type="block">/* otherwise, we're out of sync with APR */</comment>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>RLIMIT_DATA</name></expr></argument>)</argument_list></call> || <call><name>defined</name><argument_list>(<argument><expr><name>RLIMIT_VMEM</name></expr></argument>)</argument_list></call> || <call><name>defined</name><argument_list>(<argument><expr><name>RLIMIT_AS</name></expr></argument>)</argument_list></call></expr></cpp:if>
+    <expr_stmt><expr><name>rv</name> = <call><name>apr_procattr_limit_set</name><argument_list>(<argument><expr><name>procattr</name></expr></argument>, <argument><expr><name>APR_LIMIT_MEM</name></expr></argument>, <argument><expr><name><name>conf</name>-&gt;<name>limit_mem</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>ap_assert</name><argument_list>(<argument><expr><name>rv</name> == <name>APR_SUCCESS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt> <comment type="block">/* otherwise, we're out of sync with APR */</comment>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>RLIMIT_NPROC</name></cpp:ifdef>
+    <expr_stmt><expr><name>rv</name> = <call><name>apr_procattr_limit_set</name><argument_list>(<argument><expr><name>procattr</name></expr></argument>, <argument><expr><name>APR_LIMIT_NPROC</name></expr></argument>, <argument><expr><name><name>conf</name>-&gt;<name>limit_nproc</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>ap_assert</name><argument_list>(<argument><expr><name>rv</name> == <name>APR_SUCCESS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt> <comment type="block">/* otherwise, we're out of sync with APR */</comment>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* if at least one limit defined */</comment>
+
+    <return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>ef_close_file</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>vfile</name></decl></param>)</parameter_list>
+<block>{
+    <return>return <expr><call><name>apr_file_close</name><argument_list>(<argument><expr><name>vfile</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>void</name></type> <name>child_errfn</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>, <param><decl><type><name>apr_status_t</name></type> <name>err</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>description</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>request_rec</name> *</type><name>r</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>void</name> *</type><name>vr</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_file_t</name> *</type><name>stderr_log</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name></type> <name><name>time_str</name><index>[<expr><name>APR_CTIME_LEN</name></expr>]</index></name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><call><name>apr_pool_userdata_get</name><argument_list>(<argument><expr>&amp;<name>vr</name></expr></argument>, <argument><expr><name>ERRFN_USERDATA_KEY</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name>r</name> = <name>vr</name></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>apr_file_open_stderr</name><argument_list>(<argument><expr>&amp;<name>stderr_log</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>ap_recent_ctime</name><argument_list>(<argument><expr><name>time_str</name></expr></argument>, <argument><expr><call><name>apr_time_now</name><argument_list>()</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>apr_file_printf</name><argument_list>(<argument><expr><name>stderr_log</name></expr></argument>,
+                    <argument><expr>"[%s] [client %s] mod_ext_filter (%d)%pm: %s\n"</expr></argument>,
+                    <argument><expr><name>time_str</name></expr></argument>,
+                    <argument><expr><name><name>r</name>-&gt;<name>useragent_ip</name></name></expr></argument>,
+                    <argument><expr><name>err</name></expr></argument>,
+                    <argument><expr>&amp;<name>err</name></expr></argument>,
+                    <argument><expr><name>description</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<comment type="block">/* init_ext_filter_process: get the external filter process going
+ * This is per-filter-instance (i.e., per-request) initialization.
+ */</comment>
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>init_ext_filter_process</name><parameter_list>(<param><decl><type><name>ap_filter_t</name> *</type><name>f</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>ef_ctx_t</name> *</type><name>ctx</name> <init>= <expr><name><name>f</name>-&gt;<name>ctx</name></name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_status_t</name></type> <name>rc</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>ef_dir_t</name> *</type><name>dc</name> <init>= <expr><name><name>ctx</name>-&gt;<name>dc</name></name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> * <specifier>const</specifier> *</type><name>env</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name><name>ctx</name>-&gt;<name>proc</name></name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name><name>ctx</name>-&gt;<name>p</name></name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name><name>ctx</name>-&gt;<name>proc</name></name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>rc</name> = <call><name>apr_procattr_create</name><argument_list>(<argument><expr>&amp;<name><name>ctx</name>-&gt;<name>procattr</name></name></expr></argument>, <argument><expr><name><name>ctx</name>-&gt;<name>p</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>ap_assert</name><argument_list>(<argument><expr><name>rc</name> == <name>APR_SUCCESS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>rc</name> = <call><name>apr_procattr_io_set</name><argument_list>(<argument><expr><name><name>ctx</name>-&gt;<name>procattr</name></name></expr></argument>,
+                            <argument><expr><name>APR_CHILD_BLOCK</name></expr></argument>,
+                            <argument><expr><name>APR_CHILD_BLOCK</name></expr></argument>,
+                            <argument><expr><name>APR_CHILD_BLOCK</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>ap_assert</name><argument_list>(<argument><expr><name>rc</name> == <name>APR_SUCCESS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>rc</name> = <call><name>set_resource_limits</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>r</name></name></expr></argument>, <argument><expr><name><name>ctx</name>-&gt;<name>procattr</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>ap_assert</name><argument_list>(<argument><expr><name>rc</name> == <name>APR_SUCCESS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr><name><name>dc</name>-&gt;<name>log_stderr</name></name> &gt; 0</expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>rc</name> = <call><name>apr_procattr_child_err_set</name><argument_list>(<argument><expr><name><name>ctx</name>-&gt;<name>procattr</name></name></expr></argument>,
+                                      <argument><expr><name><name>f</name>-&gt;<name>r</name>-&gt;<name>server</name>-&gt;<name>error_log</name></name></expr></argument>, <comment type="block">/* stderr in child */</comment>
+                                      <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>ap_assert</name><argument_list>(<argument><expr><name>rc</name> == <name>APR_SUCCESS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <expr_stmt><expr><name>rc</name> = <call><name>apr_procattr_child_errfn_set</name><argument_list>(<argument><expr><name><name>ctx</name>-&gt;<name>procattr</name></name></expr></argument>, <argument><expr><name>child_errfn</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>ap_assert</name><argument_list>(<argument><expr><name>rc</name> == <name>APR_SUCCESS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>apr_pool_userdata_set</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>r</name></name></expr></argument>, <argument><expr><name>ERRFN_USERDATA_KEY</name></expr></argument>, <argument><expr><name>apr_pool_cleanup_null</name></expr></argument>, <argument><expr><name><name>ctx</name>-&gt;<name>p</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>rc</name> = <call><name>apr_procattr_error_check_set</name><argument_list>(<argument><expr><name><name>ctx</name>-&gt;<name>procattr</name></name></expr></argument>, <argument><expr>1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>rc</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+        <return>return <expr><name>rc</name></expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/* add standard CGI variables as well as DOCUMENT_URI, DOCUMENT_PATH_INFO,
+     * and QUERY_STRING_UNESCAPED
+     */</comment>
+    <expr_stmt><expr><call><name>ap_add_cgi_vars</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>r</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>ap_add_common_vars</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>r</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>apr_table_setn</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>r</name>-&gt;<name>subprocess_env</name></name></expr></argument>, <argument><expr>"DOCUMENT_URI"</expr></argument>, <argument><expr><name><name>f</name>-&gt;<name>r</name>-&gt;<name>uri</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>apr_table_setn</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>r</name>-&gt;<name>subprocess_env</name></name></expr></argument>, <argument><expr>"DOCUMENT_PATH_INFO"</expr></argument>, <argument><expr><name><name>f</name>-&gt;<name>r</name>-&gt;<name>path_info</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name><name>f</name>-&gt;<name>r</name>-&gt;<name>args</name></name></expr>)</condition><then> <block>{
+            <comment type="block">/* QUERY_STRING is added by ap_add_cgi_vars */</comment>
+        <decl_stmt><decl><type><name>char</name> *</type><name>arg_copy</name> <init>= <expr><call><name>apr_pstrdup</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>f</name>-&gt;<name>r</name>-&gt;<name>args</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+        <expr_stmt><expr><call><name>ap_unescape_url</name><argument_list>(<argument><expr><name>arg_copy</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>apr_table_setn</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>r</name>-&gt;<name>subprocess_env</name></name></expr></argument>, <argument><expr>"QUERY_STRING_UNESCAPED"</expr></argument>,
+                       <argument><expr><call><name>ap_escape_shell_cmd</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>arg_copy</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <expr_stmt><expr><name>env</name> = (const <name>char</name> * const *) <call><name>ap_create_environment</name><argument_list>(<argument><expr><name><name>ctx</name>-&gt;<name>p</name></name></expr></argument>,
+                                                       <argument><expr><name><name>f</name>-&gt;<name>r</name>-&gt;<name>subprocess_env</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>rc</name> = <call><name>apr_proc_create</name><argument_list>(<argument><expr><name><name>ctx</name>-&gt;<name>proc</name></name></expr></argument>,
+                            <argument><expr><name><name>ctx</name>-&gt;<name>filter</name>-&gt;<name>command</name></name></expr></argument>,
+                            <argument><expr>(const <name>char</name> * const *)<name><name>ctx</name>-&gt;<name>filter</name>-&gt;<name>args</name></name></expr></argument>,
+                            <argument><expr><name>env</name></expr></argument>, <comment type="block">/* environment */</comment>
+                            <argument><expr><name><name>ctx</name>-&gt;<name>procattr</name></name></expr></argument>,
+                            <argument><expr><name><name>ctx</name>-&gt;<name>p</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>rc</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>ap_log_rerror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_ERR</name></expr></argument>, <argument><expr><name>rc</name></expr></argument>, <argument><expr><name><name>f</name>-&gt;<name>r</name></name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>01458</expr></argument>)</argument_list></call>
+                      "couldn't create child process to run `%s'"</expr></argument>,
+                      <argument><expr><name><name>ctx</name>-&gt;<name>filter</name>-&gt;<name>command</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>rc</name></expr>;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><call><name>apr_pool_note_subprocess</name><argument_list>(<argument><expr><name><name>ctx</name>-&gt;<name>p</name></name></expr></argument>, <argument><expr><name><name>ctx</name>-&gt;<name>proc</name></name></expr></argument>, <argument><expr><name>APR_KILL_AFTER_TIMEOUT</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* We don't want the handle to the child's stdin inherited by any
+     * other processes created by httpd.  Otherwise, when we close our
+     * handle, the child won't see EOF because another handle will still
+     * be open.
+     */</comment>
+
+    <expr_stmt><expr><call><name>apr_pool_cleanup_register</name><argument_list>(<argument><expr><name><name>ctx</name>-&gt;<name>p</name></name></expr></argument>, <argument><expr><name><name>ctx</name>-&gt;<name>proc</name>-&gt;<name>in</name></name></expr></argument>,
+                         <argument><expr><name>apr_pool_cleanup_null</name></expr></argument>, <comment type="block">/* other mechanism */</comment>
+                         <argument><expr><name>ef_close_file</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_FILES_AS_SOCKETS</name></expr></cpp:if>
+    <block>{
+        <decl_stmt><decl><type><name>apr_pollfd_t</name></type> <name>pfd</name> <init>= <expr><block>{ <expr>0</expr> }</block></expr></init></decl>;</decl_stmt>
+
+        <expr_stmt><expr><name>rc</name> = <call><name>apr_pollset_create</name><argument_list>(<argument><expr>&amp;<name><name>ctx</name>-&gt;<name>pollset</name></name></expr></argument>, <argument><expr>2</expr></argument>, <argument><expr><name><name>ctx</name>-&gt;<name>p</name></name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>ap_assert</name><argument_list>(<argument><expr><name>rc</name> == <name>APR_SUCCESS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <expr_stmt><expr><name><name>pfd</name>.<name>p</name></name>         = <name><name>ctx</name>-&gt;<name>p</name></name></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>pfd</name>.<name>desc_type</name></name> = <name>APR_POLL_FILE</name></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>pfd</name>.<name>reqevents</name></name> = <name>APR_POLLOUT</name></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>pfd</name>.<name>desc</name>.<name>f</name></name>    = <name><name>ctx</name>-&gt;<name>proc</name>-&gt;<name>in</name></name></expr>;</expr_stmt>
+        <expr_stmt><expr><name>rc</name> = <call><name>apr_pollset_add</name><argument_list>(<argument><expr><name><name>ctx</name>-&gt;<name>pollset</name></name></expr></argument>, <argument><expr>&amp;<name>pfd</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>ap_assert</name><argument_list>(<argument><expr><name>rc</name> == <name>APR_SUCCESS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <expr_stmt><expr><name><name>pfd</name>.<name>reqevents</name></name> = <name>APR_POLLIN</name></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>pfd</name>.<name>desc</name>.<name>f</name></name>    = <name><name>ctx</name>-&gt;<name>proc</name>-&gt;<name>out</name></name></expr>;</expr_stmt>
+        <expr_stmt><expr><name>rc</name> = <call><name>apr_pollset_add</name><argument_list>(<argument><expr><name><name>ctx</name>-&gt;<name>pollset</name></name></expr></argument>, <argument><expr>&amp;<name>pfd</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>ap_assert</name><argument_list>(<argument><expr><name>rc</name> == <name>APR_SUCCESS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+    <return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *</type><name>get_cfg_string</name><parameter_list>(<param><decl><type><name>ef_dir_t</name> *</type><name>dc</name></decl></param>, <param><decl><type><name>ef_filter_t</name> *</type><name>filter</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>log_stderr_str</name> <init>= <expr><name><name>dc</name>-&gt;<name>log_stderr</name></name> &lt; 1 ?
+        "NoLogStderr" : "LogStderr"</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>preserve_content_length_str</name> <init>= <expr><name><name>filter</name>-&gt;<name>preserves_content_length</name></name> ?
+        "PreservesContentLength" : "!PreserveContentLength"</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>intype_str</name> <init>= <expr>!<name><name>filter</name>-&gt;<name>intype</name></name> ?
+        "*/*" : <name><name>filter</name>-&gt;<name>intype</name></name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>outtype_str</name> <init>= <expr>!<name><name>filter</name>-&gt;<name>outtype</name></name> ?
+        "(unchanged)" : <name><name>filter</name>-&gt;<name>outtype</name></name></expr></init></decl>;</decl_stmt>
+
+    <return>return <expr><call><name>apr_psprintf</name><argument_list>(<argument><expr><name>p</name></expr></argument>,
+                        <argument><expr>"ExtFilterOptions %s %s ExtFilterInType %s "
+                        "ExtFilterOuttype %s"</expr></argument>,
+                        <argument><expr><name>log_stderr_str</name></expr></argument>, <argument><expr><name>preserve_content_length_str</name></expr></argument>,
+                        <argument><expr><name>intype_str</name></expr></argument>, <argument><expr><name>outtype_str</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>ef_filter_t</name> *</type><name>find_filter_def</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>server_rec</name> *</type><name>s</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>fname</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>ef_server_t</name> *</type><name>sc</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>ef_filter_t</name> *</type><name>f</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>sc</name> = <call><name>ap_get_module_config</name><argument_list>(<argument><expr><name><name>s</name>-&gt;<name>module_config</name></name></expr></argument>, <argument><expr>&amp;<name>ext_filter_module</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name>f</name> = <call><name>apr_hash_get</name><argument_list>(<argument><expr><name><name>sc</name>-&gt;<name>h</name></name></expr></argument>, <argument><expr><name>fname</name></expr></argument>, <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr>!<name>f</name> &amp;&amp; <name>s</name> != <name>main_server</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>s</name> = <name>main_server</name></expr>;</expr_stmt>
+        <expr_stmt><expr><name>sc</name> = <call><name>ap_get_module_config</name><argument_list>(<argument><expr><name><name>s</name>-&gt;<name>module_config</name></name></expr></argument>, <argument><expr>&amp;<name>ext_filter_module</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><name>f</name> = <call><name>apr_hash_get</name><argument_list>(<argument><expr><name><name>sc</name>-&gt;<name>h</name></name></expr></argument>, <argument><expr><name>fname</name></expr></argument>, <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+    <return>return <expr><name>f</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>init_filter_instance</name><parameter_list>(<param><decl><type><name>ap_filter_t</name> *</type><name>f</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>ef_ctx_t</name> *</type><name>ctx</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>ef_dir_t</name> *</type><name>dc</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name><name>f</name>-&gt;<name>ctx</name></name> = <name>ctx</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>ef_ctx_t</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name>dc</name> = <call><name>ap_get_module_config</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>r</name>-&gt;<name>per_dir_config</name></name></expr></argument>,
+                              <argument><expr>&amp;<name>ext_filter_module</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>ctx</name>-&gt;<name>dc</name></name> = <name>dc</name></expr>;</expr_stmt>
+    <comment type="block">/* look for the user-defined filter */</comment>
+    <expr_stmt><expr><name><name>ctx</name>-&gt;<name>filter</name></name> = <call><name>find_filter_def</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>r</name>-&gt;<name>server</name></name></expr></argument>, <argument><expr><name><name>f</name>-&gt;<name>frec</name>-&gt;<name>name</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr>!<name><name>ctx</name>-&gt;<name>filter</name></name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>ap_log_rerror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_ERR</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name><name>f</name>-&gt;<name>r</name></name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>01459</expr></argument>)</argument_list></call>
+                      "couldn't find definition of filter '%s'"</expr></argument>,
+                      <argument><expr><name><name>f</name>-&gt;<name>frec</name>-&gt;<name>name</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>APR_EINVAL</name></expr>;</return>
+    }</block></then></if>
+    <expr_stmt><expr><name><name>ctx</name>-&gt;<name>p</name></name> = <name><name>f</name>-&gt;<name>r</name>-&gt;<name>pool</name></name></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name><name>ctx</name>-&gt;<name>filter</name>-&gt;<name>intype</name></name> &amp;&amp;
+        <name><name>ctx</name>-&gt;<name>filter</name>-&gt;<name>intype</name></name> != <name>INTYPE_ALL</name></expr>)</condition><then> <block>{
+        <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>ctypes</name></decl>;</decl_stmt>
+
+        <if>if <condition>(<expr><name><name>ctx</name>-&gt;<name>filter</name>-&gt;<name>mode</name></name> == <name>INPUT_FILTER</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>ctypes</name> = <call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>r</name>-&gt;<name>headers_in</name></name></expr></argument>, <argument><expr>"Content-Type"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+        <else>else <block>{
+            <expr_stmt><expr><name>ctypes</name> = <name><name>f</name>-&gt;<name>r</name>-&gt;<name>content_type</name></name></expr>;</expr_stmt>
+        }</block></else></if>
+
+        <if>if <condition>(<expr><name>ctypes</name></expr>)</condition><then> <block>{
+            <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>ctype</name> <init>= <expr><call><name>ap_getword</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>&amp;<name>ctypes</name></expr></argument>, <argument><expr>';'</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+            <if>if <condition>(<expr><call><name>strcasecmp</name><argument_list>(<argument><expr><name><name>ctx</name>-&gt;<name>filter</name>-&gt;<name>intype</name></name></expr></argument>, <argument><expr><name>ctype</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+                <comment type="block">/* wrong IMT for us; don't mess with the output */</comment>
+                <expr_stmt><expr><name><name>ctx</name>-&gt;<name>noop</name></name> = 1</expr>;</expr_stmt>
+            }</block></then></if>
+        }</block></then>
+        <else>else <block>{
+            <expr_stmt><expr><name><name>ctx</name>-&gt;<name>noop</name></name> = 1</expr>;</expr_stmt>
+        }</block></else></if>
+    }</block></then></if>
+    <if>if <condition>(<expr><name><name>ctx</name>-&gt;<name>filter</name>-&gt;<name>enable_env</name></name> &amp;&amp;
+        !<call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>r</name>-&gt;<name>subprocess_env</name></name></expr></argument>, <argument><expr><name><name>ctx</name>-&gt;<name>filter</name>-&gt;<name>enable_env</name></name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <comment type="block">/* an environment variable that enables the filter isn't set; bail */</comment>
+        <expr_stmt><expr><name><name>ctx</name>-&gt;<name>noop</name></name> = 1</expr>;</expr_stmt>
+    }</block></then></if>
+    <if>if <condition>(<expr><name><name>ctx</name>-&gt;<name>filter</name>-&gt;<name>disable_env</name></name> &amp;&amp;
+        <call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>r</name>-&gt;<name>subprocess_env</name></name></expr></argument>, <argument><expr><name><name>ctx</name>-&gt;<name>filter</name>-&gt;<name>disable_env</name></name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <comment type="block">/* an environment variable that disables the filter is set; bail */</comment>
+        <expr_stmt><expr><name><name>ctx</name>-&gt;<name>noop</name></name> = 1</expr>;</expr_stmt>
+    }</block></then></if>
+    <if>if <condition>(<expr>!<name><name>ctx</name>-&gt;<name>noop</name></name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>rv</name> = <call><name>init_ext_filter_process</name><argument_list>(<argument><expr><name>f</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+            <return>return <expr><name>rv</name></expr>;</return>
+        }</block></then></if>
+        <if>if <condition>(<expr><name><name>ctx</name>-&gt;<name>filter</name>-&gt;<name>outtype</name></name> &amp;&amp;
+            <name><name>ctx</name>-&gt;<name>filter</name>-&gt;<name>outtype</name></name> != <name>OUTTYPE_UNCHANGED</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>ap_set_content_type</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>r</name></name></expr></argument>, <argument><expr><name><name>ctx</name>-&gt;<name>filter</name>-&gt;<name>outtype</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+        <if>if <condition>(<expr><name><name>ctx</name>-&gt;<name>filter</name>-&gt;<name>preserves_content_length</name></name> != 1</expr>)</condition><then> <block>{
+            <comment type="block">/* nasty, but needed to avoid confusing the browser
+             */</comment>
+            <expr_stmt><expr><call><name>apr_table_unset</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>r</name>-&gt;<name>headers_out</name></name></expr></argument>, <argument><expr>"Content-Length"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+    }</block></then></if>
+
+    <if>if <condition>(<expr><call><name>APLOGrtrace1</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>r</name></name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>ap_log_rerror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_TRACE1</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name><name>f</name>-&gt;<name>r</name></name></expr></argument>,
+                      <argument><expr>"%sfiltering `%s' of type `%s' through `%s', cfg %s"</expr></argument>,
+                      <argument><expr><name><name>ctx</name>-&gt;<name>noop</name></name> ? "NOT " : ""</expr></argument>,
+                      <argument><expr><name><name>f</name>-&gt;<name>r</name>-&gt;<name>uri</name></name> ? <name><name>f</name>-&gt;<name>r</name>-&gt;<name>uri</name></name> : <name><name>f</name>-&gt;<name>r</name>-&gt;<name>filename</name></name></expr></argument>,
+                      <argument><expr><name><name>f</name>-&gt;<name>r</name>-&gt;<name>content_type</name></name> ? <name><name>f</name>-&gt;<name>r</name>-&gt;<name>content_type</name></name> : "(unspecified)"</expr></argument>,
+                      <argument><expr><name><name>ctx</name>-&gt;<name>filter</name>-&gt;<name>command</name></name></expr></argument>,
+                      <argument><expr><call><name>get_cfg_string</name><argument_list>(<argument><expr><name>dc</name></expr></argument>, <argument><expr><name><name>ctx</name>-&gt;<name>filter</name></name></expr></argument>, <argument><expr><name><name>f</name>-&gt;<name>r</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* drain_available_output():
+ *
+ * if any data is available from the filter, read it and append it
+ * to the bucket brigade
+ */</comment>
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>drain_available_output</name><parameter_list>(<param><decl><type><name>ap_filter_t</name> *</type><name>f</name></decl></param>,
+                                           <param><decl><type><name>apr_bucket_brigade</name> *</type><name>bb</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>request_rec</name> *</type><name>r</name> <init>= <expr><name><name>f</name>-&gt;<name>r</name></name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>conn_rec</name> *</type><name>c</name> <init>= <expr><name><name>r</name>-&gt;<name>connection</name></name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>ef_ctx_t</name> *</type><name>ctx</name> <init>= <expr><name><name>f</name>-&gt;<name>ctx</name></name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_size_t</name></type> <name>len</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name></type> <name><name>buf</name><index>[<expr>4096</expr>]</index></name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_bucket</name> *</type><name>b</name></decl>;</decl_stmt>
+
+    <while>while <condition>(<expr>1</expr>)</condition> <block>{
+        <decl_stmt><decl><type><name>int</name></type> <name>lvl</name> <init>= <expr><name>APLOG_TRACE5</name></expr></init></decl>;</decl_stmt>
+        <expr_stmt><expr><name>len</name> = <sizeof>sizeof<argument_list>(<argument><expr><name>buf</name></expr></argument>)</argument_list></sizeof></expr>;</expr_stmt>
+        <expr_stmt><expr><name>rv</name> = <call><name>apr_file_read</name><argument_list>(<argument><expr><name><name>ctx</name>-&gt;<name>proc</name>-&gt;<name>out</name></name></expr></argument>, <argument><expr><name>buf</name></expr></argument>, <argument><expr>&amp;<name>len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>rv</name> &amp;&amp; !<call><name>APR_STATUS_IS_EAGAIN</name><argument_list>(<argument><expr><name>rv</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+           <expr_stmt><expr><name>lvl</name> = <name>APLOG_DEBUG</name></expr>;</expr_stmt></then></if>
+        <expr_stmt><expr><call><name>ap_log_rerror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>lvl</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name>r</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>01460</expr></argument>)</argument_list></call>
+                      "apr_file_read(child output), len %" <name>APR_SIZE_T_FMT</name></expr></argument>,
+                      <argument><expr>!<name>rv</name> ? <name>len</name> : -1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+            <return>return <expr><name>rv</name></expr>;</return>
+        }</block></then></if>
+        <expr_stmt><expr><name>b</name> = <call><name>apr_bucket_heap_create</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr><name>len</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name><name>c</name>-&gt;<name>bucket_alloc</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>APR_BRIGADE_INSERT_TAIL</name><argument_list>(<argument><expr><name>bb</name></expr></argument>, <argument><expr><name>b</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+    }</block></while>
+    <comment type="block">/* we should never get here; if we do, a bogus error message would be
+     * the least of our problems
+     */</comment>
+    <return>return <expr><name>APR_ANONYMOUS</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>pass_data_to_filter</name><parameter_list>(<param><decl><type><name>ap_filter_t</name> *</type><name>f</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>data</name></decl></param>,
+                                        <param><decl><type><name>apr_size_t</name></type> <name>len</name></decl></param>, <param><decl><type><name>apr_bucket_brigade</name> *</type><name>bb</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>ef_ctx_t</name> *</type><name>ctx</name> <init>= <expr><name><name>f</name>-&gt;<name>ctx</name></name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_size_t</name></type> <name>bytes_written</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_size_t</name></type> <name>tmplen</name></decl>;</decl_stmt>
+
+    <do>do <block>{
+        <expr_stmt><expr><name>tmplen</name> = <name>len</name> - <name>bytes_written</name></expr>;</expr_stmt>
+        <expr_stmt><expr><name>rv</name> = <call><name>apr_file_write_full</name><argument_list>(<argument><expr><name><name>ctx</name>-&gt;<name>proc</name>-&gt;<name>in</name></name></expr></argument>,
+                       <argument><expr>(const <name>char</name> *)<name>data</name> + <name>bytes_written</name></expr></argument>,
+                       <argument><expr><name>tmplen</name></expr></argument>, <argument><expr>&amp;<name>tmplen</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><name>bytes_written</name> += <name>tmplen</name></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name> &amp;&amp; !<call><name>APR_STATUS_IS_EAGAIN</name><argument_list>(<argument><expr><name>rv</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>ap_log_rerror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_ERR</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name><name>f</name>-&gt;<name>r</name></name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>01461</expr></argument>)</argument_list></call>
+                          "apr_file_write(child input), len %" <name>APR_SIZE_T_FMT</name></expr></argument>,
+                          <argument><expr><name>tmplen</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <return>return <expr><name>rv</name></expr>;</return>
+        }</block></then></if>
+        <if>if <condition>(<expr><call><name>APR_STATUS_IS_EAGAIN</name><argument_list>(<argument><expr><name>rv</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <comment type="block">/* XXX handle blocking conditions here...  if we block, we need
+             * to read data from the child process and pass it down to the
+             * next filter!
+             */</comment>
+            <expr_stmt><expr><name>rv</name> = <call><name>drain_available_output</name><argument_list>(<argument><expr><name>f</name></expr></argument>, <argument><expr><name>bb</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <if>if <condition>(<expr><call><name>APR_STATUS_IS_EAGAIN</name><argument_list>(<argument><expr><name>rv</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_FILES_AS_SOCKETS</name></expr></cpp:if>
+                <decl_stmt><decl><type><name>int</name></type> <name>num_events</name></decl>;</decl_stmt>
+                <decl_stmt><decl><type><specifier>const</specifier> <name>apr_pollfd_t</name> *</type><name>pdesc</name></decl>;</decl_stmt>
+
+                <expr_stmt><expr><name>rv</name> = <call><name>apr_pollset_poll</name><argument_list>(<argument><expr><name><name>ctx</name>-&gt;<name>pollset</name></name></expr></argument>, <argument><expr><name><name>f</name>-&gt;<name>r</name>-&gt;<name>server</name>-&gt;<name>timeout</name></name></expr></argument>,
+                                      <argument><expr>&amp;<name>num_events</name></expr></argument>, <argument><expr>&amp;<name>pdesc</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name> &amp;&amp; !<call><name>APR_STATUS_IS_EINTR</name><argument_list>(<argument><expr><name>rv</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+                    <expr_stmt><expr><call><name>ap_log_rerror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_WARNING</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name><name>f</name>-&gt;<name>r</name></name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>01462</expr></argument>)</argument_list></call>
+                                  "apr_pollset_poll()"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                    <comment type="block">/* some error such as APR_TIMEUP */</comment>
+                    <return>return <expr><name>rv</name></expr>;</return>
+                }</block></then></if>
+                <expr_stmt><expr><call><name>ap_log_rerror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_TRACE6</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name><name>f</name>-&gt;<name>r</name></name></expr></argument>,
+                              <argument><expr>"apr_pollset_poll()"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else> <comment type="block">/* APR_FILES_AS_SOCKETS */</comment>
+                <comment type="block">/* Yuck... I'd really like to wait until I can read
+                 * or write, but instead I have to sleep and try again
+                 */</comment>
+                <expr_stmt><expr><call><name>apr_sleep</name><argument_list>(<argument><expr><call><name>apr_time_from_msec</name><argument_list>(<argument><expr>100</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><call><name>ap_log_rerror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_TRACE6</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name><name>f</name>-&gt;<name>r</name></name></expr></argument>, <argument><expr>"apr_sleep()"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* APR_FILES_AS_SOCKETS */</comment>
+            }</block></then>
+            <else>else <if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+                <return>return <expr><name>rv</name></expr>;</return>
+            }</block></then></if></else></if>
+        }</block></then></if>
+    }</block> while <condition>(<expr><name>bytes_written</name> &lt; <name>len</name></expr>)</condition>;</do>
+    <return>return <expr><name>rv</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* ef_unified_filter:
+ *
+ * runs the bucket brigade bb through the filter and puts the result into
+ * bb, dropping the previous content of bb (the input)
+ */</comment>
+
+<function><type><specifier>static</specifier> <name>int</name></type> <name>ef_unified_filter</name><parameter_list>(<param><decl><type><name>ap_filter_t</name> *</type><name>f</name></decl></param>, <param><decl><type><name>apr_bucket_brigade</name> *</type><name>bb</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>request_rec</name> *</type><name>r</name> <init>= <expr><name><name>f</name>-&gt;<name>r</name></name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>conn_rec</name> *</type><name>c</name> <init>= <expr><name><name>r</name>-&gt;<name>connection</name></name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>ef_ctx_t</name> *</type><name>ctx</name> <init>= <expr><name><name>f</name>-&gt;<name>ctx</name></name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_bucket</name> *</type><name>b</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_size_t</name></type> <name>len</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>data</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name></type> <name><name>buf</name><index>[<expr>4096</expr>]</index></name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_bucket</name> *</type><name>eos</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_bucket_brigade</name> *</type><name>bb_tmp</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>bb_tmp</name> = <call><name>apr_brigade_create</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>c</name>-&gt;<name>bucket_alloc</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <for>for (<init><expr><name>b</name> = <call><name>APR_BRIGADE_FIRST</name><argument_list>(<argument><expr><name>bb</name></expr></argument>)</argument_list></call></expr>;</init>
+         <condition><expr><name>b</name> != <call><name>APR_BRIGADE_SENTINEL</name><argument_list>(<argument><expr><name>bb</name></expr></argument>)</argument_list></call></expr>;</condition>
+         <incr><expr><name>b</name> = <call><name>APR_BUCKET_NEXT</name><argument_list>(<argument><expr><name>b</name></expr></argument>)</argument_list></call></expr></incr>)
+    <block>{
+        <if>if <condition>(<expr><call><name>APR_BUCKET_IS_EOS</name><argument_list>(<argument><expr><name>b</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>eos</name> = <name>b</name></expr>;</expr_stmt>
+            <break>break;</break>
+        }</block></then></if>
+
+        <if>if <condition>(<expr><call><name>AP_BUCKET_IS_ERROR</name><argument_list>(<argument><expr><name>b</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <decl_stmt><decl><type><name>apr_bucket</name> *</type><name>cpy</name></decl>;</decl_stmt>
+            <expr_stmt><expr><call><name>apr_bucket_copy</name><argument_list>(<argument><expr><name>b</name></expr></argument>, <argument><expr>&amp;<name>cpy</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>APR_BRIGADE_INSERT_TAIL</name><argument_list>(<argument><expr><name>bb_tmp</name></expr></argument>, <argument><expr><name>cpy</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <break>break;</break>
+        }</block></then></if>
+
+        <expr_stmt><expr><name>rv</name> = <call><name>apr_bucket_read</name><argument_list>(<argument><expr><name>b</name></expr></argument>, <argument><expr>&amp;<name>data</name></expr></argument>, <argument><expr>&amp;<name>len</name></expr></argument>, <argument><expr><name>APR_BLOCK_READ</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>ap_log_rerror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_ERR</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name>r</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>01463</expr></argument>)</argument_list></call> "apr_bucket_read()"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <return>return <expr><name>rv</name></expr>;</return>
+        }</block></then></if>
+
+        <comment type="block">/* Good cast, we just tested len isn't negative */</comment>
+        <if>if <condition>(<expr><name>len</name> &gt; 0 &amp;&amp;
+            (<name>rv</name> = <call><name>pass_data_to_filter</name><argument_list>(<argument><expr><name>f</name></expr></argument>, <argument><expr><name>data</name></expr></argument>, <argument><expr>(<name>apr_size_t</name>)<name>len</name></expr></argument>, <argument><expr><name>bb_tmp</name></expr></argument>)</argument_list></call>)
+                != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+            <return>return <expr><name>rv</name></expr>;</return>
+        }</block></then></if>
+    }</block></for>
+
+    <expr_stmt><expr><call><name>apr_brigade_cleanup</name><argument_list>(<argument><expr><name>bb</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>APR_BRIGADE_CONCAT</name><argument_list>(<argument><expr><name>bb</name></expr></argument>, <argument><expr><name>bb_tmp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>apr_brigade_destroy</name><argument_list>(<argument><expr><name>bb_tmp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr><name>eos</name></expr>)</condition><then> <block>{
+        <comment type="block">/* close the child's stdin to signal that no more data is coming;
+         * that will cause the child to finish generating output
+         */</comment>
+        <if>if <condition>(<expr>(<name>rv</name> = <call><name>apr_file_close</name><argument_list>(<argument><expr><name><name>ctx</name>-&gt;<name>proc</name>-&gt;<name>in</name></name></expr></argument>)</argument_list></call>) != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>ap_log_rerror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_ERR</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name>r</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>01464</expr></argument>)</argument_list></call>
+                          "apr_file_close(child input)"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <return>return <expr><name>rv</name></expr>;</return>
+        }</block></then></if>
+        <comment type="block">/* since we've seen eos and closed the child's stdin, set the proper pipe
+         * timeout; we don't care if we don't return from apr_file_read() for a while...
+         */</comment>
+        <expr_stmt><expr><name>rv</name> = <call><name>apr_file_pipe_timeout_set</name><argument_list>(<argument><expr><name><name>ctx</name>-&gt;<name>proc</name>-&gt;<name>out</name></name></expr></argument>,
+                                       <argument><expr><name><name>r</name>-&gt;<name>server</name>-&gt;<name>timeout</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>rv</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>ap_log_rerror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_ERR</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name>r</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>01465</expr></argument>)</argument_list></call>
+                          "apr_file_pipe_timeout_set(child output)"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <return>return <expr><name>rv</name></expr>;</return>
+        }</block></then></if>
+    }</block></then></if>
+
+    <do>do <block>{
+        <decl_stmt><decl><type><name>int</name></type> <name>lvl</name> <init>= <expr><name>APLOG_TRACE6</name></expr></init></decl>;</decl_stmt>
+        <expr_stmt><expr><name>len</name> = <sizeof>sizeof<argument_list>(<argument><expr><name>buf</name></expr></argument>)</argument_list></sizeof></expr>;</expr_stmt>
+        <expr_stmt><expr><name>rv</name> = <call><name>apr_file_read</name><argument_list>(<argument><expr><name><name>ctx</name>-&gt;<name>proc</name>-&gt;<name>out</name></name></expr></argument>, <argument><expr><name>buf</name></expr></argument>, <argument><expr>&amp;<name>len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>rv</name> &amp;&amp; !<call><name>APR_STATUS_IS_EOF</name><argument_list>(<argument><expr><name>rv</name></expr></argument>)</argument_list></call> &amp;&amp; !<call><name>APR_STATUS_IS_EAGAIN</name><argument_list>(<argument><expr><name>rv</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+            <expr_stmt><expr><name>lvl</name> = <name>APLOG_ERR</name></expr>;</expr_stmt></then></if>
+        <expr_stmt><expr><call><name>ap_log_rerror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>lvl</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name>r</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>01466</expr></argument>)</argument_list></call>
+                      "apr_file_read(child output), len %" <name>APR_SIZE_T_FMT</name></expr></argument>,
+                      <argument><expr>!<name>rv</name> ? <name>len</name> : -1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><call><name>APR_STATUS_IS_EAGAIN</name><argument_list>(<argument><expr><name>rv</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <if>if <condition>(<expr><name>eos</name></expr>)</condition><then> <block>{
+                <comment type="block">/* should not occur, because we have an APR timeout in place */</comment>
+                <expr_stmt><expr><call><name>AP_DEBUG_ASSERT</name><argument_list>(<argument><expr>1 != 1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></then></if>
+            <return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+        }</block></then></if>
+
+        <if>if <condition>(<expr><name>rv</name> == <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>b</name> = <call><name>apr_bucket_heap_create</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr><name>len</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name><name>c</name>-&gt;<name>bucket_alloc</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>APR_BRIGADE_INSERT_TAIL</name><argument_list>(<argument><expr><name>bb</name></expr></argument>, <argument><expr><name>b</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+    }</block> while <condition>(<expr><name>rv</name> == <name>APR_SUCCESS</name></expr>)</condition>;</do>
+
+    <if>if <condition>(<expr>!<call><name>APR_STATUS_IS_EOF</name><argument_list>(<argument><expr><name>rv</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <return>return <expr><name>rv</name></expr>;</return>
+    }</block></then></if>
+
+    <if>if <condition>(<expr><name>eos</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>b</name> = <call><name>apr_bucket_eos_create</name><argument_list>(<argument><expr><name><name>c</name>-&gt;<name>bucket_alloc</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>APR_BRIGADE_INSERT_TAIL</name><argument_list>(<argument><expr><name>bb</name></expr></argument>, <argument><expr><name>b</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>ctx</name>-&gt;<name>hit_eos</name></name> = 1</expr>;</expr_stmt>
+    }</block></then></if>
+
+    <return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>ef_output_filter</name><parameter_list>(<param><decl><type><name>ap_filter_t</name> *</type><name>f</name></decl></param>, <param><decl><type><name>apr_bucket_brigade</name> *</type><name>bb</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>request_rec</name> *</type><name>r</name> <init>= <expr><name><name>f</name>-&gt;<name>r</name></name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>ef_ctx_t</name> *</type><name>ctx</name> <init>= <expr><name><name>f</name>-&gt;<name>ctx</name></name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>!<name>ctx</name></expr>)</condition><then> <block>{
+        <if>if <condition>(<expr>(<name>rv</name> = <call><name>init_filter_instance</name><argument_list>(<argument><expr><name>f</name></expr></argument>)</argument_list></call>) != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>ctx</name> = <name><name>f</name>-&gt;<name>ctx</name></name></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>ap_log_rerror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_ERR</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name>r</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>01467</expr></argument>)</argument_list></call>
+                          "can't initialise output filter %s: %s"</expr></argument>,
+                          <argument><expr><name><name>f</name>-&gt;<name>frec</name>-&gt;<name>name</name></name></expr></argument>,
+                          <argument><expr>(<name><name>ctx</name>-&gt;<name>dc</name>-&gt;<name>onfail</name></name> == 1) ? "removing" : "aborting"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>ap_remove_output_filter</name><argument_list>(<argument><expr><name>f</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <if>if <condition>(<expr><name><name>ctx</name>-&gt;<name>dc</name>-&gt;<name>onfail</name></name> == 1</expr>)</condition><then> <block>{
+                <return>return <expr><call><name>ap_pass_brigade</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>next</name></name></expr></argument>, <argument><expr><name>bb</name></expr></argument>)</argument_list></call></expr>;</return>
+            }</block></then>
+            <else>else <block>{
+                <decl_stmt><decl><type><name>apr_bucket</name> *</type><name>e</name></decl>;</decl_stmt>
+                <expr_stmt><expr><name><name>f</name>-&gt;<name>r</name>-&gt;<name>status_line</name></name> = "500 Internal Server Error"</expr>;</expr_stmt>
+
+                <expr_stmt><expr><call><name>apr_brigade_cleanup</name><argument_list>(<argument><expr><name>bb</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><name>e</name> = <call><name>ap_bucket_error_create</name><argument_list>(<argument><expr><name>HTTP_INTERNAL_SERVER_ERROR</name></expr></argument>,
+                                           <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>,
+                                           <argument><expr><name><name>f</name>-&gt;<name>c</name>-&gt;<name>bucket_alloc</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><call><name>APR_BRIGADE_INSERT_TAIL</name><argument_list>(<argument><expr><name>bb</name></expr></argument>, <argument><expr><name>e</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><name>e</name> = <call><name>apr_bucket_eos_create</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>c</name>-&gt;<name>bucket_alloc</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><call><name>APR_BRIGADE_INSERT_TAIL</name><argument_list>(<argument><expr><name>bb</name></expr></argument>, <argument><expr><name>e</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><call><name>ap_pass_brigade</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>next</name></name></expr></argument>, <argument><expr><name>bb</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <return>return <expr><name>AP_FILTER_ERROR</name></expr>;</return>
+            }</block></else></if>
+        }</block></then></if>
+        <expr_stmt><expr><name>ctx</name> = <name><name>f</name>-&gt;<name>ctx</name></name></expr>;</expr_stmt>
+    }</block></then></if>
+    <if>if <condition>(<expr><name><name>ctx</name>-&gt;<name>noop</name></name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>ap_remove_output_filter</name><argument_list>(<argument><expr><name>f</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><call><name>ap_pass_brigade</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>next</name></name></expr></argument>, <argument><expr><name>bb</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><name>rv</name> = <call><name>ef_unified_filter</name><argument_list>(<argument><expr><name>f</name></expr></argument>, <argument><expr><name>bb</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>ap_log_rerror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_ERR</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name>r</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>01468</expr></argument>)</argument_list></call>
+                      "ef_unified_filter() failed"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <if>if <condition>(<expr>(<name>rv</name> = <call><name>ap_pass_brigade</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>next</name></name></expr></argument>, <argument><expr><name>bb</name></expr></argument>)</argument_list></call>) != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>ap_log_rerror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_DEBUG</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name>r</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>01469</expr></argument>)</argument_list></call>
+                      "ap_pass_brigade() failed"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+    <return>return <expr><name>rv</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>ef_input_filter</name><parameter_list>(<param><decl><type><name>ap_filter_t</name> *</type><name>f</name></decl></param>, <param><decl><type><name>apr_bucket_brigade</name> *</type><name>bb</name></decl></param>,
+                                    <param><decl><type><name>ap_input_mode_t</name></type> <name>mode</name></decl></param>, <param><decl><type><name>apr_read_type_e</name></type> <name>block</name></decl></param>,
+                                    <param><decl><type><name>apr_off_t</name></type> <name>readbytes</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>ef_ctx_t</name> *</type><name>ctx</name> <init>= <expr><name><name>f</name>-&gt;<name>ctx</name></name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+
+    <comment type="block">/* just get out of the way of things we don't want. */</comment>
+    <if>if <condition>(<expr><name>mode</name> != <name>AP_MODE_READBYTES</name></expr>)</condition><then> <block>{
+        <return>return <expr><call><name>ap_get_brigade</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>next</name></name></expr></argument>, <argument><expr><name>bb</name></expr></argument>, <argument><expr><name>mode</name></expr></argument>, <argument><expr><name>block</name></expr></argument>, <argument><expr><name>readbytes</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+
+    <if>if <condition>(<expr>!<name>ctx</name></expr>)</condition><then> <block>{
+        <if>if <condition>(<expr>(<name>rv</name> = <call><name>init_filter_instance</name><argument_list>(<argument><expr><name>f</name></expr></argument>)</argument_list></call>) != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>ctx</name> = <name><name>f</name>-&gt;<name>ctx</name></name></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>ap_log_rerror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_ERR</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name><name>f</name>-&gt;<name>r</name></name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>01470</expr></argument>)</argument_list></call>
+                          "can't initialise input filter %s: %s"</expr></argument>,
+                          <argument><expr><name><name>f</name>-&gt;<name>frec</name>-&gt;<name>name</name></name></expr></argument>,
+                          <argument><expr>(<name><name>ctx</name>-&gt;<name>dc</name>-&gt;<name>onfail</name></name> == 1) ? "removing" : "aborting"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>ap_remove_input_filter</name><argument_list>(<argument><expr><name>f</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <if>if <condition>(<expr><name><name>ctx</name>-&gt;<name>dc</name>-&gt;<name>onfail</name></name> == 1</expr>)</condition><then> <block>{
+                <return>return <expr><call><name>ap_get_brigade</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>next</name></name></expr></argument>, <argument><expr><name>bb</name></expr></argument>, <argument><expr><name>mode</name></expr></argument>, <argument><expr><name>block</name></expr></argument>, <argument><expr><name>readbytes</name></expr></argument>)</argument_list></call></expr>;</return>
+            }</block></then>
+            <else>else <block>{
+                <expr_stmt><expr><name><name>f</name>-&gt;<name>r</name>-&gt;<name>status</name></name> = <name>HTTP_INTERNAL_SERVER_ERROR</name></expr>;</expr_stmt>
+                <return>return <expr><name>HTTP_INTERNAL_SERVER_ERROR</name></expr>;</return>
+            }</block></else></if>
+        }</block></then></if>
+        <expr_stmt><expr><name>ctx</name> = <name><name>f</name>-&gt;<name>ctx</name></name></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <if>if <condition>(<expr><name><name>ctx</name>-&gt;<name>hit_eos</name></name></expr>)</condition><then> <block>{
+        <comment type="block">/* Match behaviour of HTTP_IN if filter is re-invoked after
+         * hitting EOS: give back another EOS. */</comment>
+        <decl_stmt><decl><type><name>apr_bucket</name> *</type><name>e</name> <init>= <expr><call><name>apr_bucket_eos_create</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>c</name>-&gt;<name>bucket_alloc</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+        <expr_stmt><expr><call><name>APR_BRIGADE_INSERT_TAIL</name><argument_list>(<argument><expr><name>bb</name></expr></argument>, <argument><expr><name>e</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+    }</block></then></if>
+
+    <if>if <condition>(<expr><name><name>ctx</name>-&gt;<name>noop</name></name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>ap_remove_input_filter</name><argument_list>(<argument><expr><name>f</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><call><name>ap_get_brigade</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>next</name></name></expr></argument>, <argument><expr><name>bb</name></expr></argument>, <argument><expr><name>mode</name></expr></argument>, <argument><expr><name>block</name></expr></argument>, <argument><expr><name>readbytes</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><name>rv</name> = <call><name>ap_get_brigade</name><argument_list>(<argument><expr><name><name>f</name>-&gt;<name>next</name></name></expr></argument>, <argument><expr><name>bb</name></expr></argument>, <argument><expr><name>mode</name></expr></argument>, <argument><expr><name>block</name></expr></argument>, <argument><expr><name>readbytes</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+        <return>return <expr><name>rv</name></expr>;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><name>rv</name> = <call><name>ef_unified_filter</name><argument_list>(<argument><expr><name>f</name></expr></argument>, <argument><expr><name>bb</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>rv</name></expr>;</return>
+}</block></function>
+
+<expr_stmt><expr><call><name>AP_DECLARE_MODULE</name><argument_list>(<argument><expr><name>ext_filter</name></expr></argument>)</argument_list></call> =
+<block>{
+    <expr><name>STANDARD20_MODULE_STUFF</name></expr>,
+    <expr><name>create_ef_dir_conf</name></expr>,
+    <expr><name>merge_ef_dir_conf</name></expr>,
+    <expr><name>create_ef_server_conf</name></expr>,
+    <expr><name>NULL</name></expr>,
+    <expr><name>cmds</name></expr>,
+    <expr><name>register_hooks</name></expr>
+}</block></expr>;</expr_stmt>
+</unit>

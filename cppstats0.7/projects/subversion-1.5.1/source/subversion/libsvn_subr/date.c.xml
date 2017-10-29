@@ -1,0 +1,292 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/subversion-1.5.1/source/subversion/libsvn_subr/date.c"><comment type="block">/* date.c:  date parsing for Subversion
+ *
+ * ====================================================================
+ * Copyright (c) 2000-2004 CollabNet.  All rights reserved.
+ *
+ * This software is licensed as described in the file COPYING, which
+ * you should have received as part of this distribution.  The terms
+ * are also available at http://subversion.tigris.org/license-1.html.
+ * If newer versions of this license are posted there, you may use a
+ * newer version instead, at your option.
+ *
+ * This software consists of voluntary contributions made by many
+ * individuals.  For exact contribution history, see the revision
+ * history and logs, available at http://subversion.tigris.org/.
+ * ====================================================================
+ */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_time.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_error.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_private_config.h"</cpp:file></cpp:include>
+
+<comment type="block">/* Valid rule actions */</comment>
+<enum>enum <name>rule_action</name> <block>{
+  <decl><name>ACCUM</name></decl>,    <comment type="block">/* Accumulate a decimal value */</comment>
+  <decl><name>MICRO</name></decl>,    <comment type="block">/* Accumulate microseconds */</comment>
+  <decl><name>TZIND</name></decl>,    <comment type="block">/* Handle +, -, Z */</comment>
+  <decl><name>NOOP</name></decl>,     <comment type="block">/* Do nothing */</comment>
+  <decl><name>SKIPFROM</name></decl>, <comment type="block">/* If at end-of-value, accept the match.  Otherwise,
+               if the next template character matches the current
+               value character, continue processing as normal.
+               Otherwise, attempt to complete matching starting
+               immediately after the first subsequent occurrance of
+               ']' in the template. */</comment>
+  <decl><name>SKIP</name></decl>,     <comment type="block">/* Ignore this template character */</comment>
+  <decl><name>ACCEPT</name></decl>    <comment type="block">/* Accept the value */</comment>
+}</block>;</enum>
+
+<comment type="block">/* How to handle a particular character in a template */</comment>
+<typedef>typedef <type><struct>struct
+<block>{
+  <decl_stmt><decl><type><name>char</name></type> <name>key</name></decl>;</decl_stmt>                <comment type="block">/* The template char that this rule matches */</comment>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>valid</name></decl>;</decl_stmt>       <comment type="block">/* String of valid chars for this rule */</comment>
+  <enum>enum <name>rule_action</name> <name>action</name>;</enum> <comment type="block">/* What action to take when the rule is matched */</comment>
+  <decl_stmt><decl><type><name>int</name></type> <name>offset</name></decl>;</decl_stmt>              <comment type="block">/* Where to store the any results of the action,
+                              expressed in terms of bytes relative to the
+                              base of a match_state object. */</comment>
+}</block></struct></type> <name>rule</name>;</typedef>
+
+<comment type="block">/* The parsed values, before localtime/gmt processing */</comment>
+<typedef>typedef <type><struct>struct
+<block>{
+  <decl_stmt><decl><type><name>apr_time_exp_t</name></type> <name>base</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_int32_t</name></type> <name>offhours</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_int32_t</name></type> <name>offminutes</name></decl>;</decl_stmt>
+}</block></struct></type> <name>match_state</name>;</typedef>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>DIGITS</name></cpp:macro> <cpp:value>"0123456789"</cpp:value></cpp:define>
+
+<comment type="block">/* A declarative specification of how each template character
+   should be processed, using a rule for each valid symbol. */</comment>
+<decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>rule</name></type>
+<name><name>rules</name><index>[]</index></name> <init>=
+<expr><block>{
+  <expr><block>{ <expr>'Y'</expr>, <expr><name>DIGITS</name></expr>, <expr><name>ACCUM</name></expr>, <macro><name>APR_OFFSETOF</name><argument_list>(<argument>match_state</argument>, <argument>base.tm_year</argument>)</argument_list></macro> }</block></expr>,
+  <expr><block>{ <expr>'M'</expr>, <expr><name>DIGITS</name></expr>, <expr><name>ACCUM</name></expr>, <macro><name>APR_OFFSETOF</name><argument_list>(<argument>match_state</argument>, <argument>base.tm_mon</argument>)</argument_list></macro> }</block></expr>,
+  <expr><block>{ <expr>'D'</expr>, <expr><name>DIGITS</name></expr>, <expr><name>ACCUM</name></expr>, <macro><name>APR_OFFSETOF</name><argument_list>(<argument>match_state</argument>, <argument>base.tm_mday</argument>)</argument_list></macro> }</block></expr>,
+  <expr><block>{ <expr>'h'</expr>, <expr><name>DIGITS</name></expr>, <expr><name>ACCUM</name></expr>, <macro><name>APR_OFFSETOF</name><argument_list>(<argument>match_state</argument>, <argument>base.tm_hour</argument>)</argument_list></macro> }</block></expr>,
+  <expr><block>{ <expr>'m'</expr>, <expr><name>DIGITS</name></expr>, <expr><name>ACCUM</name></expr>, <macro><name>APR_OFFSETOF</name><argument_list>(<argument>match_state</argument>, <argument>base.tm_min</argument>)</argument_list></macro> }</block></expr>,
+  <expr><block>{ <expr>'s'</expr>, <expr><name>DIGITS</name></expr>, <expr><name>ACCUM</name></expr>, <macro><name>APR_OFFSETOF</name><argument_list>(<argument>match_state</argument>, <argument>base.tm_sec</argument>)</argument_list></macro> }</block></expr>,
+  <expr><block>{ <expr>'u'</expr>, <expr><name>DIGITS</name></expr>, <expr><name>MICRO</name></expr>, <macro><name>APR_OFFSETOF</name><argument_list>(<argument>match_state</argument>, <argument>base.tm_usec</argument>)</argument_list></macro> }</block></expr>,
+  <expr><block>{ <expr>'O'</expr>, <expr><name>DIGITS</name></expr>, <expr><name>ACCUM</name></expr>, <macro><name>APR_OFFSETOF</name><argument_list>(<argument>match_state</argument>, <argument>offhours</argument>)</argument_list></macro> }</block></expr>,
+  <expr><block>{ <expr>'o'</expr>, <expr><name>DIGITS</name></expr>, <expr><name>ACCUM</name></expr>, <macro><name>APR_OFFSETOF</name><argument_list>(<argument>match_state</argument>, <argument>offminutes</argument>)</argument_list></macro> }</block></expr>,
+  <expr><block>{ <expr>'+'</expr>, <expr>"-+"</expr>, <expr><name>TZIND</name></expr>, <expr>0</expr> }</block></expr>,
+  <expr><block>{ <expr>'Z'</expr>, <expr>"Z"</expr>, <expr><name>TZIND</name></expr>, <expr>0</expr> }</block></expr>,
+  <expr><block>{ <expr>':'</expr>, <expr>":"</expr>, <expr><name>NOOP</name></expr>, <expr>0</expr> }</block></expr>,
+  <expr><block>{ <expr>'-'</expr>, <expr>"-"</expr>, <expr><name>NOOP</name></expr>, <expr>0</expr> }</block></expr>,
+  <expr><block>{ <expr>'T'</expr>, <expr>"T"</expr>, <expr><name>NOOP</name></expr>, <expr>0</expr> }</block></expr>,
+  <expr><block>{ <expr>' '</expr>, <expr>" "</expr>, <expr><name>NOOP</name></expr>, <expr>0</expr> }</block></expr>,
+  <expr><block>{ <expr>'.'</expr>, <expr>".,"</expr>, <expr><name>NOOP</name></expr>, <expr>0</expr> }</block></expr>,
+  <expr><block>{ <expr>'['</expr>, <expr><name>NULL</name></expr>, <expr><name>SKIPFROM</name></expr>, <expr>0</expr> }</block></expr>,
+  <expr><block>{ <expr>']'</expr>, <expr><name>NULL</name></expr>, <expr><name>SKIP</name></expr>, <expr>0</expr> }</block></expr>,
+  <expr><block>{ <expr>'\0'</expr>, <expr><name>NULL</name></expr>, <expr><name>ACCEPT</name></expr>, <expr>0</expr> }</block></expr>,
+}</block></expr></init></decl>;</decl_stmt>
+
+<comment type="block">/* Return the rule associated with TCHAR, or NULL if there
+   is no such rule. */</comment>
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>rule</name> *</type>
+<name>find_rule</name><parameter_list>(<param><decl><type><name>char</name></type> <name>tchar</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>int</name></type> <name>i</name> <init>= <expr><sizeof>sizeof<argument_list>(<argument><expr><name>rules</name></expr></argument>)</argument_list></sizeof>/<sizeof>sizeof<argument_list>(<argument><expr><name><name>rules</name><index>[<expr>0</expr>]</index></name></expr></argument>)</argument_list></sizeof></expr></init></decl>;</decl_stmt>
+  <while>while <condition>(<expr><name>i</name>--</expr>)</condition>
+    <if>if <condition>(<expr><name><name>rules</name><index>[<expr><name>i</name></expr>]</index></name>.<name>key</name> == <name>tchar</name></expr>)</condition><then>
+      <return>return <expr>&amp;<name><name>rules</name><index>[<expr><name>i</name></expr>]</index></name></expr>;</return></then></if></while>
+  <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* Attempt to match the date-string in VALUE to the provided TEMPLATE,
+   using the rules defined above.  Return TRUE on successful match,
+   FALSE otherwise.  On successful match, fill in *EXP with the
+   matched values and set *LOCALTZ to TRUE if the local time zone
+   should be used to interpret the match (i.e. if no time zone
+   information was provided), or FALSE if not. */</comment>
+<function><type><specifier>static</specifier> <name>svn_boolean_t</name></type>
+<name>template_match</name><parameter_list>(<param><decl><type><name>apr_time_exp_t</name> *</type><name>expt</name></decl></param>, <param><decl><type><name>svn_boolean_t</name> *</type><name>localtz</name></decl></param>,
+               <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>template</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>value</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>int</name></type> <name>multiplier</name> <init>= <expr>100000</expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>tzind</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>match_state</name></type> <name>ms</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>char</name> *</type><name>base</name> <init>= <expr>(<name>char</name> *)&amp;<name>ms</name></expr></init></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>memset</name><argument_list>(<argument><expr>&amp;<name>ms</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>ms</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <for>for (<init>;</init><condition>;</condition><incr/>)
+    <block>{
+      <decl_stmt><decl><type><specifier>const</specifier> <name>rule</name> *</type><name>match</name> <init>= <expr><call><name>find_rule</name><argument_list>(<argument><expr>*<name>template</name>++</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>char</name></type> <name>vchar</name> <init>= <expr>*<name>value</name>++</expr></init></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>apr_int32_t</name> *</type><name>place</name></decl>;</decl_stmt>
+
+      <if>if <condition>(<expr>!<name>match</name> || (<name><name>match</name>-&gt;<name>valid</name></name>
+                     &amp;&amp; (!<name>vchar</name> || !<call><name>strchr</name><argument_list>(<argument><expr><name><name>match</name>-&gt;<name>valid</name></name></expr></argument>, <argument><expr><name>vchar</name></expr></argument>)</argument_list></call>))</expr>)</condition><then>
+        <return>return <expr><name>FALSE</name></expr>;</return></then></if>
+
+      <comment type="block">/* Compute the address of memory location affected by this
+         rule by adding match-&gt;offset bytes to the address of ms.
+         Because this is a byte-quantity, it is necessary to cast
+         &amp;ms to char *. */</comment>
+      <expr_stmt><expr><name>place</name> = <call>(<name>apr_int32_t</name> *)<argument_list>(<argument><expr><name>base</name> + <name><name>match</name>-&gt;<name>offset</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <switch>switch <condition>(<expr><name><name>match</name>-&gt;<name>action</name></name></expr>)</condition>
+        <block>{
+        <case>case <expr><name>ACCUM</name></expr>:
+          <expr_stmt><expr>*<name>place</name> = *<name>place</name> * 10 + <name>vchar</name> - '0'</expr>;</expr_stmt>
+          <continue>continue;</continue>
+        </case><case>case <expr><name>MICRO</name></expr>:
+          <expr_stmt><expr>*<name>place</name> += (<name>vchar</name> - '0') * <name>multiplier</name></expr>;</expr_stmt>
+          <expr_stmt><expr><name>multiplier</name> /= 10</expr>;</expr_stmt>
+          <continue>continue;</continue>
+        </case><case>case <expr><name>TZIND</name></expr>:
+          <expr_stmt><expr><name>tzind</name> = <name>vchar</name></expr>;</expr_stmt>
+          <continue>continue;</continue>
+        </case><case>case <expr><name>SKIP</name></expr>:
+          <expr_stmt><expr><name>value</name>--</expr>;</expr_stmt>
+          <continue>continue;</continue>
+        </case><case>case <expr><name>NOOP</name></expr>:
+          <continue>continue;</continue>
+        </case><case>case <expr><name>SKIPFROM</name></expr>:
+          <if>if <condition>(<expr>!<name>vchar</name></expr>)</condition><then>
+            <break>break;</break></then></if>
+          <expr_stmt><expr><name>match</name> = <call><name>find_rule</name><argument_list>(<argument><expr>*<name>template</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <if>if <condition>(<expr>!<call><name>strchr</name><argument_list>(<argument><expr><name><name>match</name>-&gt;<name>valid</name></name></expr></argument>, <argument><expr><name>vchar</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+            <expr_stmt><expr><name>template</name> = <call><name>strchr</name><argument_list>(<argument><expr><name>template</name></expr></argument>, <argument><expr>']'</expr></argument>)</argument_list></call> + 1</expr>;</expr_stmt></then></if>
+          <expr_stmt><expr><name>value</name>--</expr>;</expr_stmt>
+          <continue>continue;</continue>
+        </case><case>case <expr><name>ACCEPT</name></expr>:
+          <if>if <condition>(<expr><name>vchar</name></expr>)</condition><then>
+            <return>return <expr><name>FALSE</name></expr>;</return></then></if>
+          <break>break;</break>
+        </case>}</block></switch>
+
+      <break>break;</break>
+    }</block></for>
+
+  <comment type="block">/* Validate gmt offset here, since we can't reliably do it later. */</comment>
+  <if>if <condition>(<expr><name><name>ms</name>.<name>offhours</name></name> &gt; 23 || <name><name>ms</name>.<name>offminutes</name></name> &gt; 59</expr>)</condition><then>
+    <return>return <expr><name>FALSE</name></expr>;</return></then></if>
+
+  <comment type="block">/* tzind will be '+' or '-' for an explicit time zone, 'Z' to
+     indicate UTC, or 0 to indicate local time. */</comment>
+  <switch>switch <condition>(<expr><name>tzind</name></expr>)</condition>
+    <block>{
+    <case>case <expr>'+'</expr>:
+      <expr_stmt><expr><name><name>ms</name>.<name>base</name>.<name>tm_gmtoff</name></name> = <name><name>ms</name>.<name>offhours</name></name> * 3600 + <name><name>ms</name>.<name>offminutes</name></name> * 60</expr>;</expr_stmt>
+      <break>break;</break>
+    </case><case>case <expr>'-'</expr>:
+      <expr_stmt><expr><name><name>ms</name>.<name>base</name>.<name>tm_gmtoff</name></name> = -(<name><name>ms</name>.<name>offhours</name></name> * 3600 + <name><name>ms</name>.<name>offminutes</name></name> * 60)</expr>;</expr_stmt>
+      <break>break;</break>
+    </case>}</block></switch>
+
+  <expr_stmt><expr>*<name>expt</name> = <name><name>ms</name>.<name>base</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr>*<name>localtz</name> = (<name>tzind</name> == 0)</expr>;</expr_stmt>
+  <return>return <expr><name>TRUE</name></expr>;</return>
+}</block></function>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name></type>
+<name><name>valid_days_by_month</name><index>[]</index></name> <init>= <expr><block>{
+  <expr>31</expr>, <expr>29</expr>, <expr>31</expr>, <expr>30</expr>,
+  <expr>31</expr>, <expr>30</expr>, <expr>31</expr>, <expr>31</expr>,
+  <expr>30</expr>, <expr>31</expr>, <expr>30</expr>, <expr>31</expr>
+}</block></expr></init></decl>;</decl_stmt>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_parse_date</name><parameter_list>(<param><decl><type><name>svn_boolean_t</name> *</type><name>matched</name></decl></param>, <param><decl><type><name>apr_time_t</name> *</type><name>result</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>text</name></decl></param>,
+               <param><decl><type><name>apr_time_t</name></type> <name>now</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>apr_time_exp_t</name></type> <name>expt</name></decl>, <decl><type ref="prev"/><name>expnow</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_status_t</name></type> <name>apr_err</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>localtz</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr>*<name>matched</name> = <name>FALSE</name></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name>apr_err</name> = <call><name>apr_time_exp_lt</name><argument_list>(<argument><expr>&amp;<name>expnow</name></expr></argument>, <argument><expr><name>now</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>apr_err</name> != <name>APR_SUCCESS</name></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_wrap_apr</name><argument_list>(<argument><expr><name>apr_err</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Can't manipulate current date"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <if>if <condition>(<expr><call><name>template_match</name><argument_list>(<argument><expr>&amp;<name>expt</name></expr></argument>, <argument><expr>&amp;<name>localtz</name></expr></argument>, <comment type="block">/* ISO-8601 extended, date only */</comment>
+                     <argument><expr>"YYYY-M[M]-D[D]"</expr></argument>,
+                     <argument><expr><name>text</name></expr></argument>)</argument_list></call>
+      || <call><name>template_match</name><argument_list>(<argument><expr>&amp;<name>expt</name></expr></argument>, <argument><expr>&amp;<name>localtz</name></expr></argument>, <comment type="block">/* ISO-8601 extended, UTC */</comment>
+                        <argument><expr>"YYYY-M[M]-D[D]Th[h]:mm[:ss[.u[u[u[u[u[u][Z]"</expr></argument>,
+                        <argument><expr><name>text</name></expr></argument>)</argument_list></call>
+      || <call><name>template_match</name><argument_list>(<argument><expr>&amp;<name>expt</name></expr></argument>, <argument><expr>&amp;<name>localtz</name></expr></argument>, <comment type="block">/* ISO-8601 extended, with offset */</comment>
+                        <argument><expr>"YYYY-M[M]-D[D]Th[h]:mm[:ss[.u[u[u[u[u[u]+OO[:oo]"</expr></argument>,
+                        <argument><expr><name>text</name></expr></argument>)</argument_list></call>
+      || <call><name>template_match</name><argument_list>(<argument><expr>&amp;<name>expt</name></expr></argument>, <argument><expr>&amp;<name>localtz</name></expr></argument>, <comment type="block">/* ISO-8601 basic, date only */</comment>
+                        <argument><expr>"YYYYMMDD"</expr></argument>,
+                        <argument><expr><name>text</name></expr></argument>)</argument_list></call>
+      || <call><name>template_match</name><argument_list>(<argument><expr>&amp;<name>expt</name></expr></argument>, <argument><expr>&amp;<name>localtz</name></expr></argument>, <comment type="block">/* ISO-8601 basic, UTC */</comment>
+                        <argument><expr>"YYYYMMDDThhmm[ss[.u[u[u[u[u[u][Z]"</expr></argument>,
+                        <argument><expr><name>text</name></expr></argument>)</argument_list></call>
+      || <call><name>template_match</name><argument_list>(<argument><expr>&amp;<name>expt</name></expr></argument>, <argument><expr>&amp;<name>localtz</name></expr></argument>, <comment type="block">/* ISO-8601 basic, with offset */</comment>
+                        <argument><expr>"YYYYMMDDThhmm[ss[.u[u[u[u[u[u]+OO[oo]"</expr></argument>,
+                        <argument><expr><name>text</name></expr></argument>)</argument_list></call>
+      || <call><name>template_match</name><argument_list>(<argument><expr>&amp;<name>expt</name></expr></argument>, <argument><expr>&amp;<name>localtz</name></expr></argument>, <comment type="block">/* "svn log" format */</comment>
+                        <argument><expr>"YYYY-M[M]-D[D] h[h]:mm[:ss[.u[u[u[u[u[u][ +OO[oo]"</expr></argument>,
+                        <argument><expr><name>text</name></expr></argument>)</argument_list></call>
+      || <call><name>template_match</name><argument_list>(<argument><expr>&amp;<name>expt</name></expr></argument>, <argument><expr>&amp;<name>localtz</name></expr></argument>, <comment type="block">/* GNU date's iso-8601 */</comment>
+                        <argument><expr>"YYYY-M[M]-D[D]Th[h]:mm[:ss[.u[u[u[u[u[u]+OO[oo]"</expr></argument>,
+                        <argument><expr><name>text</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><name><name>expt</name>.<name>tm_year</name></name> -= 1900</expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>expt</name>.<name>tm_mon</name></name> -= 1</expr>;</expr_stmt>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><call><name>template_match</name><argument_list>(<argument><expr>&amp;<name>expt</name></expr></argument>, <argument><expr>&amp;<name>localtz</name></expr></argument>, <comment type="block">/* Just a time */</comment>
+                          <argument><expr>"h[h]:mm[:ss[.u[u[u[u[u[u]"</expr></argument>,
+                          <argument><expr><name>text</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><name><name>expt</name>.<name>tm_year</name></name> = <name><name>expnow</name>.<name>tm_year</name></name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>expt</name>.<name>tm_mon</name></name> = <name><name>expnow</name>.<name>tm_mon</name></name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>expt</name>.<name>tm_mday</name></name> = <name><name>expnow</name>.<name>tm_mday</name></name></expr>;</expr_stmt>
+    }</block></then>
+  <else>else
+    <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return></else></if></else></if>
+
+  <comment type="block">/* Range validation, allowing for leap seconds */</comment>
+  <if>if <condition>(<expr><name><name>expt</name>.<name>tm_mon</name></name> &lt; 0 || <name><name>expt</name>.<name>tm_mon</name></name> &gt; 11
+      || <name><name>expt</name>.<name>tm_mday</name></name> &gt; <name><name>valid_days_by_month</name><index>[<expr><name><name>expt</name>.<name>tm_mon</name></name></expr>]</index></name>
+      || <name><name>expt</name>.<name>tm_mday</name></name> &lt; 1
+      || <name><name>expt</name>.<name>tm_hour</name></name> &gt; 23
+      || <name><name>expt</name>.<name>tm_min</name></name> &gt; 59
+      || <name><name>expt</name>.<name>tm_sec</name></name> &gt; 60</expr>)</condition><then>
+    <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return></then></if>
+
+  <comment type="block">/* february/leap-year day checking.  tm_year is bias-1900, so centuries
+     that equal 100 (mod 400) are multiples of 400. */</comment>
+  <if>if <condition>(<expr><name><name>expt</name>.<name>tm_mon</name></name> == 1
+      &amp;&amp; <name><name>expt</name>.<name>tm_mday</name></name> == 29
+      &amp;&amp; (<name><name>expt</name>.<name>tm_year</name></name> % 4 != 0
+          || (<name><name>expt</name>.<name>tm_year</name></name> % 100 == 0 &amp;&amp; <name><name>expt</name>.<name>tm_year</name></name> % 400 != 100))</expr>)</condition><then>
+    <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return></then></if>
+
+  <if>if <condition>(<expr><name>localtz</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>apr_time_t</name></type> <name>candidate</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>apr_time_exp_t</name></type> <name>expthen</name></decl>;</decl_stmt>
+
+      <comment type="block">/* We need to know the GMT offset of the requested time, not the
+         current time.  In some cases, that quantity is ambiguous,
+         since at the end of daylight saving's time, an hour's worth
+         of local time happens twice.  For those cases, we should
+         prefer DST if we are currently in DST, and standard time if
+         not.  So, calculate the time value using the current time's
+         GMT offset and use the GMT offset of the resulting time. */</comment>
+      <expr_stmt><expr><name><name>expt</name>.<name>tm_gmtoff</name></name> = <name><name>expnow</name>.<name>tm_gmtoff</name></name></expr>;</expr_stmt>
+      <expr_stmt><expr><name>apr_err</name> = <call><name>apr_time_exp_gmt_get</name><argument_list>(<argument><expr>&amp;<name>candidate</name></expr></argument>, <argument><expr>&amp;<name>expt</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>apr_err</name> != <name>APR_SUCCESS</name></expr>)</condition><then>
+        <return>return <expr><call><name>svn_error_wrap_apr</name><argument_list>(<argument><expr><name>apr_err</name></expr></argument>,
+                                  <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Can't calculate requested date"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+      <expr_stmt><expr><name>apr_err</name> = <call><name>apr_time_exp_lt</name><argument_list>(<argument><expr>&amp;<name>expthen</name></expr></argument>, <argument><expr><name>candidate</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>apr_err</name> != <name>APR_SUCCESS</name></expr>)</condition><then>
+        <return>return <expr><call><name>svn_error_wrap_apr</name><argument_list>(<argument><expr><name>apr_err</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Can't expand time"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+      <expr_stmt><expr><name><name>expt</name>.<name>tm_gmtoff</name></name> = <name><name>expthen</name>.<name>tm_gmtoff</name></name></expr>;</expr_stmt>
+    }</block></then></if>
+  <expr_stmt><expr><name>apr_err</name> = <call><name>apr_time_exp_gmt_get</name><argument_list>(<argument><expr><name>result</name></expr></argument>, <argument><expr>&amp;<name>expt</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>apr_err</name> != <name>APR_SUCCESS</name></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_wrap_apr</name><argument_list>(<argument><expr><name>apr_err</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Can't calculate requested date"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <expr_stmt><expr>*<name>matched</name> = <name>TRUE</name></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+</unit>

@@ -1,0 +1,1420 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/subversion-1.5.1/source/subversion/libsvn_ra_neon/session.c"><comment type="block">/*
+ * session.c :  routines for maintaining sessions state (to the DAV server)
+ *
+ * ====================================================================
+ * Copyright (c) 2000-2006 CollabNet.  All rights reserved.
+ *
+ * This software is licensed as described in the file COPYING, which
+ * you should have received as part of this distribution.  The terms
+ * are also available at http://subversion.tigris.org/license-1.html.
+ * If newer versions of this license are posted there, you may use a
+ * newer version instead, at your option.
+ *
+ * This software consists of voluntary contributions made by many
+ * individuals.  For exact contribution history, see the revision
+ * history and logs, available at http://subversion.tigris.org/.
+ * ====================================================================
+ */</comment>
+
+
+<escape char="0xc"/>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;assert.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;ctype.h&gt;</cpp:file></cpp:include>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>APR_WANT_STRFUNC</name></cpp:macro></cpp:define>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_want.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_general.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_xml.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;ne_auth.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_error.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_pools.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_ra.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"../libsvn_ra/ra_loader.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_config.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_delta.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_version.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_path.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_time.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_xml.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_private_config.h"</cpp:file></cpp:include>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>SVN_NEON_0_28</name></cpp:ifdef>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;ne_pkcs11.h&gt;</cpp:file></cpp:include>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"ra_neon.h"</cpp:file></cpp:include>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>DEFAULT_HTTP_TIMEOUT</name></cpp:macro> <cpp:value>3600</cpp:value></cpp:define>
+
+<escape char="0xc"/>
+<comment type="block">/* a cleanup routine attached to the pool that contains the RA session
+   baton. */</comment>
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>cleanup_session</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>sess</name></decl></param>)</parameter_list>
+<block>{
+  <expr_stmt><expr><call><name>ne_session_destroy</name><argument_list>(<argument><expr><name>sess</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* a cleanup routine attached to the pool that contains the RA session
+   root URI. */</comment>
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>cleanup_uri</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>uri</name></decl></param>)</parameter_list>
+<block>{
+  <expr_stmt><expr><call><name>ne_uri_free</name><argument_list>(<argument><expr><name>uri</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>SVN_NEON_0_28</name></cpp:ifdef>
+<comment type="block">/* a cleanup routine attached to the pool that contains the PKCS#11
+   provider object. */</comment>
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>cleanup_p11provider</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>provider</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>ne_ssl_pkcs11_provider</name> *</type><name>prov</name> <init>= <expr><name>provider</name></expr></init></decl>;</decl_stmt>
+  <expr_stmt><expr><call><name>ne_ssl_pkcs11_provider_destroy</name><argument_list>(<argument><expr><name>prov</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<comment type="block">/* A neon-session callback to 'pull' authentication data when
+   challenged.  In turn, this routine 'pulls' the data from the client
+   callbacks if needed.  */</comment>
+<function><type><specifier>static</specifier> <name>int</name></type> <name>request_auth</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>userdata</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>realm</name></decl></param>, <param><decl><type><name>int</name></type> <name>attempt</name></decl></param>,
+                        <param><decl><type><name>char</name> *</type><name>username</name></decl></param>, <param><decl><type><name>char</name> *</type><name>password</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_ra_neon__session_t</name> *</type><name>ras</name> <init>= <expr><name>userdata</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>void</name> *</type><name>creds</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_auth_cred_simple_t</name> *</type><name>simple_creds</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Start by clearing the cache of any previously-fetched username. */</comment>
+  <expr_stmt><expr><name><name>ras</name>-&gt;<name>auth_username</name></name> = <name>NULL</name></expr>;</expr_stmt>
+
+  <comment type="block">/* No auth_baton?  Give up. */</comment>
+  <if>if <condition>(<expr>! <name><name>ras</name>-&gt;<name>callbacks</name>-&gt;<name>auth_baton</name></name></expr>)</condition><then>
+    <return>return <expr>-1</expr>;</return></then></if>
+
+  <comment type="block">/* Neon automatically tries some auth protocols and bumps the attempt
+     count without using Subversion's callbacks, so we can't depend
+     on attempt == 0 the first time we are called -- we need to check
+     if the auth state has been initted as well.  */</comment>
+  <if>if <condition>(<expr><name>attempt</name> == 0 || <name><name>ras</name>-&gt;<name>auth_iterstate</name></name> == <name>NULL</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>realmstring</name></decl>;</decl_stmt>
+
+      <comment type="block">/* &lt;https://svn.collab.net:80&gt; Subversion repository */</comment>
+      <expr_stmt><expr><name>realmstring</name> = <call><name>apr_psprintf</name><argument_list>(<argument><expr><name><name>ras</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>"&lt;%s://%s:%d&gt; %s"</expr></argument>,
+                                 <argument><expr><name><name>ras</name>-&gt;<name>root</name>.<name>scheme</name></name></expr></argument>, <argument><expr><name><name>ras</name>-&gt;<name>root</name>.<name>host</name></name></expr></argument>,
+                                 <argument><expr><name><name>ras</name>-&gt;<name>root</name>.<name>port</name></name></expr></argument>, <argument><expr><name>realm</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name>err</name> = <call><name>svn_auth_first_credentials</name><argument_list>(<argument><expr>&amp;<name>creds</name></expr></argument>,
+                                       <argument><expr>&amp;(<name><name>ras</name>-&gt;<name>auth_iterstate</name></name>)</expr></argument>,
+                                       <argument><expr><name>SVN_AUTH_CRED_SIMPLE</name></expr></argument>,
+                                       <argument><expr><name>realmstring</name></expr></argument>,
+                                       <argument><expr><name><name>ras</name>-&gt;<name>callbacks</name>-&gt;<name>auth_baton</name></name></expr></argument>,
+                                       <argument><expr><name><name>ras</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+
+  <else>else <comment type="block">/* attempt &gt; 0 */</comment>
+    <comment type="block">/* ### TODO:  if the http realm changed this time around, we
+       should be calling first_creds(), not next_creds(). */</comment>
+    <expr_stmt><expr><name>err</name> = <call><name>svn_auth_next_credentials</name><argument_list>(<argument><expr>&amp;<name>creds</name></expr></argument>,
+                                    <argument><expr><name><name>ras</name>-&gt;<name>auth_iterstate</name></name></expr></argument>,
+                                    <argument><expr><name><name>ras</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+  <if>if <condition>(<expr><name>err</name> || ! <name>creds</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <return>return <expr>-1</expr>;</return>
+    }</block></then></if>
+  <expr_stmt><expr><name>simple_creds</name> = <name>creds</name></expr>;</expr_stmt>
+
+  <comment type="block">/* ### silently truncates username/password to 256 chars. */</comment>
+  <expr_stmt><expr><call><name>apr_cpystrn</name><argument_list>(<argument><expr><name>username</name></expr></argument>, <argument><expr><name><name>simple_creds</name>-&gt;<name>username</name></name></expr></argument>, <argument><expr><name>NE_ABUFSIZ</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>apr_cpystrn</name><argument_list>(<argument><expr><name>password</name></expr></argument>, <argument><expr><name><name>simple_creds</name>-&gt;<name>password</name></name></expr></argument>, <argument><expr><name>NE_ABUFSIZ</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Cache the fetched username in ra_session. */</comment>
+  <expr_stmt><expr><name><name>ras</name>-&gt;<name>auth_username</name></name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name><name>ras</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>simple_creds</name>-&gt;<name>username</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr>0</expr>;</return>
+}</block></function>
+
+<escape char="0xc"/>
+<decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>apr_uint32_t</name></type> <name><name>neon_failure_map</name><index>[]</index><index>[<expr>2</expr>]</index></name> <init>=
+<expr><block>{
+  <expr><block>{ <expr><name>NE_SSL_NOTYETVALID</name></expr>,        <expr><name>SVN_AUTH_SSL_NOTYETVALID</name></expr> }</block></expr>,
+  <expr><block>{ <expr><name>NE_SSL_EXPIRED</name></expr>,            <expr><name>SVN_AUTH_SSL_EXPIRED</name></expr> }</block></expr>,
+  <expr><block>{ <expr><name>NE_SSL_IDMISMATCH</name></expr>,         <expr><name>SVN_AUTH_SSL_CNMISMATCH</name></expr> }</block></expr>,
+  <expr><block>{ <expr><name>NE_SSL_UNTRUSTED</name></expr>,          <expr><name>SVN_AUTH_SSL_UNKNOWNCA</name></expr> }</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+
+<comment type="block">/* Convert neon's SSL failure mask to our own failure mask. */</comment>
+<function><type><specifier>static</specifier> <name>apr_uint32_t</name></type>
+<name>convert_neon_failures</name><parameter_list>(<param><decl><type><name>int</name></type> <name>neon_failures</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>apr_uint32_t</name></type> <name>svn_failures</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>i</name></decl>;</decl_stmt>
+
+  <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <sizeof>sizeof<argument_list>(<argument><expr><name>neon_failure_map</name></expr></argument>)</argument_list></sizeof> / (2 * <sizeof>sizeof<argument_list>(<argument><expr><name>int</name></expr></argument>)</argument_list></sizeof>)</expr>;</condition> <incr><expr>++<name>i</name></expr></incr>)
+    <block>{
+      <if>if <condition>(<expr><name>neon_failures</name> &amp; <name><name>neon_failure_map</name><index>[<expr><name>i</name></expr>]</index><index>[<expr>0</expr>]</index></name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><name>svn_failures</name> |= <name><name>neon_failure_map</name><index>[<expr><name>i</name></expr>]</index><index>[<expr>1</expr>]</index></name></expr>;</expr_stmt>
+          <expr_stmt><expr><name>neon_failures</name> &amp;= ~<name><name>neon_failure_map</name><index>[<expr><name>i</name></expr>]</index><index>[<expr>0</expr>]</index></name></expr>;</expr_stmt>
+        }</block></then></if>
+    }</block></for>
+
+  <comment type="block">/* Map any remaining neon failure bits to our OTHER bit. */</comment>
+  <if>if <condition>(<expr><name>neon_failures</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><name>svn_failures</name> |= <name>SVN_AUTH_SSL_OTHER</name></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <return>return <expr><name>svn_failures</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* A neon-session callback to validate the SSL certificate when the CA
+   is unknown (e.g. a self-signed cert), or there are other SSL
+   certificate problems. */</comment>
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>server_ssl_callback</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>userdata</name></decl></param>,
+                    <param><decl><type><name>int</name></type> <name>failures</name></decl></param>,
+                    <param><decl><type><specifier>const</specifier> <name>ne_ssl_certificate</name> *</type><name>cert</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_neon__session_t</name> *</type><name>ras</name> <init>= <expr><name>userdata</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_auth_cred_ssl_server_trust_t</name> *</type><name>server_creds</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>void</name> *</type><name>creds</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_auth_iterstate_t</name> *</type><name>state</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>error</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>char</name> *</type><name>ascii_cert</name> <init>= <expr><call><name>ne_ssl_cert_export</name><argument_list>(<argument><expr><name>cert</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>char</name> *</type><name>issuer_dname</name> <init>= <expr><call><name>ne_ssl_readable_dname</name><argument_list>(<argument><expr><call><name>ne_ssl_cert_issuer</name><argument_list>(<argument><expr><name>cert</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_auth_ssl_server_cert_info_t</name></type> <name>cert_info</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>char</name></type> <name><name>fingerprint</name><index>[<expr><name>NE_SSL_DIGESTLEN</name></expr>]</index></name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>char</name></type> <name><name>valid_from</name><index>[<expr><name>NE_SSL_VDATELEN</name></expr>]</index></name></decl>, <decl><type ref="prev"/><name><name>valid_until</name><index>[<expr><name>NE_SSL_VDATELEN</name></expr>]</index></name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>realmstring</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_uint32_t</name> *</type><name>svn_failures</name> <init>= <expr><call><name>apr_palloc</name><argument_list>(<argument><expr><name><name>ras</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>svn_failures</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <comment type="block">/* Construct the realmstring, e.g. https://svn.collab.net:80 */</comment>
+  <expr_stmt><expr><name>realmstring</name> = <call><name>apr_psprintf</name><argument_list>(<argument><expr><name><name>ras</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>"%s://%s:%d"</expr></argument>, <argument><expr><name><name>ras</name>-&gt;<name>root</name>.<name>scheme</name></name></expr></argument>,
+                             <argument><expr><name><name>ras</name>-&gt;<name>root</name>.<name>host</name></name></expr></argument>, <argument><expr><name><name>ras</name>-&gt;<name>root</name>.<name>port</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr>*<name>svn_failures</name> = <call><name>convert_neon_failures</name><argument_list>(<argument><expr><name>failures</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>svn_auth_set_parameter</name><argument_list>(<argument><expr><name><name>ras</name>-&gt;<name>callbacks</name>-&gt;<name>auth_baton</name></name></expr></argument>,
+                         <argument><expr><name>SVN_AUTH_PARAM_SSL_SERVER_FAILURES</name></expr></argument>,
+                         <argument><expr><name>svn_failures</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Extract the info from the certificate */</comment>
+  <expr_stmt><expr><name><name>cert_info</name>.<name>hostname</name></name> = <call><name>ne_ssl_cert_identity</name><argument_list>(<argument><expr><name>cert</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><call><name>ne_ssl_cert_digest</name><argument_list>(<argument><expr><name>cert</name></expr></argument>, <argument><expr><name>fingerprint</name></expr></argument>)</argument_list></call> != 0</expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>strcpy</name><argument_list>(<argument><expr><name>fingerprint</name></expr></argument>, <argument><expr>"&lt;unknown&gt;"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+  <expr_stmt><expr><name><name>cert_info</name>.<name>fingerprint</name></name> = <name>fingerprint</name></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>ne_ssl_cert_validity</name><argument_list>(<argument><expr><name>cert</name></expr></argument>, <argument><expr><name>valid_from</name></expr></argument>, <argument><expr><name>valid_until</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>cert_info</name>.<name>valid_from</name></name> = <name>valid_from</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>cert_info</name>.<name>valid_until</name></name> = <name>valid_until</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>cert_info</name>.<name>issuer_dname</name></name> = <name>issuer_dname</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>cert_info</name>.<name>ascii_cert</name></name> = <name>ascii_cert</name></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>svn_auth_set_parameter</name><argument_list>(<argument><expr><name><name>ras</name>-&gt;<name>callbacks</name>-&gt;<name>auth_baton</name></name></expr></argument>,
+                         <argument><expr><name>SVN_AUTH_PARAM_SSL_SERVER_CERT_INFO</name></expr></argument>,
+                         <argument><expr>&amp;<name>cert_info</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>apr_pool_create</name><argument_list>(<argument><expr>&amp;<name>pool</name></expr></argument>, <argument><expr><name><name>ras</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>error</name> = <call><name>svn_auth_first_credentials</name><argument_list>(<argument><expr>&amp;<name>creds</name></expr></argument>, <argument><expr>&amp;<name>state</name></expr></argument>,
+                                     <argument><expr><name>SVN_AUTH_CRED_SSL_SERVER_TRUST</name></expr></argument>,
+                                     <argument><expr><name>realmstring</name></expr></argument>,
+                                     <argument><expr><name><name>ras</name>-&gt;<name>callbacks</name>-&gt;<name>auth_baton</name></name></expr></argument>,
+                                     <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>error</name> || ! <name>creds</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>error</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else
+    <block>{
+      <expr_stmt><expr><name>server_creds</name> = <name>creds</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name>error</name> = <call><name>svn_auth_save_credentials</name><argument_list>(<argument><expr><name>state</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>error</name></expr>)</condition><then>
+        <block>{
+          <comment type="block">/* It would be nice to show the error to the user somehow... */</comment>
+          <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>error</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+    }</block></else></if>
+
+  <expr_stmt><expr><call><name>free</name><argument_list>(<argument><expr><name>issuer_dname</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>free</name><argument_list>(<argument><expr><name>ascii_cert</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>svn_auth_set_parameter</name><argument_list>(<argument><expr><name><name>ras</name>-&gt;<name>callbacks</name>-&gt;<name>auth_baton</name></name></expr></argument>,
+                         <argument><expr><name>SVN_AUTH_PARAM_SSL_SERVER_CERT_INFO</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr>! <name>server_creds</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_boolean_t</name></type>
+<name>client_ssl_decrypt_cert</name><parameter_list>(<param><decl><type><name>svn_ra_neon__session_t</name> *</type><name>ras</name></decl></param>,
+                        <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>cert_file</name></decl></param>,
+                        <param><decl><type><name>ne_ssl_client_cert</name> *</type><name>clicert</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_auth_iterstate_t</name> *</type><name>state</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>error</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>ok</name> <init>= <expr><name>FALSE</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>void</name> *</type><name>creds</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>try</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>apr_pool_create</name><argument_list>(<argument><expr>&amp;<name>pool</name></expr></argument>, <argument><expr><name><name>ras</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <for>for (<init><expr><name>try</name> = 0</expr>;</init> <condition><expr><name>TRUE</name></expr>;</condition> <incr><expr>++<name>try</name></expr></incr>)
+    <block>{
+      <if>if <condition>(<expr><name>try</name> == 0</expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><name>error</name> = <call><name>svn_auth_first_credentials</name><argument_list>(<argument><expr>&amp;<name>creds</name></expr></argument>, <argument><expr>&amp;<name>state</name></expr></argument>,
+                                             <argument><expr><name>SVN_AUTH_CRED_SSL_CLIENT_CERT_PW</name></expr></argument>,
+                                             <argument><expr><name>cert_file</name></expr></argument>,
+                                             <argument><expr><name><name>ras</name>-&gt;<name>callbacks</name>-&gt;<name>auth_baton</name></name></expr></argument>,
+                                             <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+      <else>else
+        <block>{
+          <expr_stmt><expr><name>error</name> = <call><name>svn_auth_next_credentials</name><argument_list>(<argument><expr>&amp;<name>creds</name></expr></argument>, <argument><expr><name>state</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></else></if>
+
+      <if>if <condition>(<expr><name>error</name> || ! <name>creds</name></expr>)</condition><then>
+        <block>{
+          <comment type="block">/* Failure or too many attempts */</comment>
+          <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>error</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <break>break;</break>
+        }</block></then>
+      <else>else
+        <block>{
+          <decl_stmt><decl><type><name>svn_auth_cred_ssl_client_cert_pw_t</name> *</type><name>pw_creds</name> <init>= <expr><name>creds</name></expr></init></decl>;</decl_stmt>
+
+          <if>if <condition>(<expr><call><name>ne_ssl_clicert_decrypt</name><argument_list>(<argument><expr><name>clicert</name></expr></argument>, <argument><expr><name><name>pw_creds</name>-&gt;<name>password</name></name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+            <block>{
+              <comment type="block">/* Success */</comment>
+              <expr_stmt><expr><name>ok</name> = <name>TRUE</name></expr>;</expr_stmt>
+              <break>break;</break>
+            }</block></then></if>
+        }</block></else></if>
+    }</block></for>
+  <expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>ok</name></expr>;</return>
+}</block></function>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>SVN_NEON_0_28</name></cpp:ifdef>
+<comment type="block">/* Callback invoked to enter PKCS#11 PIN code. */</comment>
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>client_ssl_pkcs11_pin_entry</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>userdata</name></decl></param>,
+                            <param><decl><type><name>int</name></type> <name>attempt</name></decl></param>,
+                            <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>slot_descr</name></decl></param>,
+                            <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>token_label</name></decl></param>,
+                            <param><decl><type><name>unsigned</name> <name>int</name></type> <name>flags</name></decl></param>,
+                            <param><decl><type><name>char</name> *</type><name>pin</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_neon__session_t</name> *</type><name>ras</name> <init>= <expr><name>userdata</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>void</name> *</type><name>creds</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_auth_cred_ssl_client_cert_pw_t</name> *</type><name>pw_creds</name></decl>;</decl_stmt>
+  
+  <comment type="block">/* Always prevent PIN caching. */</comment>
+  <expr_stmt><expr><call><name>svn_auth_set_parameter</name>
+    <argument_list>(<argument><expr><name><name>ras</name>-&gt;<name>callbacks</name>-&gt;<name>auth_baton</name></name></expr></argument>, <argument><expr><name>SVN_AUTH_PARAM_NO_AUTH_CACHE</name></expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  
+  <if>if <condition>(<expr><name>attempt</name> == 0</expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>realmstring</name></decl>;</decl_stmt>
+      
+      <expr_stmt><expr><name>realmstring</name> = <call><name>apr_psprintf</name><argument_list>(<argument><expr><name><name>ras</name>-&gt;<name>pool</name></name></expr></argument>, 
+                                 <argument><expr><call><name>_</name><argument_list>(<argument><expr>"PIN for token \"%s\" in slot \"%s\""</expr></argument>)</argument_list></call></expr></argument>,
+                                 <argument><expr><name>token_label</name></expr></argument>, <argument><expr><name>slot_descr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      
+      <expr_stmt><expr><name>err</name> = <call><name>svn_auth_first_credentials</name><argument_list>(<argument><expr>&amp;<name>creds</name></expr></argument>,
+                                       <argument><expr>&amp;(<name><name>ras</name>-&gt;<name>auth_iterstate</name></name>)</expr></argument>,
+                                       <argument><expr><name>SVN_AUTH_CRED_SSL_CLIENT_CERT_PW</name></expr></argument>,
+                                       <argument><expr><name>realmstring</name></expr></argument>,
+                                       <argument><expr><name><name>ras</name>-&gt;<name>callbacks</name>-&gt;<name>auth_baton</name></name></expr></argument>,
+                                       <argument><expr><name><name>ras</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else
+     <expr_stmt><expr><name>err</name> = <call><name>svn_auth_next_credentials</name><argument_list>(<argument><expr>&amp;<name>creds</name></expr></argument>, 
+                                     <argument><expr><name><name>ras</name>-&gt;<name>auth_iterstate</name></name></expr></argument>,
+                                     <argument><expr><name><name>ras</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+  
+  <if>if <condition>(<expr><name>err</name> || ! <name>creds</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <return>return <expr>-1</expr>;</return>
+    }</block></then></if>
+  
+  <expr_stmt><expr><name>pw_creds</name> = <name>creds</name></expr>;</expr_stmt>
+  
+  <expr_stmt><expr><call><name>apr_cpystrn</name><argument_list>(<argument><expr><name>pin</name></expr></argument>, <argument><expr><name><name>pw_creds</name>-&gt;<name>password</name></name></expr></argument>, <argument><expr><name>NE_SSL_P11PINLEN</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  
+  <return>return <expr>0</expr>;</return>
+}</block></function>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>client_ssl_callback</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>userdata</name></decl></param>, <param><decl><type><name>ne_session</name> *</type><name>sess</name></decl></param>,
+                    <param><decl><type><specifier>const</specifier> <name>ne_ssl_dname</name> *<specifier>const</specifier> *</type><name>dnames</name></decl></param>,
+                    <param><decl><type><name>int</name></type> <name>dncount</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_neon__session_t</name> *</type><name>ras</name> <init>= <expr><name>userdata</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>ne_ssl_client_cert</name> *</type><name>clicert</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>void</name> *</type><name>creds</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_auth_iterstate_t</name> *</type><name>state</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>realmstring</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>error</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>try</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>apr_pool_create</name><argument_list>(<argument><expr>&amp;<name>pool</name></expr></argument>, <argument><expr><name><name>ras</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name>realmstring</name> = <call><name>apr_psprintf</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>"%s://%s:%d"</expr></argument>, <argument><expr><name><name>ras</name>-&gt;<name>root</name>.<name>scheme</name></name></expr></argument>,
+                             <argument><expr><name><name>ras</name>-&gt;<name>root</name>.<name>host</name></name></expr></argument>, <argument><expr><name><name>ras</name>-&gt;<name>root</name>.<name>port</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <for>for (<init><expr><name>try</name> = 0</expr>;</init> <condition><expr><name>TRUE</name></expr>;</condition> <incr><expr>++<name>try</name></expr></incr>)
+    <block>{
+      <if>if <condition>(<expr><name>try</name> == 0</expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><name>error</name> = <call><name>svn_auth_first_credentials</name><argument_list>(<argument><expr>&amp;<name>creds</name></expr></argument>, <argument><expr>&amp;<name>state</name></expr></argument>,
+                                             <argument><expr><name>SVN_AUTH_CRED_SSL_CLIENT_CERT</name></expr></argument>,
+                                             <argument><expr><name>realmstring</name></expr></argument>,
+                                             <argument><expr><name><name>ras</name>-&gt;<name>callbacks</name>-&gt;<name>auth_baton</name></name></expr></argument>,
+                                             <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+      <else>else
+        <block>{
+          <expr_stmt><expr><name>error</name> = <call><name>svn_auth_next_credentials</name><argument_list>(<argument><expr>&amp;<name>creds</name></expr></argument>, <argument><expr><name>state</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></else></if>
+
+      <if>if <condition>(<expr><name>error</name> || ! <name>creds</name></expr>)</condition><then>
+        <block>{
+          <comment type="block">/* Failure or too many attempts */</comment>
+          <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>error</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <break>break;</break>
+        }</block></then>
+      <else>else
+        <block>{
+          <decl_stmt><decl><type><name>svn_auth_cred_ssl_client_cert_t</name> *</type><name>client_creds</name> <init>= <expr><name>creds</name></expr></init></decl>;</decl_stmt>
+
+          <expr_stmt><expr><name>clicert</name> = <call><name>ne_ssl_clicert_read</name><argument_list>(<argument><expr><name><name>client_creds</name>-&gt;<name>cert_file</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <if>if <condition>(<expr><name>clicert</name></expr>)</condition><then>
+            <block>{
+              <if>if <condition>(<expr>! <call><name>ne_ssl_clicert_encrypted</name><argument_list>(<argument><expr><name>clicert</name></expr></argument>)</argument_list></call> ||
+                  <call><name>client_ssl_decrypt_cert</name><argument_list>(<argument><expr><name>ras</name></expr></argument>, <argument><expr><name><name>client_creds</name>-&gt;<name>cert_file</name></name></expr></argument>,
+                                          <argument><expr><name>clicert</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+                <block>{
+                  <expr_stmt><expr><call><name>ne_ssl_set_clicert</name><argument_list>(<argument><expr><name>sess</name></expr></argument>, <argument><expr><name>clicert</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                }</block></then></if>
+              <break>break;</break>
+            }</block></then></if>
+        }</block></else></if>
+    }</block></for>
+
+  <expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<comment type="block">/* Set *PROXY_HOST, *PROXY_PORT, *PROXY_USERNAME, *PROXY_PASSWORD,
+ * *TIMEOUT_SECONDS, *NEON_DEBUG, *COMPRESSION, *NEON_AUTH_TYPES, and
+ * *PK11_PROVIDER to the information for REQUESTED_HOST, allocated in
+ * POOL, if there is any applicable information.  If there is no
+ * applicable information or if there is an error, then set
+ * *PROXY_PORT to (unsigned int) -1, *TIMEOUT_SECONDS and *NEON_DEBUG
+ * to zero, *COMPRESSION to TRUE, *NEON_AUTH_TYPES is left untouched,
+ * and the rest are set to NULL.  This function can return an error,
+ * so before examining any values, check the error return value.
+ */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type><name>get_server_settings</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>proxy_host</name></decl></param>,
+                                        <param><decl><type><name>unsigned</name> <name>int</name> *</type><name>proxy_port</name></decl></param>,
+                                        <param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>proxy_username</name></decl></param>,
+                                        <param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>proxy_password</name></decl></param>,
+                                        <param><decl><type><name>int</name> *</type><name>timeout_seconds</name></decl></param>,
+                                        <param><decl><type><name>int</name> *</type><name>neon_debug</name></decl></param>,
+                                        <param><decl><type><name>svn_boolean_t</name> *</type><name>compression</name></decl></param>,
+                                        <param><decl><type><name>unsigned</name> <name>int</name> *</type><name>neon_auth_types</name></decl></param>,
+                                        <param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>pk11_provider</name></decl></param>,
+                                        <param><decl><type><name>svn_config_t</name> *</type><name>cfg</name></decl></param>,
+                                        <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>requested_host</name></decl></param>,
+                                        <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>exceptions</name></decl>, *<decl><type ref="prev"/><name>port_str</name></decl>, *<decl><type ref="prev"/><name>timeout_str</name></decl>, *<decl><type ref="prev"/><name>server_group</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>debug_str</name></decl>, *<decl><type ref="prev"/><name>http_auth_types</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>is_exception</name> <init>= <expr><name>FALSE</name></expr></init></decl>;</decl_stmt>
+  <comment type="block">/* If we find nothing, default to nulls. */</comment>
+  <expr_stmt><expr>*<name>proxy_host</name>     = <name>NULL</name></expr>;</expr_stmt>
+  <expr_stmt><expr>*<name>proxy_port</name>     = (<name>unsigned</name> <name>int</name>) -1</expr>;</expr_stmt>
+  <expr_stmt><expr>*<name>proxy_username</name> = <name>NULL</name></expr>;</expr_stmt>
+  <expr_stmt><expr>*<name>proxy_password</name> = <name>NULL</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name>port_str</name>        = <name>NULL</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name>timeout_str</name>     = <name>NULL</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name>debug_str</name>       = <name>NULL</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name>http_auth_types</name> = <name>NULL</name></expr>;</expr_stmt>
+  <expr_stmt><expr>*<name>pk11_provider</name>  = <name>NULL</name></expr>;</expr_stmt>
+
+  <comment type="block">/* Use the default proxy-specific settings if and only if
+     "http-proxy-exceptions" is not set to exclude this host. */</comment>
+  <expr_stmt><expr><call><name>svn_config_get</name><argument_list>(<argument><expr><name>cfg</name></expr></argument>, <argument><expr>&amp;<name>exceptions</name></expr></argument>, <argument><expr><name>SVN_CONFIG_SECTION_GLOBAL</name></expr></argument>,
+                 <argument><expr><name>SVN_CONFIG_OPTION_HTTP_PROXY_EXCEPTIONS</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>exceptions</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>l</name> <init>= <expr><call><name>svn_cstring_split</name><argument_list>(<argument><expr><name>exceptions</name></expr></argument>, <argument><expr>","</expr></argument>, <argument><expr><name>TRUE</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+      <expr_stmt><expr><name>is_exception</name> = <call><name>svn_cstring_match_glob_list</name><argument_list>(<argument><expr><name>requested_host</name></expr></argument>, <argument><expr><name>l</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+  <if>if <condition>(<expr>! <name>is_exception</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>svn_config_get</name><argument_list>(<argument><expr><name>cfg</name></expr></argument>, <argument><expr><name>proxy_host</name></expr></argument>, <argument><expr><name>SVN_CONFIG_SECTION_GLOBAL</name></expr></argument>,
+                     <argument><expr><name>SVN_CONFIG_OPTION_HTTP_PROXY_HOST</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>svn_config_get</name><argument_list>(<argument><expr><name>cfg</name></expr></argument>, <argument><expr>&amp;<name>port_str</name></expr></argument>, <argument><expr><name>SVN_CONFIG_SECTION_GLOBAL</name></expr></argument>,
+                     <argument><expr><name>SVN_CONFIG_OPTION_HTTP_PROXY_PORT</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>svn_config_get</name><argument_list>(<argument><expr><name>cfg</name></expr></argument>, <argument><expr><name>proxy_username</name></expr></argument>, <argument><expr><name>SVN_CONFIG_SECTION_GLOBAL</name></expr></argument>,
+                     <argument><expr><name>SVN_CONFIG_OPTION_HTTP_PROXY_USERNAME</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>svn_config_get</name><argument_list>(<argument><expr><name>cfg</name></expr></argument>, <argument><expr><name>proxy_password</name></expr></argument>, <argument><expr><name>SVN_CONFIG_SECTION_GLOBAL</name></expr></argument>,
+                     <argument><expr><name>SVN_CONFIG_OPTION_HTTP_PROXY_PASSWORD</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+  
+  <comment type="block">/* Apply non-proxy-specific settings regardless of exceptions: */</comment>
+  <expr_stmt><expr><call><name>svn_config_get</name><argument_list>(<argument><expr><name>cfg</name></expr></argument>, <argument><expr>&amp;<name>timeout_str</name></expr></argument>, <argument><expr><name>SVN_CONFIG_SECTION_GLOBAL</name></expr></argument>,
+                 <argument><expr><name>SVN_CONFIG_OPTION_HTTP_TIMEOUT</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_config_get_bool</name><argument_list>(<argument><expr><name>cfg</name></expr></argument>, <argument><expr><name>compression</name></expr></argument>, <argument><expr><name>SVN_CONFIG_SECTION_GLOBAL</name></expr></argument>,
+                              <argument><expr><name>SVN_CONFIG_OPTION_HTTP_COMPRESSION</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>svn_config_get</name><argument_list>(<argument><expr><name>cfg</name></expr></argument>, <argument><expr>&amp;<name>debug_str</name></expr></argument>, <argument><expr><name>SVN_CONFIG_SECTION_GLOBAL</name></expr></argument>,
+                 <argument><expr><name>SVN_CONFIG_OPTION_NEON_DEBUG_MASK</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>SVN_NEON_0_26</name></cpp:ifdef>
+  <expr_stmt><expr><call><name>svn_config_get</name><argument_list>(<argument><expr><name>cfg</name></expr></argument>, <argument><expr>&amp;<name>http_auth_types</name></expr></argument>, <argument><expr><name>SVN_CONFIG_SECTION_GLOBAL</name></expr></argument>,
+                 <argument><expr><name>SVN_CONFIG_OPTION_HTTP_AUTH_TYPES</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+  <expr_stmt><expr><call><name>svn_config_get</name><argument_list>(<argument><expr><name>cfg</name></expr></argument>, <argument><expr><name>pk11_provider</name></expr></argument>, <argument><expr><name>SVN_CONFIG_SECTION_GLOBAL</name></expr></argument>,
+                 <argument><expr><name>SVN_CONFIG_OPTION_SSL_PKCS11_PROVIDER</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name>cfg</name></expr>)</condition><then>
+    <expr_stmt><expr><name>server_group</name> = <call><name>svn_config_find_group</name><argument_list>(<argument><expr><name>cfg</name></expr></argument>, <argument><expr><name>requested_host</name></expr></argument>,
+                                         <argument><expr><name>SVN_CONFIG_SECTION_GROUPS</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+  <else>else
+    <expr_stmt><expr><name>server_group</name> = <name>NULL</name></expr>;</expr_stmt></else></if>
+
+  <if>if <condition>(<expr><name>server_group</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>svn_config_get</name><argument_list>(<argument><expr><name>cfg</name></expr></argument>, <argument><expr><name>proxy_host</name></expr></argument>, <argument><expr><name>server_group</name></expr></argument>,
+                     <argument><expr><name>SVN_CONFIG_OPTION_HTTP_PROXY_HOST</name></expr></argument>, <argument><expr>*<name>proxy_host</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>svn_config_get</name><argument_list>(<argument><expr><name>cfg</name></expr></argument>, <argument><expr>&amp;<name>port_str</name></expr></argument>, <argument><expr><name>server_group</name></expr></argument>,
+                     <argument><expr><name>SVN_CONFIG_OPTION_HTTP_PROXY_PORT</name></expr></argument>, <argument><expr><name>port_str</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>svn_config_get</name><argument_list>(<argument><expr><name>cfg</name></expr></argument>, <argument><expr><name>proxy_username</name></expr></argument>, <argument><expr><name>server_group</name></expr></argument>,
+                     <argument><expr><name>SVN_CONFIG_OPTION_HTTP_PROXY_USERNAME</name></expr></argument>, <argument><expr>*<name>proxy_username</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>svn_config_get</name><argument_list>(<argument><expr><name>cfg</name></expr></argument>, <argument><expr><name>proxy_password</name></expr></argument>, <argument><expr><name>server_group</name></expr></argument>,
+                     <argument><expr><name>SVN_CONFIG_OPTION_HTTP_PROXY_PASSWORD</name></expr></argument>, <argument><expr>*<name>proxy_password</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>svn_config_get</name><argument_list>(<argument><expr><name>cfg</name></expr></argument>, <argument><expr>&amp;<name>timeout_str</name></expr></argument>, <argument><expr><name>server_group</name></expr></argument>,
+                     <argument><expr><name>SVN_CONFIG_OPTION_HTTP_TIMEOUT</name></expr></argument>, <argument><expr><name>timeout_str</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_config_get_bool</name><argument_list>(<argument><expr><name>cfg</name></expr></argument>, <argument><expr><name>compression</name></expr></argument>, <argument><expr><name>server_group</name></expr></argument>,
+                                  <argument><expr><name>SVN_CONFIG_OPTION_HTTP_COMPRESSION</name></expr></argument>,
+                                  <argument><expr>*<name>compression</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>svn_config_get</name><argument_list>(<argument><expr><name>cfg</name></expr></argument>, <argument><expr>&amp;<name>debug_str</name></expr></argument>, <argument><expr><name>server_group</name></expr></argument>,
+                     <argument><expr><name>SVN_CONFIG_OPTION_NEON_DEBUG_MASK</name></expr></argument>, <argument><expr><name>debug_str</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>SVN_NEON_0_26</name></cpp:ifdef>
+      <expr_stmt><expr><call><name>svn_config_get</name><argument_list>(<argument><expr><name>cfg</name></expr></argument>, <argument><expr>&amp;<name>http_auth_types</name></expr></argument>, <argument><expr><name>server_group</name></expr></argument>,
+                     <argument><expr><name>SVN_CONFIG_OPTION_HTTP_AUTH_TYPES</name></expr></argument>, <argument><expr><name>http_auth_types</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+      <expr_stmt><expr><call><name>svn_config_get</name><argument_list>(<argument><expr><name>cfg</name></expr></argument>, <argument><expr><name>pk11_provider</name></expr></argument>, <argument><expr><name>server_group</name></expr></argument>,
+                     <argument><expr><name>SVN_CONFIG_OPTION_SSL_PKCS11_PROVIDER</name></expr></argument>, <argument><expr>*<name>pk11_provider</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <comment type="block">/* Special case: convert the port value, if any. */</comment>
+  <if>if <condition>(<expr><name>port_str</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>char</name> *</type><name>endstr</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><specifier>const</specifier> <name>long</name> <name>int</name></type> <name>port</name> <init>= <expr><call><name>strtol</name><argument_list>(<argument><expr><name>port_str</name></expr></argument>, <argument><expr>&amp;<name>endstr</name></expr></argument>, <argument><expr>10</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+      <if>if <condition>(<expr>*<name>endstr</name></expr>)</condition><then>
+        <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_ILLEGAL_URL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Invalid URL: illegal character in proxy "
+                                  "port number"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+      <if>if <condition>(<expr><name>port</name> &lt; 0</expr>)</condition><then>
+        <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_ILLEGAL_URL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Invalid URL: negative proxy port number"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+      <if>if <condition>(<expr><name>port</name> &gt; 65535</expr>)</condition><then>
+        <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_ILLEGAL_URL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Invalid URL: proxy port number greater "
+                                  "than maximum TCP port number 65535"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+      <expr_stmt><expr>*<name>proxy_port</name> = <name>port</name></expr>;</expr_stmt>
+    }</block></then>
+  <else>else
+    <expr_stmt><expr>*<name>proxy_port</name> = 80</expr>;</expr_stmt></else></if>
+
+  <if>if <condition>(<expr><name>timeout_str</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>char</name> *</type><name>endstr</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><specifier>const</specifier> <name>long</name> <name>int</name></type> <name>timeout</name> <init>= <expr><call><name>strtol</name><argument_list>(<argument><expr><name>timeout_str</name></expr></argument>, <argument><expr>&amp;<name>endstr</name></expr></argument>, <argument><expr>10</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+      <if>if <condition>(<expr>*<name>endstr</name></expr>)</condition><then>
+        <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_DAV_INVALID_CONFIG_VALUE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Invalid config: illegal character in "
+                                  "timeout value"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+      <if>if <condition>(<expr><name>timeout</name> &lt; 0</expr>)</condition><then>
+        <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_DAV_INVALID_CONFIG_VALUE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Invalid config: negative timeout value"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+      <expr_stmt><expr>*<name>timeout_seconds</name> = <name>timeout</name></expr>;</expr_stmt>
+    }</block></then>
+  <else>else
+    <expr_stmt><expr>*<name>timeout_seconds</name> = 0</expr>;</expr_stmt></else></if>
+
+  <if>if <condition>(<expr><name>debug_str</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>char</name> *</type><name>endstr</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><specifier>const</specifier> <name>long</name> <name>int</name></type> <name>debug</name> <init>= <expr><call><name>strtol</name><argument_list>(<argument><expr><name>debug_str</name></expr></argument>, <argument><expr>&amp;<name>endstr</name></expr></argument>, <argument><expr>10</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+      <if>if <condition>(<expr>*<name>endstr</name></expr>)</condition><then>
+        <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_DAV_INVALID_CONFIG_VALUE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Invalid config: illegal character in "
+                                  "debug mask value"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+      <expr_stmt><expr>*<name>neon_debug</name> = <name>debug</name></expr>;</expr_stmt>
+    }</block></then>
+  <else>else
+    <expr_stmt><expr>*<name>neon_debug</name> = 0</expr>;</expr_stmt></else></if>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>SVN_NEON_0_26</name></cpp:ifdef>
+  <if>if <condition>(<expr><name>http_auth_types</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>char</name> *</type><name>token</name></decl>, *<decl><type ref="prev"/><name>last</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>char</name> *</type><name>auth_types_list</name> <init>= <expr><call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><call><name>strlen</name><argument_list>(<argument><expr><name>http_auth_types</name></expr></argument>)</argument_list></call> + 1</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+      <expr_stmt><expr><call><name>apr_collapse_spaces</name><argument_list>(<argument><expr><name>auth_types_list</name></expr></argument>, <argument><expr><name>http_auth_types</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <while>while <condition>(<expr>(<name>token</name> = <call><name>apr_strtok</name><argument_list>(<argument><expr><name>auth_types_list</name></expr></argument>, <argument><expr>";"</expr></argument>, <argument><expr>&amp;<name>last</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition>
+        <block>{
+          <expr_stmt><expr><name>auth_types_list</name> = <name>NULL</name></expr>;</expr_stmt>
+          <if>if <condition>(<expr><call><name>svn_cstring_casecmp</name><argument_list>(<argument><expr>"basic"</expr></argument>, <argument><expr><name>token</name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+            <expr_stmt><expr>*<name>neon_auth_types</name> |= <name>NE_AUTH_BASIC</name></expr>;</expr_stmt></then>
+          <else>else <if>if <condition>(<expr><call><name>svn_cstring_casecmp</name><argument_list>(<argument><expr>"digest"</expr></argument>, <argument><expr><name>token</name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+            <expr_stmt><expr>*<name>neon_auth_types</name> |= <name>NE_AUTH_DIGEST</name></expr>;</expr_stmt></then>
+          <else>else <if>if <condition>(<expr><call><name>svn_cstring_casecmp</name><argument_list>(<argument><expr>"negotiate"</expr></argument>, <argument><expr><name>token</name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+            <expr_stmt><expr>*<name>neon_auth_types</name> |= <name>NE_AUTH_NEGOTIATE</name></expr>;</expr_stmt></then>
+          <else>else
+            <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_RA_DAV_INVALID_CONFIG_VALUE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                     <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Invalid config: unknown http auth"
+                                       "type '%s'"</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>token</name></expr></argument>)</argument_list></call></expr>;</return></else></if></else></if></else></if>
+      }</block></while>
+    }</block></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* SVN_NEON_0_26 */</comment>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* Userdata for the `proxy_auth' function. */</comment>
+<struct>struct <name>proxy_auth_baton</name>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>username</name></decl>;</decl_stmt>  <comment type="block">/* Cannot be NULL, but "" is okay. */</comment>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>password</name></decl>;</decl_stmt>  <comment type="block">/* Cannot be NULL, but "" is okay. */</comment>
+}</block>;</struct>
+
+
+<comment type="block">/* An `ne_request_auth' callback, see ne_auth.h.  USERDATA is a
+ * `struct proxy_auth_baton *'.
+ *
+ * If ATTEMPT &lt; 10, copy USERDATA-&gt;username and USERDATA-&gt;password
+ * into USERNAME and PASSWORD respectively (but do not copy more than
+ * NE_ABUFSIZ bytes of either), and return zero to indicate to Neon
+ * that authentication should be attempted.
+ *
+ * If ATTEMPT &gt;= 10, copy nothing into USERNAME and PASSWORD and
+ * return 1, to cancel further authentication attempts.
+ *
+ * Ignore REALM.
+ *
+ * ### Note: There is no particularly good reason for the 10-attempt
+ * limit.  Perhaps there should only be one attempt, and if it fails,
+ * we just cancel any further attempts.  I used 10 just in case the
+ * proxy tries various times with various realms, since we ignore
+ * REALM.  And why do we ignore REALM?  Because we currently don't
+ * have any way to specify different auth information for different
+ * realms.  (I'm assuming that REALM would be a realm on the proxy
+ * server, not on the Subversion repository server that is the real
+ * destination.)  Do we have any need to support proxy realms?
+ */</comment>
+<function><type><specifier>static</specifier> <name>int</name></type> <name>proxy_auth</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>userdata</name></decl></param>,
+                      <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>realm</name></decl></param>,
+                      <param><decl><type><name>int</name></type> <name>attempt</name></decl></param>,
+                      <param><decl><type><name>char</name> *</type><name>username</name></decl></param>,
+                      <param><decl><type><name>char</name> *</type><name>password</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>proxy_auth_baton</name> *</type><name>pab</name> <init>= <expr><name>userdata</name></expr></init></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr><name>attempt</name> &gt;= 10</expr>)</condition><then>
+    <return>return <expr>1</expr>;</return></then></if>
+
+  <comment type="block">/* Else. */</comment>
+
+  <expr_stmt><expr><call><name>apr_cpystrn</name><argument_list>(<argument><expr><name>username</name></expr></argument>, <argument><expr><name><name>pab</name>-&gt;<name>username</name></name></expr></argument>, <argument><expr><name>NE_ABUFSIZ</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>apr_cpystrn</name><argument_list>(<argument><expr><name>password</name></expr></argument>, <argument><expr><name><name>pab</name>-&gt;<name>password</name></name></expr></argument>, <argument><expr><name>NE_ABUFSIZ</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr>0</expr>;</return>
+}</block></function>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>RA_NEON_DESCRIPTION</name></cpp:macro> \
+  <cpp:value>N_("Module for accessing a repository via WebDAV protocol using Neon.")</cpp:value></cpp:define>
+
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *</type>
+<name>ra_neon_get_description</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>
+<block>{
+  <return>return <expr><call><name>_</name><argument_list>(<argument><expr><name>RA_NEON_DESCRIPTION</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> * <specifier>const</specifier> *</type>
+<name>ra_neon_get_schemes</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *</type><name><name>schemes_no_ssl</name><index>[]</index></name> <init>= <expr><block>{ <expr>"http"</expr>, <expr><name>NULL</name></expr> }</block></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *</type><name><name>schemes_ssl</name><index>[]</index></name> <init>= <expr><block>{ <expr>"http"</expr>, <expr>"https"</expr>, <expr><name>NULL</name></expr> }</block></expr></init></decl>;</decl_stmt>
+
+  <return>return <expr><call><name>ne_has_support</name><argument_list>(<argument><expr><name>NE_FEATURE_SSL</name></expr></argument>)</argument_list></call> ? <name>schemes_ssl</name> : <name>schemes_no_ssl</name></expr>;</return>
+}</block></function>
+
+<typedef>typedef <type><struct>struct <name>neonprogress_baton_t</name>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_progress_notify_func_t</name></type> <name>progress_func</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>void</name> *</type><name>progress_baton</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl>;</decl_stmt>
+}</block></struct></type> <name>neonprogress_baton_t</name>;</typedef>
+
+<function><type><specifier>static</specifier> <name>void</name></type>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>SVN_NEON_0_27</name></cpp:ifdef>
+<name>ra_neon_neonprogress</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>, <param><decl><type><name>ne_off_t</name></type> <name>progress</name></decl></param>, <param><decl><type><name>ne_off_t</name></type> <name>total</name></decl></param>)</parameter_list>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+ra_neon_neonprogress<parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>, <param><decl><type><name>off_t</name></type> <name>progress</name></decl></param>, <param><decl><type><name>off_t</name></type> <name>total</name></decl></param>)</parameter_list>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* SVN_NEON_0_27 */</comment>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>neonprogress_baton_t</name> *</type><name>neonprogress_baton</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+  <if>if <condition>(<expr><name><name>neonprogress_baton</name>-&gt;<name>progress_func</name></name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name><name>neonprogress_baton</name>-&gt;<name>progress_func</name></name><argument_list>(<argument><expr><name>progress</name></expr></argument>, <argument><expr><name>total</name></expr></argument>,
+                                        <argument><expr><name><name>neonprogress_baton</name>-&gt;<name>progress_baton</name></name></expr></argument>,
+                                        <argument><expr><name><name>neonprogress_baton</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+}</block></function>
+
+
+<escape char="0xc"/>
+<comment type="block">/** Capabilities exchange. */</comment>
+
+<comment type="block">/* Both server and repository support the capability. */</comment>
+<decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *</type><name>capability_yes</name> <init>= <expr>"yes"</expr></init></decl>;</decl_stmt>
+<comment type="block">/* Either server or repository does not support the capability. */</comment>
+<decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *</type><name>capability_no</name> <init>= <expr>"no"</expr></init></decl>;</decl_stmt>
+<comment type="block">/* Server supports the capability, but don't yet know if repository does. */</comment>
+<decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *</type><name>capability_server_yes</name> <init>= <expr>"server-yes"</expr></init></decl>;</decl_stmt>
+
+
+<comment type="block">/* Store in RAS the capabilities discovered from REQ's headers.
+   Use POOL for temporary allocation only. */</comment>
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>parse_capabilities</name><parameter_list>(<param><decl><type><name>ne_request</name> *</type><name>req</name></decl></param>,
+                   <param><decl><type><name>svn_ra_neon__session_t</name> *</type><name>ras</name></decl></param>,
+                   <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>header_value</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Start out assuming all capabilities are unsupported. */</comment>
+  <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name><name>ras</name>-&gt;<name>capabilities</name></name></expr></argument>, <argument><expr><name>SVN_RA_CAPABILITY_DEPTH</name></expr></argument>,
+               <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>, <argument><expr><name>capability_no</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name><name>ras</name>-&gt;<name>capabilities</name></name></expr></argument>, <argument><expr><name>SVN_RA_CAPABILITY_MERGEINFO</name></expr></argument>,
+               <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>, <argument><expr><name>capability_no</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name><name>ras</name>-&gt;<name>capabilities</name></name></expr></argument>, <argument><expr><name>SVN_RA_CAPABILITY_LOG_REVPROPS</name></expr></argument>,
+               <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>, <argument><expr><name>capability_no</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Then find out which ones are supported. */</comment>
+  <expr_stmt><expr><name>header_value</name> = <call><name>ne_get_response_header</name><argument_list>(<argument><expr><name>req</name></expr></argument>, <argument><expr>"dav"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>header_value</name></expr>)</condition><then>
+    <block>{
+      <comment type="block">/* Multiple headers of the same name will have been merged
+         together by the time we see them (either by an intermediary,
+         as is permitted in HTTP, or by neon) -- merged in the sense
+         that if a header "foo" appears multiple times, all the values
+         will be concatenated together, with spaces at the splice
+         points.  For example, if the server sent:
+         
+            DAV: 1,2
+            DAV: version-control,checkout,working-resource
+            DAV: merge,baseline,activity,version-controlled-collection
+            DAV: http://subversion.tigris.org/xmlns/dav/svn/depth
+
+          Here we might see:
+
+          header_value == "1,2, version-control,checkout,working-resource, merge,baseline,activity,version-controlled-collection, http://subversion.tigris.org/xmlns/dav/svn/depth, &lt;http://apache.org/dav/propset/fs/1&gt;"
+
+          (Deliberately not line-wrapping that, so you can see what
+          we're about to parse.)
+      */</comment>
+      
+      <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>vals</name> <init>=
+        <expr><call><name>svn_cstring_split</name><argument_list>(<argument><expr><name>header_value</name></expr></argument>, <argument><expr>","</expr></argument>, <argument><expr><name>TRUE</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+      
+      <comment type="block">/* Right now we only have a few capabilities to detect, so
+         just seek for them directly.  This could be written
+         slightly more efficiently, but that wouldn't be worth it
+         until we have many more capabilities. */</comment>
+      
+      <if>if <condition>(<expr><call><name>svn_cstring_match_glob_list</name><argument_list>(<argument><expr><name>SVN_DAV_NS_DAV_SVN_DEPTH</name></expr></argument>, <argument><expr><name>vals</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+        <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name><name>ras</name>-&gt;<name>capabilities</name></name></expr></argument>, <argument><expr><name>SVN_RA_CAPABILITY_DEPTH</name></expr></argument>,
+                     <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>, <argument><expr><name>capability_yes</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+      
+      <if>if <condition>(<expr><call><name>svn_cstring_match_glob_list</name><argument_list>(<argument><expr><name>SVN_DAV_NS_DAV_SVN_MERGEINFO</name></expr></argument>, <argument><expr><name>vals</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+        <comment type="block">/* The server doesn't know what repository we're referring
+           to, so it can't just say capability_yes. */</comment>
+        <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name><name>ras</name>-&gt;<name>capabilities</name></name></expr></argument>, <argument><expr><name>SVN_RA_CAPABILITY_MERGEINFO</name></expr></argument>,
+                     <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>, <argument><expr><name>capability_server_yes</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+      
+      <if>if <condition>(<expr><call><name>svn_cstring_match_glob_list</name><argument_list>(<argument><expr><name>SVN_DAV_NS_DAV_SVN_LOG_REVPROPS</name></expr></argument>, <argument><expr><name>vals</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+        <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name><name>ras</name>-&gt;<name>capabilities</name></name></expr></argument>, <argument><expr><name>SVN_RA_CAPABILITY_LOG_REVPROPS</name></expr></argument>,
+                     <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>, <argument><expr><name>capability_yes</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+      
+      <if>if <condition>(<expr><call><name>svn_cstring_match_glob_list</name><argument_list>(<argument><expr><name>SVN_DAV_NS_DAV_SVN_PARTIAL_REPLAY</name></expr></argument>, 
+                                      <argument><expr><name>vals</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+        <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name><name>ras</name>-&gt;<name>capabilities</name></name></expr></argument>, <argument><expr><name>SVN_RA_CAPABILITY_PARTIAL_REPLAY</name></expr></argument>,
+                     <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>, <argument><expr><name>capability_yes</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+    }</block></then></if>
+}</block></function>
+
+
+<comment type="block">/* Exchange capabilities with the server, by sending an OPTIONS
+   request announcing the client's capabilities, and by filling
+   RAS-&gt;capabilities with the server's capabilities as read from the
+   response headers.  Use POOL only for temporary allocation. */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>exchange_capabilities</name><parameter_list>(<param><decl><type><name>svn_ra_neon__session_t</name> *</type><name>ras</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>int</name></type> <name>http_ret_code</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_ra_neon__request_t</name> *</type><name>rar</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name> <init>= <expr><name>SVN_NO_ERROR</name></expr></init></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name>rar</name> = <call><name>svn_ra_neon__request_create</name><argument_list>(<argument><expr><name>ras</name></expr></argument>, <argument><expr>"OPTIONS"</expr></argument>, <argument><expr><name><name>ras</name>-&gt;<name>url</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>ne_add_request_header</name><argument_list>(<argument><expr><name><name>rar</name>-&gt;<name>ne_req</name></name></expr></argument>, <argument><expr>"DAV"</expr></argument>, <argument><expr><name>SVN_DAV_NS_DAV_SVN_DEPTH</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>ne_add_request_header</name><argument_list>(<argument><expr><name><name>rar</name>-&gt;<name>ne_req</name></name></expr></argument>, <argument><expr>"DAV"</expr></argument>, <argument><expr><name>SVN_DAV_NS_DAV_SVN_MERGEINFO</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>ne_add_request_header</name><argument_list>(<argument><expr><name><name>rar</name>-&gt;<name>ne_req</name></name></expr></argument>, <argument><expr>"DAV"</expr></argument>, <argument><expr><name>SVN_DAV_NS_DAV_SVN_LOG_REVPROPS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name>err</name> = <call><name>svn_ra_neon__request_dispatch</name><argument_list>(<argument><expr>&amp;<name>http_ret_code</name></expr></argument>, <argument><expr><name>rar</name></expr></argument>,
+                                      <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr>200</expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>err</name></expr>)</condition><then>
+    <goto>goto <name>cleanup</name>;</goto></then></if>
+
+  <if>if <condition>(<expr><name>http_ret_code</name> == 200</expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>parse_capabilities</name><argument_list>(<argument><expr><name><name>rar</name>-&gt;<name>ne_req</name></name></expr></argument>, <argument><expr><name>ras</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else
+    <block>{
+      <comment type="block">/* "can't happen", because svn_ra_neon__request_dispatch()
+         itself should have returned error if response code != 200. */</comment>
+      <return>return <expr><call><name>svn_error_createf</name>
+        <argument_list>(<argument><expr><name>SVN_ERR_RA_DAV_OPTIONS_REQ_FAILED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+         <argument><expr><call><name>_</name><argument_list>(<argument><expr>"OPTIONS request (for capabilities) got HTTP response code %d"</expr></argument>)</argument_list></call></expr></argument>,
+         <argument><expr><name>http_ret_code</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></else></if>
+
+ <label><name>cleanup</name>:</label>
+  <expr_stmt><expr><call><name>svn_ra_neon__request_destroy</name><argument_list>(<argument><expr><name>rar</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>err</name></expr>;</return>
+}</block></function>
+
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_ra_neon__has_capability</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                            <param><decl><type><name>svn_boolean_t</name> *</type><name>has</name></decl></param>,
+                            <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>capability</name></decl></param>,
+                            <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_neon__session_t</name> *</type><name>ras</name> <init>= <expr><name><name>session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>cap_result</name></decl>;</decl_stmt>
+
+  <comment type="block">/* This capability doesn't rely on anything server side. */</comment>
+  <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>capability</name></expr></argument>, <argument><expr><name>SVN_RA_CAPABILITY_COMMIT_REVPROPS</name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr>*<name>has</name> = <name>TRUE</name></expr>;</expr_stmt>
+      <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+    }</block></then></if>
+
+ <expr_stmt><expr><name>cap_result</name> = <call><name>apr_hash_get</name><argument_list>(<argument><expr><name><name>ras</name>-&gt;<name>capabilities</name></name></expr></argument>,
+                           <argument><expr><name>capability</name></expr></argument>,
+                           <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* If any capability is unknown, they're all unknown, so ask. */</comment>
+  <if>if <condition>(<expr><name>cap_result</name> == <name>NULL</name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>exchange_capabilities</name><argument_list>(<argument><expr><name>ras</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+
+  <comment type="block">/* Try again, now that we've fetched the capabilities. */</comment>
+  <expr_stmt><expr><name>cap_result</name> = <call><name>apr_hash_get</name><argument_list>(<argument><expr><name><name>ras</name>-&gt;<name>capabilities</name></name></expr></argument>,
+                            <argument><expr><name>capability</name></expr></argument>, <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Some capabilities depend on the repository as well as the server.
+     NOTE: ../libsvn_ra_serf/serf.c:svn_ra_serf__has_capability()
+     has a very similar code block.  If you change something here,
+     check there as well. */</comment>
+  <if>if <condition>(<expr><name>cap_result</name> == <name>capability_server_yes</name></expr>)</condition><then>
+    <block>{
+      <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>capability</name></expr></argument>, <argument><expr><name>SVN_RA_CAPABILITY_MERGEINFO</name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <block>{
+          <comment type="block">/* Handle mergeinfo specially.  Mergeinfo depends on the
+             repository as well as the server, but the server routine
+             that answered our exchange_capabilities() call above
+             didn't even know which repository we were interested in
+             -- it just told us whether the server supports mergeinfo.
+             If the answer was 'no', there's no point checking the
+             particular repository; but if it was 'yes, we still must
+             change it to 'no' iff the repository itself doesn't
+             support mergeinfo. */</comment>
+          <decl_stmt><decl><type><name>svn_mergeinfo_catalog_t</name></type> <name>ignored</name></decl>;</decl_stmt>
+          <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name></decl>;</decl_stmt>
+          <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>paths</name> <init>= <expr><call><name>apr_array_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>1</expr></argument>,
+                                                     <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>char</name> *</expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+          <expr_stmt><expr><call><name>APR_ARRAY_PUSH</name><argument_list>(<argument><expr><name>paths</name></expr></argument>, <argument><expr>const <name>char</name> *</expr></argument>)</argument_list></call> = ""</expr>;</expr_stmt>
+          
+          <expr_stmt><expr><name>err</name> = <call><name>svn_ra_neon__get_mergeinfo</name><argument_list>(<argument><expr><name>session</name></expr></argument>, <argument><expr>&amp;<name>ignored</name></expr></argument>, <argument><expr><name>paths</name></expr></argument>, <argument><expr>0</expr></argument>,
+                                           <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          
+          <if>if <condition>(<expr><name>err</name></expr>)</condition><then>
+            <block>{
+              <if>if <condition>(<expr><name><name>err</name>-&gt;<name>apr_err</name></name> == <name>SVN_ERR_UNSUPPORTED_FEATURE</name></expr>)</condition><then>
+                <block>{
+                  <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                  <expr_stmt><expr><name>cap_result</name> = <name>capability_no</name></expr>;</expr_stmt>
+                }</block></then>
+              <else>else <if>if <condition>(<expr><name><name>err</name>-&gt;<name>apr_err</name></name> == <name>SVN_ERR_FS_NOT_FOUND</name>
+                       || <name><name>err</name>-&gt;<name>apr_err</name></name> == <name>SVN_ERR_RA_DAV_PATH_NOT_FOUND</name></expr>)</condition><then>
+                <block>{
+                  <comment type="block">/* Mergeinfo requests use relative paths, and
+                     anyway we're in r0, so this is a likely error,
+                     but it means the repository supports mergeinfo! */</comment>
+                  <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                  <expr_stmt><expr><name>cap_result</name> = <name>capability_yes</name></expr>;</expr_stmt>
+                }</block></then>
+              <else>else
+                <return>return <expr><name>err</name></expr>;</return></else></if></else></if>
+
+            }</block></then>
+          <else>else
+            <expr_stmt><expr><name>cap_result</name> = <name>capability_yes</name></expr>;</expr_stmt></else></if>
+          
+          <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name><name>ras</name>-&gt;<name>capabilities</name></name></expr></argument>,
+                       <argument><expr><name>SVN_RA_CAPABILITY_MERGEINFO</name></expr></argument>, <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>,
+                       <argument><expr><name>cap_result</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+      <else>else
+        <block>{
+          <return>return <expr><call><name>svn_error_createf</name>
+            <argument_list>(<argument><expr><name>SVN_ERR_UNKNOWN_CAPABILITY</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+             <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Don't know how to handle '%s' for capability '%s'"</expr></argument>)</argument_list></call></expr></argument>,
+             <argument><expr><name>capability_server_yes</name></expr></argument>, <argument><expr><name>capability</name></expr></argument>)</argument_list></call></expr>;</return>
+        }</block></else></if>
+    }</block></then></if>
+
+  <if>if <condition>(<expr><name>cap_result</name> == <name>capability_yes</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr>*<name>has</name> = <name>TRUE</name></expr>;</expr_stmt>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>cap_result</name> == <name>capability_no</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr>*<name>has</name> = <name>FALSE</name></expr>;</expr_stmt>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>cap_result</name> == <name>NULL</name></expr>)</condition><then>
+    <block>{
+      <return>return <expr><call><name>svn_error_createf</name>
+        <argument_list>(<argument><expr><name>SVN_ERR_UNKNOWN_CAPABILITY</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+         <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Don't know anything about capability '%s'"</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>capability</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then>
+  <else>else  <comment type="block">/* "can't happen" */</comment>
+    <block>{
+      <comment type="block">/* Well, let's hope it's a string. */</comment>
+      <return>return <expr><call><name>svn_error_createf</name>
+        <argument_list>(<argument><expr><name>SVN_ERR_RA_DAV_OPTIONS_REQ_FAILED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+         <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Attempt to fetch capability '%s' resulted in '%s'"</expr></argument>)</argument_list></call></expr></argument>,
+         <argument><expr><name>capability</name></expr></argument>, <argument><expr><name>cap_result</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></else></if></else></if></else></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<escape char="0xc"/>
+<comment type="block">/* ### need an ne_session_dup to avoid the second gethostbyname
+ * call and make this halfway sane. */</comment>
+
+
+<comment type="block">/* Parse URL into *URI, doing some sanity checking and initializing the port
+   to a default value if it wasn't specified in URL.  */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>parse_url</name><parameter_list>(<param><decl><type><name>ne_uri</name> *</type><name>uri</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>url</name></decl></param>)</parameter_list>
+<block>{
+  <if>if <condition>(<expr><call><name>ne_uri_parse</name><argument_list>(<argument><expr><name>url</name></expr></argument>, <argument><expr><name>uri</name></expr></argument>)</argument_list></call>
+      || <name><name>uri</name>-&gt;<name>host</name></name> == <name>NULL</name> || <name><name>uri</name>-&gt;<name>path</name></name> == <name>NULL</name> || <name><name>uri</name>-&gt;<name>scheme</name></name> == <name>NULL</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>ne_uri_free</name><argument_list>(<argument><expr><name>uri</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_ILLEGAL_URL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                              <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Malformed URL for repository"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+  <if>if <condition>(<expr><name><name>uri</name>-&gt;<name>port</name></name> == 0</expr>)</condition><then>
+    <expr_stmt><expr><name><name>uri</name>-&gt;<name>port</name></name> = <call><name>ne_uri_defaultport</name><argument_list>(<argument><expr><name><name>uri</name>-&gt;<name>scheme</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>svn_ra_neon__open</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                  <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>repos_URL</name></decl></param>,
+                  <param><decl><type><specifier>const</specifier> <name>svn_ra_callbacks2_t</name> *</type><name>callbacks</name></decl></param>,
+                  <param><decl><type><name>void</name> *</type><name>callback_baton</name></decl></param>,
+                  <param><decl><type><name>apr_hash_t</name> *</type><name>config</name></decl></param>,
+                  <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>len</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>ne_session</name> *</type><name>sess</name></decl>, *<decl><type ref="prev"/><name>sess2</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>ne_uri</name> *</type><name>uri</name> <init>= <expr><call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>uri</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_ra_neon__session_t</name> *</type><name>ras</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>is_ssl_session</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>compression</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_config_t</name> *</type><name>cfg</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>server_group</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>char</name> *</type><name>itr</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>unsigned</name> <name>int</name></type> <name>neon_auth_types</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>pkcs11_provider</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>neonprogress_baton_t</name> *</type><name>neonprogress_baton</name> <init>=
+    <expr><call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>neonprogress_baton</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>useragent</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>client_string</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr><name><name>callbacks</name>-&gt;<name>get_client_string</name></name></expr>)</condition><then>
+    <expr_stmt><expr><call><name><name>callbacks</name>-&gt;<name>get_client_string</name></name><argument_list>(<argument><expr><name>callback_baton</name></expr></argument>, <argument><expr>&amp;<name>client_string</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <if>if <condition>(<expr><name>client_string</name></expr>)</condition><then>
+    <expr_stmt><expr><name>useragent</name> = <call><name>apr_pstrcat</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>"SVN/" <name>SVN_VERSION</name> "/"</expr></argument>, <argument><expr><name>client_string</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+  <else>else
+    <expr_stmt><expr><name>useragent</name> = "SVN/" <name>SVN_VERSION</name></expr>;</expr_stmt></else></if>
+
+  <comment type="block">/* Sanity check the URI */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>parse_url</name><argument_list>(<argument><expr><name>uri</name></expr></argument>, <argument><expr><name>repos_URL</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* make sure we eventually destroy the uri */</comment>
+  <expr_stmt><expr><call><name>apr_pool_cleanup_register</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>uri</name></expr></argument>, <argument><expr><name>cleanup_uri</name></expr></argument>, <argument><expr><name>apr_pool_cleanup_null</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+
+  <comment type="block">/* Can we initialize network? */</comment>
+  <if>if <condition>(<expr><call><name>ne_sock_init</name><argument_list>()</argument_list></call> != 0</expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_DAV_SOCK_INIT</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                            <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Network socket initialization failed"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <comment type="block">/* we want to know if the repository is actually somewhere else */</comment>
+  <comment type="block">/* ### not yet: http_redirect_register(sess, ... ); */</comment>
+
+  <comment type="block">/* HACK!  Neon uses strcmp when checking for https, but RFC 2396 says
+   * we should be using case-insensitive comparisons when checking for
+   * URI schemes.  To allow our users to use WeIrd CasE HttPS we force
+   * the scheme to lower case before we pass it on to Neon, otherwise we
+   * would crash later on when we assume Neon has set up its https stuff
+   * but it really didn't. */</comment>
+  <for>for (<init><expr><name>itr</name> = <name><name>uri</name>-&gt;<name>scheme</name></name></expr>;</init> <condition><expr>*<name>itr</name></expr>;</condition> <incr><expr>++<name>itr</name></expr></incr>)
+    <expr_stmt><expr>*<name>itr</name> = <call><name>tolower</name><argument_list>(<argument><expr>*<name>itr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></for>
+
+  <expr_stmt><expr><name>is_ssl_session</name> = (<call><name>svn_cstring_casecmp</name><argument_list>(<argument><expr><name><name>uri</name>-&gt;<name>scheme</name></name></expr></argument>, <argument><expr>"https"</expr></argument>)</argument_list></call> == 0)</expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>is_ssl_session</name></expr>)</condition><then>
+    <block>{
+      <if>if <condition>(<expr><call><name>ne_has_support</name><argument_list>(<argument><expr><name>NE_FEATURE_SSL</name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_DAV_SOCK_INIT</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                <argument><expr><call><name>_</name><argument_list>(<argument><expr>"SSL is not supported"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+    }</block></then></if>
+  <comment type="block">/* Create two neon session objects, and set their properties... */</comment>
+  <expr_stmt><expr><name>sess</name> = <call><name>ne_session_create</name><argument_list>(<argument><expr><name><name>uri</name>-&gt;<name>scheme</name></name></expr></argument>, <argument><expr><name><name>uri</name>-&gt;<name>host</name></name></expr></argument>, <argument><expr><name><name>uri</name>-&gt;<name>port</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>sess2</name> = <call><name>ne_session_create</name><argument_list>(<argument><expr><name><name>uri</name>-&gt;<name>scheme</name></name></expr></argument>, <argument><expr><name><name>uri</name>-&gt;<name>host</name></name></expr></argument>, <argument><expr><name><name>uri</name>-&gt;<name>port</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <comment type="block">/* make sure we will eventually destroy the session */</comment>
+  <expr_stmt><expr><call><name>apr_pool_cleanup_register</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>sess</name></expr></argument>, <argument><expr><name>cleanup_session</name></expr></argument>, <argument><expr><name>apr_pool_cleanup_null</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>apr_pool_cleanup_register</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>sess2</name></expr></argument>, <argument><expr><name>cleanup_session</name></expr></argument>,
+                            <argument><expr><name>apr_pool_cleanup_null</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name>cfg</name> = <name>config</name> ? <call><name>apr_hash_get</name><argument_list>(<argument><expr><name>config</name></expr></argument>,
+                              <argument><expr><name>SVN_CONFIG_CATEGORY_SERVERS</name></expr></argument>,
+                              <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>)</argument_list></call> : <name>NULL</name></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>cfg</name></expr>)</condition><then>
+    <expr_stmt><expr><name>server_group</name> = <call><name>svn_config_find_group</name><argument_list>(<argument><expr><name>cfg</name></expr></argument>, <argument><expr><name><name>uri</name>-&gt;<name>host</name></name></expr></argument>,
+                                         <argument><expr><name>SVN_CONFIG_SECTION_GROUPS</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+  <else>else
+    <expr_stmt><expr><name>server_group</name> = <name>NULL</name></expr>;</expr_stmt></else></if>
+
+  <comment type="block">/* If there's a timeout or proxy for this URL, use it. */</comment>
+  <block>{
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>proxy_host</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>unsigned</name> <name>int</name></type> <name>proxy_port</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>proxy_username</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>proxy_password</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>timeout</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>debug</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>get_server_settings</name><argument_list>(<argument><expr>&amp;<name>proxy_host</name></expr></argument>,
+                                <argument><expr>&amp;<name>proxy_port</name></expr></argument>,
+                                <argument><expr>&amp;<name>proxy_username</name></expr></argument>,
+                                <argument><expr>&amp;<name>proxy_password</name></expr></argument>,
+                                <argument><expr>&amp;<name>timeout</name></expr></argument>,
+                                <argument><expr>&amp;<name>debug</name></expr></argument>,
+                                <argument><expr>&amp;<name>compression</name></expr></argument>,
+                                <argument><expr>&amp;<name>neon_auth_types</name></expr></argument>,
+                                <argument><expr>&amp;<name>pkcs11_provider</name></expr></argument>,
+                                <argument><expr><name>cfg</name></expr></argument>,
+                                <argument><expr><name><name>uri</name>-&gt;<name>host</name></name></expr></argument>,
+                                <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>SVN_NEON_0_26</name></cpp:ifdef>
+    <if>if <condition>(<expr><name>neon_auth_types</name> == 0</expr>)</condition><then>
+      <block>{
+        <comment type="block">/* If there were no auth types specified in the configuration
+           file, provide the appropriate defaults. */</comment>
+        <expr_stmt><expr><name>neon_auth_types</name> = <name>NE_AUTH_BASIC</name> | <name>NE_AUTH_DIGEST</name></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>is_ssl_session</name></expr>)</condition><then>
+          <expr_stmt><expr><name>neon_auth_types</name> |= <name>NE_AUTH_NEGOTIATE</name></expr>;</expr_stmt></then></if>
+      }</block></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+    <if>if <condition>(<expr><name>debug</name></expr>)</condition><then>
+      <expr_stmt><expr><call><name>ne_debug_init</name><argument_list>(<argument><expr><name>stderr</name></expr></argument>, <argument><expr><name>debug</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+    <if>if <condition>(<expr><name>proxy_host</name></expr>)</condition><then>
+      <block>{
+        <expr_stmt><expr><call><name>ne_session_proxy</name><argument_list>(<argument><expr><name>sess</name></expr></argument>, <argument><expr><name>proxy_host</name></expr></argument>, <argument><expr><name>proxy_port</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>ne_session_proxy</name><argument_list>(<argument><expr><name>sess2</name></expr></argument>, <argument><expr><name>proxy_host</name></expr></argument>, <argument><expr><name>proxy_port</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <if>if <condition>(<expr><name>proxy_username</name></expr>)</condition><then>
+          <block>{
+            <comment type="block">/* Allocate the baton in pool, not on stack, so it will
+               last till whenever Neon needs it. */</comment>
+            <decl_stmt><decl><type>struct <name>proxy_auth_baton</name> *</type><name>pab</name> <init>= <expr><call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>pab</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+            <expr_stmt><expr><name><name>pab</name>-&gt;<name>username</name></name> = <name>proxy_username</name></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>pab</name>-&gt;<name>password</name></name> = <name>proxy_password</name> ? <name>proxy_password</name> : ""</expr>;</expr_stmt>
+
+            <expr_stmt><expr><call><name>ne_set_proxy_auth</name><argument_list>(<argument><expr><name>sess</name></expr></argument>, <argument><expr><name>proxy_auth</name></expr></argument>, <argument><expr><name>pab</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>ne_set_proxy_auth</name><argument_list>(<argument><expr><name>sess2</name></expr></argument>, <argument><expr><name>proxy_auth</name></expr></argument>, <argument><expr><name>pab</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          }</block></then></if>
+      }</block></then></if>
+
+    <if>if <condition>(<expr>!<name>timeout</name></expr>)</condition><then>
+      <expr_stmt><expr><name>timeout</name> = <name>DEFAULT_HTTP_TIMEOUT</name></expr>;</expr_stmt></then></if>
+    <expr_stmt><expr><call><name>ne_set_read_timeout</name><argument_list>(<argument><expr><name>sess</name></expr></argument>, <argument><expr><name>timeout</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>ne_set_read_timeout</name><argument_list>(<argument><expr><name>sess2</name></expr></argument>, <argument><expr><name>timeout</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>SVN_NEON_0_27</name></cpp:ifdef>
+    <expr_stmt><expr><call><name>ne_set_connect_timeout</name><argument_list>(<argument><expr><name>sess</name></expr></argument>, <argument><expr><name>timeout</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>ne_set_connect_timeout</name><argument_list>(<argument><expr><name>sess2</name></expr></argument>, <argument><expr><name>timeout</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+  }</block>
+
+  <if>if <condition>(<expr><name>useragent</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>ne_set_useragent</name><argument_list>(<argument><expr><name>sess</name></expr></argument>, <argument><expr><name>useragent</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>ne_set_useragent</name><argument_list>(<argument><expr><name>sess2</name></expr></argument>, <argument><expr><name>useragent</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else
+    <block>{
+      <expr_stmt><expr><call><name>ne_set_useragent</name><argument_list>(<argument><expr><name>sess</name></expr></argument>, <argument><expr>"SVN/" <name>SVN_VERSION</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>ne_set_useragent</name><argument_list>(<argument><expr><name>sess2</name></expr></argument>, <argument><expr>"SVN/" <name>SVN_VERSION</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if>
+
+  <comment type="block">/* clean up trailing slashes from the URL */</comment>
+  <expr_stmt><expr><name>len</name> = <call><name>strlen</name><argument_list>(<argument><expr><name><name>uri</name>-&gt;<name>path</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>len</name> &gt; 1 &amp;&amp; (<name><name>uri</name>-&gt;<name>path</name></name>)<index>[<expr><name>len</name> - 1</expr>]</index> == '/'</expr>)</condition><then>
+    <expr_stmt><expr>(<name><name>uri</name>-&gt;<name>path</name></name>)<index>[<expr><name>len</name> - 1</expr>]</index> = '\0'</expr>;</expr_stmt></then></if>
+
+  <comment type="block">/* Create and fill a session_baton. */</comment>
+  <expr_stmt><expr><name>ras</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>ras</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>ras</name>-&gt;<name>pool</name></name> = <name>pool</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>ras</name>-&gt;<name>url</name></name> = <call><name>svn_stringbuf_create</name><argument_list>(<argument><expr><name>repos_URL</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <comment type="block">/* copies uri pointer members, they get free'd in __close. */</comment>
+  <expr_stmt><expr><name><name>ras</name>-&gt;<name>root</name></name> = *<name>uri</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>ras</name>-&gt;<name>ne_sess</name></name> = <name>sess</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>ras</name>-&gt;<name>ne_sess2</name></name> = <name>sess2</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>ras</name>-&gt;<name>callbacks</name></name> = <name>callbacks</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>ras</name>-&gt;<name>callback_baton</name></name> = <name>callback_baton</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>ras</name>-&gt;<name>compression</name></name> = <name>compression</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>ras</name>-&gt;<name>progress_baton</name></name> = <name><name>callbacks</name>-&gt;<name>progress_baton</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>ras</name>-&gt;<name>progress_func</name></name> = <name><name>callbacks</name>-&gt;<name>progress_func</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>ras</name>-&gt;<name>capabilities</name></name> = <call><name>apr_hash_make</name><argument_list>(<argument><expr><name><name>ras</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>ras</name>-&gt;<name>vcc</name></name> = <name>NULL</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>ras</name>-&gt;<name>uuid</name></name> = <name>NULL</name></expr>;</expr_stmt>
+  <comment type="block">/* save config and server group in the auth parameter hash */</comment>
+  <expr_stmt><expr><call><name>svn_auth_set_parameter</name><argument_list>(<argument><expr><name><name>ras</name>-&gt;<name>callbacks</name>-&gt;<name>auth_baton</name></name></expr></argument>,
+                         <argument><expr><name>SVN_AUTH_PARAM_CONFIG</name></expr></argument>, <argument><expr><name>cfg</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>svn_auth_set_parameter</name><argument_list>(<argument><expr><name><name>ras</name>-&gt;<name>callbacks</name>-&gt;<name>auth_baton</name></name></expr></argument>,
+                         <argument><expr><name>SVN_AUTH_PARAM_SERVER_GROUP</name></expr></argument>, <argument><expr><name>server_group</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* note that ras-&gt;username and ras-&gt;password are still NULL at this
+     point. */</comment>
+
+  <comment type="block">/* Register an authentication 'pull' callback with the neon sessions */</comment>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>SVN_NEON_0_26</name></cpp:ifdef>
+  <expr_stmt><expr><call><name>ne_add_server_auth</name><argument_list>(<argument><expr><name>sess</name></expr></argument>, <argument><expr><name>neon_auth_types</name></expr></argument>, <argument><expr><name>request_auth</name></expr></argument>, <argument><expr><name>ras</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>ne_add_server_auth</name><argument_list>(<argument><expr><name>sess2</name></expr></argument>, <argument><expr><name>neon_auth_types</name></expr></argument>, <argument><expr><name>request_auth</name></expr></argument>, <argument><expr><name>ras</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+  <expr_stmt><expr><call><name>ne_set_server_auth</name><argument_list>(<argument><expr><name>sess</name></expr></argument>, <argument><expr><name>request_auth</name></expr></argument>, <argument><expr><name>ras</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>ne_set_server_auth</name><argument_list>(<argument><expr><name>sess2</name></expr></argument>, <argument><expr><name>request_auth</name></expr></argument>, <argument><expr><name>ras</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+  <if>if <condition>(<expr><name>is_ssl_session</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>authorities</name></decl>, *<decl><type ref="prev"/><name>trust_default_ca</name></decl>;</decl_stmt>
+      <expr_stmt><expr><name>authorities</name> = <call><name>svn_config_get_server_setting</name><argument_list>(
+            <argument><expr><name>cfg</name></expr></argument>, <argument><expr><name>server_group</name></expr></argument>,
+            <argument><expr><name>SVN_CONFIG_OPTION_SSL_AUTHORITY_FILES</name></expr></argument>,
+            <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <if>if <condition>(<expr><name>authorities</name> != <name>NULL</name></expr>)</condition><then>
+        <block>{
+          <decl_stmt><decl><type><name>char</name> *</type><name>files</name></decl>, *<decl><type ref="prev"/><name>file</name></decl>, *<decl><type ref="prev"/><name>last</name></decl>;</decl_stmt>
+          <expr_stmt><expr><name>files</name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>authorities</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+          <while>while <condition>(<expr>(<name>file</name> = <call><name>apr_strtok</name><argument_list>(<argument><expr><name>files</name></expr></argument>, <argument><expr>";"</expr></argument>, <argument><expr>&amp;<name>last</name></expr></argument>)</argument_list></call>) != <name>NULL</name></expr>)</condition>
+            <block>{
+              <decl_stmt><decl><type><name>ne_ssl_certificate</name> *</type><name>ca_cert</name></decl>;</decl_stmt>
+              <expr_stmt><expr><name>files</name> = <name>NULL</name></expr>;</expr_stmt>
+              <expr_stmt><expr><name>ca_cert</name> = <call><name>ne_ssl_cert_read</name><argument_list>(<argument><expr><name>file</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+              <if>if <condition>(<expr><name>ca_cert</name> == <name>NULL</name></expr>)</condition><then>
+                <block>{
+                  <return>return <expr><call><name>svn_error_createf</name>
+                    <argument_list>(<argument><expr><name>SVN_ERR_RA_DAV_INVALID_CONFIG_VALUE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                     <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Invalid config: unable to load certificate file '%s'"</expr></argument>)</argument_list></call></expr></argument>,
+                     <argument><expr><call><name>svn_path_local_style</name><argument_list>(<argument><expr><name>file</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+                }</block></then></if>
+              <expr_stmt><expr><call><name>ne_ssl_trust_cert</name><argument_list>(<argument><expr><name>sess</name></expr></argument>, <argument><expr><name>ca_cert</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+              <expr_stmt><expr><call><name>ne_ssl_trust_cert</name><argument_list>(<argument><expr><name>sess2</name></expr></argument>, <argument><expr><name>ca_cert</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></while>
+        }</block></then></if>
+
+      <comment type="block">/* When the CA certificate or server certificate has
+         verification problems, neon will call our verify function before
+         outright rejection of the connection.*/</comment>
+      <expr_stmt><expr><call><name>ne_ssl_set_verify</name><argument_list>(<argument><expr><name>sess</name></expr></argument>, <argument><expr><name>server_ssl_callback</name></expr></argument>, <argument><expr><name>ras</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>ne_ssl_set_verify</name><argument_list>(<argument><expr><name>sess2</name></expr></argument>, <argument><expr><name>server_ssl_callback</name></expr></argument>, <argument><expr><name>ras</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <comment type="block">/* For client connections, we register a callback for if the server
+         wants to authenticate the client via client certificate. */</comment>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>SVN_NEON_0_28</name></cpp:ifdef>
+      <if>if <condition>(<expr><name>pkcs11_provider</name></expr>)</condition><then> 
+        <block>{
+          <decl_stmt><decl><type><name>ne_ssl_pkcs11_provider</name> *</type><name>provider</name></decl>;</decl_stmt>
+          <decl_stmt><decl><type><name>int</name></type> <name>rv</name></decl>;</decl_stmt>
+          
+          <comment type="block">/* Initialize the PKCS#11 provider. */</comment>
+          <expr_stmt><expr><name>rv</name> = <call><name>ne_ssl_pkcs11_provider_init</name><argument_list>(<argument><expr>&amp;<name>provider</name></expr></argument>, <argument><expr><name>pkcs11_provider</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <if>if <condition>(<expr><name>rv</name> != <name>NE_PK11_OK</name></expr>)</condition><then>
+            <block>{
+              <return>return <expr><call><name>svn_error_createf</name>
+                <argument_list>(<argument><expr><name>SVN_ERR_RA_DAV_INVALID_CONFIG_VALUE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                 <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Invalid config: unable to load PKCS#11 provider '%s'"</expr></argument>)</argument_list></call></expr></argument>,
+                 <argument><expr><name>pkcs11_provider</name></expr></argument>)</argument_list></call></expr>;</return>
+            }</block></then></if>
+          
+          <comment type="block">/* Share the provider between the two sessions. */</comment>
+          <expr_stmt><expr><call><name>ne_ssl_set_pkcs11_provider</name><argument_list>(<argument><expr><name>sess</name></expr></argument>, <argument><expr><name>provider</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><call><name>ne_ssl_set_pkcs11_provider</name><argument_list>(<argument><expr><name>sess2</name></expr></argument>, <argument><expr><name>provider</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          
+          <expr_stmt><expr><call><name>ne_ssl_pkcs11_provider_pin</name><argument_list>(<argument><expr><name>provider</name></expr></argument>, <argument><expr><name>client_ssl_pkcs11_pin_entry</name></expr></argument>,
+                                     <argument><expr><name>ras</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          
+          <expr_stmt><expr><call><name>apr_pool_cleanup_register</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>provider</name></expr></argument>, <argument><expr><name>cleanup_p11provider</name></expr></argument>, 
+                                    <argument><expr><name>apr_pool_cleanup_null</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+      <comment type="block">/* Note the "else"; if a PKCS#11 provider is set up, a client
+         cert callback is already configured, so don't displace it
+         with the normal one here.  */</comment>
+      <else>else
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+        <block>{
+          <expr_stmt><expr><call><name>ne_ssl_provide_clicert</name><argument_list>(<argument><expr><name>sess</name></expr></argument>, <argument><expr><name>client_ssl_callback</name></expr></argument>, <argument><expr><name>ras</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><call><name>ne_ssl_provide_clicert</name><argument_list>(<argument><expr><name>sess2</name></expr></argument>, <argument><expr><name>client_ssl_callback</name></expr></argument>, <argument><expr><name>ras</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></else></if>
+
+      <comment type="block">/* See if the user wants us to trust "default" openssl CAs. */</comment>
+      <expr_stmt><expr><name>trust_default_ca</name> = <call><name>svn_config_get_server_setting</name><argument_list>(
+               <argument><expr><name>cfg</name></expr></argument>, <argument><expr><name>server_group</name></expr></argument>,
+               <argument><expr><name>SVN_CONFIG_OPTION_SSL_TRUST_DEFAULT_CA</name></expr></argument>,
+               <argument><expr>"true"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <if>if <condition>(<expr><call><name>svn_cstring_casecmp</name><argument_list>(<argument><expr><name>trust_default_ca</name></expr></argument>, <argument><expr>"true"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>ne_ssl_trust_default_ca</name><argument_list>(<argument><expr><name>sess</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><call><name>ne_ssl_trust_default_ca</name><argument_list>(<argument><expr><name>sess2</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+    }</block></then></if>
+  <expr_stmt><expr><name><name>neonprogress_baton</name>-&gt;<name>pool</name></name> = <name>pool</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>neonprogress_baton</name>-&gt;<name>progress_baton</name></name> = <name><name>callbacks</name>-&gt;<name>progress_baton</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>neonprogress_baton</name>-&gt;<name>progress_func</name></name> = <name><name>callbacks</name>-&gt;<name>progress_func</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>ne_set_progress</name><argument_list>(<argument><expr><name>sess</name></expr></argument>, <argument><expr><name>ra_neon_neonprogress</name></expr></argument>, <argument><expr><name>neonprogress_baton</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>ne_set_progress</name><argument_list>(<argument><expr><name>sess2</name></expr></argument>, <argument><expr><name>ra_neon_neonprogress</name></expr></argument>, <argument><expr><name>neonprogress_baton</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>session</name>-&gt;<name>priv</name></name> = <name>ras</name></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>exchange_capabilities</name><argument_list>(<argument><expr><name>ras</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type><name>svn_ra_neon__reparent</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                                          <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>url</name></decl></param>,
+                                          <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_neon__session_t</name> *</type><name>ras</name> <init>= <expr><name><name>session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>ne_uri</name> *</type><name>uri</name> <init>= <expr><call><name>apr_pcalloc</name><argument_list>(<argument><expr><name><name>session</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>uri</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>parse_url</name><argument_list>(<argument><expr><name>uri</name></expr></argument>, <argument><expr><name>url</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>apr_pool_cleanup_register</name><argument_list>(<argument><expr><name><name>session</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>uri</name></expr></argument>, <argument><expr><name>cleanup_uri</name></expr></argument>,
+                            <argument><expr><name>apr_pool_cleanup_null</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name><name>ras</name>-&gt;<name>root</name></name> = *<name>uri</name></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>svn_stringbuf_set</name><argument_list>(<argument><expr><name><name>ras</name>-&gt;<name>url</name></name></expr></argument>, <argument><expr><name>url</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type><name>svn_ra_neon__get_session_url</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                                                 <param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>url</name></decl></param>,
+                                                 <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_neon__session_t</name> *</type><name>ras</name> <init>= <expr><name><name>session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <expr_stmt><expr>*<name>url</name> = <call><name>apr_pstrmemdup</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name><name>ras</name>-&gt;<name>url</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name><name>ras</name>-&gt;<name>url</name>-&gt;<name>len</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type><name>svn_ra_neon__get_repos_root</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                                                <param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>url</name></decl></param>,
+                                                <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_neon__session_t</name> *</type><name>ras</name> <init>= <expr><name><name>session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr>! <name><name>ras</name>-&gt;<name>repos_root</name></name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>svn_string_t</name></type> <name>bc_relative</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>svn_stringbuf_t</name> *</type><name>url_buf</name></decl>;</decl_stmt>
+
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_ra_neon__get_baseline_info</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr>&amp;<name>bc_relative</name></expr></argument>,
+                                             <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>ras</name></expr></argument>, <argument><expr><name><name>ras</name>-&gt;<name>url</name>-&gt;<name>data</name></name></expr></argument>,
+                                             <argument><expr><name>SVN_INVALID_REVNUM</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <comment type="block">/* Remove as many path components from the URL as there are components
+         in bc_relative. */</comment>
+      <expr_stmt><expr><name>url_buf</name> = <call><name>svn_stringbuf_dup</name><argument_list>(<argument><expr><name><name>ras</name>-&gt;<name>url</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>svn_path_remove_components</name>
+        <argument_list>(<argument><expr><name>url_buf</name></expr></argument>, <argument><expr><call><name>svn_path_component_count</name><argument_list>(<argument><expr><name><name>bc_relative</name>.<name>data</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>ras</name>-&gt;<name>repos_root</name></name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name><name>ras</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>url_buf</name>-&gt;<name>data</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <expr_stmt><expr>*<name>url</name> = <name><name>ras</name>-&gt;<name>repos_root</name></name></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type><name>svn_ra_neon__do_get_uuid</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                                             <param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>uuid</name></decl></param>,
+                                             <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_neon__session_t</name> *</type><name>ras</name> <init>= <expr><name><name>session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr>! <name><name>ras</name>-&gt;<name>uuid</name></name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>svn_ra_neon__resource_t</name> *</type><name>rsrc</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>lopped_path</name></decl>;</decl_stmt>
+
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_ra_neon__search_for_starting_props</name><argument_list>(<argument><expr>&amp;<name>rsrc</name></expr></argument>, <argument><expr>&amp;<name>lopped_path</name></expr></argument>,
+                                                     <argument><expr><name>ras</name></expr></argument>, <argument><expr><name><name>ras</name>-&gt;<name>url</name>-&gt;<name>data</name></name></expr></argument>,
+                                                     <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_ra_neon__maybe_store_auth_info</name><argument_list>(<argument><expr><name>ras</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <if>if <condition>(<expr>! <name><name>ras</name>-&gt;<name>uuid</name></name></expr>)</condition><then>
+        <block>{
+          <comment type="block">/* ### better error reporting... */</comment>
+          <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>APR_EGENERAL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                  <argument><expr><call><name>_</name><argument_list>(<argument><expr>"The UUID property was not found on the "
+                                    "resource or any of its parents"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+        }</block></then></if>
+    }</block></then></if>
+
+  <comment type="block">/* search_for_starting_props() filled it. */</comment>
+  <expr_stmt><expr>*<name>uuid</name> = <name><name>ras</name>-&gt;<name>uuid</name></name></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>svn_version_t</name> *</type>
+<name>ra_neon_version</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>
+<block>{
+  <expr_stmt><expr><name>SVN_VERSION_BODY</name></expr>;</expr_stmt>
+}</block></function>
+
+<decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>svn_ra__vtable_t</name></type> <name>neon_vtable</name> <init>= <expr><block>{
+  <expr><name>ra_neon_version</name></expr>,
+  <expr><name>ra_neon_get_description</name></expr>,
+  <expr><name>ra_neon_get_schemes</name></expr>,
+  <expr><name>svn_ra_neon__open</name></expr>,
+  <expr><name>svn_ra_neon__reparent</name></expr>,
+  <expr><name>svn_ra_neon__get_session_url</name></expr>,
+  <expr><name>svn_ra_neon__get_latest_revnum</name></expr>,
+  <expr><name>svn_ra_neon__get_dated_revision</name></expr>,
+  <expr><name>svn_ra_neon__change_rev_prop</name></expr>,
+  <expr><name>svn_ra_neon__rev_proplist</name></expr>,
+  <expr><name>svn_ra_neon__rev_prop</name></expr>,
+  <expr><name>svn_ra_neon__get_commit_editor</name></expr>,
+  <expr><name>svn_ra_neon__get_file</name></expr>,
+  <expr><name>svn_ra_neon__get_dir</name></expr>,
+  <expr><name>svn_ra_neon__get_mergeinfo</name></expr>,
+  <expr><name>svn_ra_neon__do_update</name></expr>,
+  <expr><name>svn_ra_neon__do_switch</name></expr>,
+  <expr><name>svn_ra_neon__do_status</name></expr>,
+  <expr><name>svn_ra_neon__do_diff</name></expr>,
+  <expr><name>svn_ra_neon__get_log</name></expr>,
+  <expr><name>svn_ra_neon__do_check_path</name></expr>,
+  <expr><name>svn_ra_neon__do_stat</name></expr>,
+  <expr><name>svn_ra_neon__do_get_uuid</name></expr>,
+  <expr><name>svn_ra_neon__get_repos_root</name></expr>,
+  <expr><name>svn_ra_neon__get_locations</name></expr>,
+  <expr><name>svn_ra_neon__get_location_segments</name></expr>,
+  <expr><name>svn_ra_neon__get_file_revs</name></expr>,
+  <expr><name>svn_ra_neon__lock</name></expr>,
+  <expr><name>svn_ra_neon__unlock</name></expr>,
+  <expr><name>svn_ra_neon__get_lock</name></expr>,
+  <expr><name>svn_ra_neon__get_locks</name></expr>,
+  <expr><name>svn_ra_neon__replay</name></expr>,
+  <expr><name>svn_ra_neon__has_capability</name></expr>,
+  <expr><name>svn_ra_neon__replay_range</name></expr>
+}</block></expr></init></decl>;</decl_stmt>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_ra_neon__init</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>svn_version_t</name> *</type><name>loader_version</name></decl></param>,
+                  <param><decl><type><specifier>const</specifier> <name>svn_ra__vtable_t</name> **</type><name>vtable</name></decl></param>,
+                  <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>svn_version_checklist_t</name></type> <name><name>checklist</name><index>[]</index></name> <init>=
+    <expr><block>{
+      <expr><block>{ <expr>"svn_subr"</expr>,  <expr><name>svn_subr_version</name></expr> }</block></expr>,
+      <expr><block>{ <expr>"svn_delta"</expr>, <expr><name>svn_delta_version</name></expr> }</block></expr>,
+      <expr><block>{ <expr><name>NULL</name></expr>, <expr><name>NULL</name></expr> }</block></expr>
+    }</block></expr></init></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_ver_check_list</name><argument_list>(<argument><expr><call><name>ra_neon_version</name><argument_list>()</argument_list></call></expr></argument>, <argument><expr><name>checklist</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Simplified version check to make sure we can safely use the
+     VTABLE parameter. The RA loader does a more exhaustive check. */</comment>
+  <if>if <condition>(<expr><name><name>loader_version</name>-&gt;<name>major</name></name> != <name>SVN_VER_MAJOR</name></expr>)</condition><then>
+    <block>{
+      <return>return <expr><call><name>svn_error_createf</name>
+        <argument_list>(<argument><expr><name>SVN_ERR_VERSION_MISMATCH</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+         <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Unsupported RA loader version (%d) for ra_neon"</expr></argument>)</argument_list></call></expr></argument>,
+         <argument><expr><name><name>loader_version</name>-&gt;<name>major</name></name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+
+  <expr_stmt><expr>*<name>vtable</name> = &amp;<name>neon_vtable</name></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* Compatibility wrapper for the 1.1 and before API. */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>NAME</name></cpp:macro> <cpp:value>"ra_neon"</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>DESCRIPTION</name></cpp:macro> <cpp:value>RA_NEON_DESCRIPTION</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>VTBL</name></cpp:macro> <cpp:value>neon_vtable</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>INITFUNC</name></cpp:macro> <cpp:value>svn_ra_neon__init</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>COMPAT_INITFUNC</name></cpp:macro> <cpp:value>svn_ra_dav_init</cpp:value></cpp:define>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"../libsvn_ra/wrapper_template.h"</cpp:file></cpp:include>
+</unit>

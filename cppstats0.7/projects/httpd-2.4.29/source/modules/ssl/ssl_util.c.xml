@@ -1,0 +1,473 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/httpd-2.4.29/modules/ssl/ssl_util.c"><comment type="block">/* Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */</comment>
+
+<comment type="block">/*                      _             _
+ *  _ __ ___   ___   __| |    ___ ___| |  mod_ssl
+ * | '_ ` _ \ / _ \ / _` |   / __/ __| |  Apache Interface to OpenSSL
+ * | | | | | | (_) | (_| |   \__ \__ \ |
+ * |_| |_| |_|\___/ \__,_|___|___/___/_|
+ *                      |_____|
+ *  ssl_util.c
+ *  Utility Functions
+ */</comment>
+                             <comment type="block">/* ``Every day of my life
+                                  I am forced to add another
+                                  name to the list of people
+                                  who piss me off!''
+                                            -- Calvin          */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"ssl_private.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"ap_mpm.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_thread_mutex.h"</cpp:file></cpp:include>
+
+<comment type="block">/*  _________________________________________________________________
+**
+**  Utility Functions
+**  _________________________________________________________________
+*/</comment>
+
+<function><type><name>char</name> *</type><name>ssl_util_vhostid</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>, <param><decl><type><name>server_rec</name> *</type><name>s</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>char</name> *</type><name>id</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>SSLSrvConfigRec</name> *</type><name>sc</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name> *</type><name>host</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_port_t</name></type> <name>port</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>host</name> = <name><name>s</name>-&gt;<name>server_hostname</name></name></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name><name>s</name>-&gt;<name>port</name></name> != 0</expr>)</condition><then>
+        <expr_stmt><expr><name>port</name> = <name><name>s</name>-&gt;<name>port</name></name></expr>;</expr_stmt></then>
+    <else>else <block>{
+        <expr_stmt><expr><name>sc</name> = <call><name>mySrvConfig</name><argument_list>(<argument><expr><name>s</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name><name>sc</name>-&gt;<name>enabled</name></name> == <name>TRUE</name></expr>)</condition><then>
+            <expr_stmt><expr><name>port</name> = <name>DEFAULT_HTTPS_PORT</name></expr>;</expr_stmt></then>
+        <else>else
+            <expr_stmt><expr><name>port</name> = <name>DEFAULT_HTTP_PORT</name></expr>;</expr_stmt></else></if>
+    }</block></else></if>
+    <expr_stmt><expr><name>id</name> = <call><name>apr_psprintf</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>"%s:%lu"</expr></argument>, <argument><expr><name>host</name></expr></argument>, <argument><expr>(<name>unsigned</name> <name>long</name>)<name>port</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>id</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/*
+ * Return TRUE iff the given servername matches the server record when
+ * selecting virtual hosts.
+ */</comment>
+<function><type><name>BOOL</name></type> <name>ssl_util_vhost_matches</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>servername</name></decl></param>, <param><decl><type><name>server_rec</name> *</type><name>s</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>names</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+    
+    <comment type="block">/* check ServerName */</comment>
+    <if>if <condition>(<expr>!<call><name>strcasecmp</name><argument_list>(<argument><expr><name>servername</name></expr></argument>, <argument><expr><name><name>s</name>-&gt;<name>server_hostname</name></name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <return>return <expr><name>TRUE</name></expr>;</return>
+    }</block></then></if>
+    
+    <comment type="block">/*
+     * if not matched yet, check ServerAlias entries
+     * (adapted from vhost.c:matches_aliases())
+     */</comment>
+    <expr_stmt><expr><name>names</name> = <name><name>s</name>-&gt;<name>names</name></name></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>names</name></expr>)</condition><then> <block>{
+        <decl_stmt><decl><type><name>char</name> **</type><name>name</name> <init>= <expr>(<name>char</name> **)<name><name>names</name>-&gt;<name>elts</name></name></expr></init></decl>;</decl_stmt>
+        <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name><name>names</name>-&gt;<name>nelts</name></name></expr>;</condition> <incr><expr>++<name>i</name></expr></incr>) <block>{
+            <if>if <condition>(<expr>!<name><name>name</name><index>[<expr><name>i</name></expr>]</index></name></expr>)</condition><then>
+                <continue>continue;</continue></then></if>
+            <if>if <condition>(<expr>!<call><name>strcasecmp</name><argument_list>(<argument><expr><name>servername</name></expr></argument>, <argument><expr><name><name>name</name><index>[<expr><name>i</name></expr>]</index></name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+                <return>return <expr><name>TRUE</name></expr>;</return>
+            }</block></then></if>
+        }</block></for>
+    }</block></then></if>
+    
+    <comment type="block">/* if still no match, check ServerAlias entries with wildcards */</comment>
+    <expr_stmt><expr><name>names</name> = <name><name>s</name>-&gt;<name>wild_names</name></name></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>names</name></expr>)</condition><then> <block>{
+        <decl_stmt><decl><type><name>char</name> **</type><name>name</name> <init>= <expr>(<name>char</name> **)<name><name>names</name>-&gt;<name>elts</name></name></expr></init></decl>;</decl_stmt>
+        <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name><name>names</name>-&gt;<name>nelts</name></name></expr>;</condition> <incr><expr>++<name>i</name></expr></incr>) <block>{
+            <if>if <condition>(<expr>!<name><name>name</name><index>[<expr><name>i</name></expr>]</index></name></expr>)</condition><then>
+                <continue>continue;</continue></then></if>
+            <if>if <condition>(<expr>!<call><name>ap_strcasecmp_match</name><argument_list>(<argument><expr><name>servername</name></expr></argument>, <argument><expr><name><name>name</name><index>[<expr><name>i</name></expr>]</index></name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+                <return>return <expr><name>TRUE</name></expr>;</return>
+            }</block></then></if>
+        }</block></for>
+    }</block></then></if>
+    
+    <return>return <expr><name>FALSE</name></expr>;</return>
+}</block></function>
+
+<function><type><name>apr_file_t</name> *</type><name>ssl_util_ppopen</name><parameter_list>(<param><decl><type><name>server_rec</name> *</type><name>s</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>cmd</name></decl></param>,
+                            <param><decl><type><specifier>const</specifier> <name>char</name> * <specifier>const</specifier> *</type><name>argv</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>apr_procattr_t</name> *</type><name>procattr</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_proc_t</name> *</type><name>proc</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr><call><name>apr_procattr_create</name><argument_list>(<argument><expr>&amp;<name>procattr</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call> != <name>APR_SUCCESS</name></expr>)</condition><then>
+        <return>return <expr><name>NULL</name></expr>;</return></then></if>
+    <if>if <condition>(<expr><call><name>apr_procattr_io_set</name><argument_list>(<argument><expr><name>procattr</name></expr></argument>, <argument><expr><name>APR_FULL_BLOCK</name></expr></argument>, <argument><expr><name>APR_FULL_BLOCK</name></expr></argument>,
+                            <argument><expr><name>APR_FULL_BLOCK</name></expr></argument>)</argument_list></call> != <name>APR_SUCCESS</name></expr>)</condition><then>
+        <return>return <expr><name>NULL</name></expr>;</return></then></if>
+    <if>if <condition>(<expr><call><name>apr_procattr_dir_set</name><argument_list>(<argument><expr><name>procattr</name></expr></argument>,
+                             <argument><expr><call><name>ap_make_dirstr_parent</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>cmd</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call> != <name>APR_SUCCESS</name></expr>)</condition><then>
+        <return>return <expr><name>NULL</name></expr>;</return></then></if>
+    <if>if <condition>(<expr><call><name>apr_procattr_cmdtype_set</name><argument_list>(<argument><expr><name>procattr</name></expr></argument>, <argument><expr><name>APR_PROGRAM</name></expr></argument>)</argument_list></call> != <name>APR_SUCCESS</name></expr>)</condition><then>
+        <return>return <expr><name>NULL</name></expr>;</return></then></if>
+    <expr_stmt><expr><name>proc</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>apr_proc_t</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><call><name>apr_proc_create</name><argument_list>(<argument><expr><name>proc</name></expr></argument>, <argument><expr><name>cmd</name></expr></argument>, <argument><expr><name>argv</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>procattr</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call> != <name>APR_SUCCESS</name></expr>)</condition><then>
+        <return>return <expr><name>NULL</name></expr>;</return></then></if>
+    <return>return <expr><name><name>proc</name>-&gt;<name>out</name></name></expr>;</return>
+}</block></function>
+
+<function><type><name>void</name></type> <name>ssl_util_ppclose</name><parameter_list>(<param><decl><type><name>server_rec</name> *</type><name>s</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>, <param><decl><type><name>apr_file_t</name> *</type><name>fp</name></decl></param>)</parameter_list>
+<block>{
+    <expr_stmt><expr><call><name>apr_file_close</name><argument_list>(<argument><expr><name>fp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return;</return>
+}</block></function>
+
+<comment type="block">/*
+ * Run a filter program and read the first line of its stdout output
+ */</comment>
+<function><type><name>char</name> *</type><name>ssl_util_readfilter</name><parameter_list>(<param><decl><type><name>server_rec</name> *</type><name>s</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>cmd</name></decl></param>,
+                          <param><decl><type><specifier>const</specifier> <name>char</name> * <specifier>const</specifier> *</type><name>argv</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><specifier>static</specifier> <name>char</name></type> <name><name>buf</name><index>[<expr><name>MAX_STRING_LEN</name></expr>]</index></name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_file_t</name> *</type><name>fp</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_size_t</name></type> <name>nbytes</name> <init>= <expr>1</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name></type> <name>c</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>k</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>(<name>fp</name> = <call><name>ssl_util_ppopen</name><argument_list>(<argument><expr><name>s</name></expr></argument>, <argument><expr><name>p</name></expr></argument>, <argument><expr><name>cmd</name></expr></argument>, <argument><expr><name>argv</name></expr></argument>)</argument_list></call>) == <name>NULL</name></expr>)</condition><then>
+        <return>return <expr><name>NULL</name></expr>;</return></then></if>
+    <comment type="block">/* XXX: we are reading 1 byte at a time here */</comment>
+    <for>for (<init><expr><name>k</name> = 0</expr>;</init> <condition><expr><call><name>apr_file_read</name><argument_list>(<argument><expr><name>fp</name></expr></argument>, <argument><expr>&amp;<name>c</name></expr></argument>, <argument><expr>&amp;<name>nbytes</name></expr></argument>)</argument_list></call> == <name>APR_SUCCESS</name>
+                &amp;&amp; <name>nbytes</name> == 1 &amp;&amp; (<name>k</name> &lt; <name>MAX_STRING_LEN</name>-1)</expr>     ;</condition> <incr/>) <block>{
+        <if>if <condition>(<expr><name>c</name> == '\n' || <name>c</name> == '\r'</expr>)</condition><then>
+            <break>break;</break></then></if>
+        <expr_stmt><expr><name><name>buf</name><index>[<expr><name>k</name>++</expr>]</index></name> = <name>c</name></expr>;</expr_stmt>
+    }</block></for>
+    <expr_stmt><expr><name><name>buf</name><index>[<expr><name>k</name></expr>]</index></name> = <name>NUL</name></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>ssl_util_ppclose</name><argument_list>(<argument><expr><name>s</name></expr></argument>, <argument><expr><name>p</name></expr></argument>, <argument><expr><name>fp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <return>return <expr><name>buf</name></expr>;</return>
+}</block></function>
+
+<function><type><name>BOOL</name></type> <name>ssl_util_path_check</name><parameter_list>(<param><decl><type><name>ssl_pathcheck_t</name></type> <name>pcm</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>apr_finfo_t</name></type> <name>finfo</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr><name>path</name> == <name>NULL</name></expr>)</condition><then>
+        <return>return <expr><name>FALSE</name></expr>;</return></then></if>
+    <if>if <condition>(<expr><name>pcm</name> &amp; <name>SSL_PCM_EXISTS</name> &amp;&amp; <call><name>apr_stat</name><argument_list>(<argument><expr>&amp;<name>finfo</name></expr></argument>, <argument><expr><name>path</name></expr></argument>,
+                                <argument><expr><name>APR_FINFO_TYPE</name>|<name>APR_FINFO_SIZE</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call> != 0</expr>)</condition><then>
+        <return>return <expr><name>FALSE</name></expr>;</return></then></if>
+    <expr_stmt><expr><call><name>AP_DEBUG_ASSERT</name><argument_list>(<argument><expr>(<name>pcm</name> &amp; <name>SSL_PCM_EXISTS</name>) ||
+                    !(<name>pcm</name> &amp; (<name>SSL_PCM_ISREG</name>|<name>SSL_PCM_ISDIR</name>|<name>SSL_PCM_ISNONZERO</name>))</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>pcm</name> &amp; <name>SSL_PCM_ISREG</name> &amp;&amp; <name><name>finfo</name>.<name>filetype</name></name> != <name>APR_REG</name></expr>)</condition><then>
+        <return>return <expr><name>FALSE</name></expr>;</return></then></if>
+    <if>if <condition>(<expr><name>pcm</name> &amp; <name>SSL_PCM_ISDIR</name> &amp;&amp; <name><name>finfo</name>.<name>filetype</name></name> != <name>APR_DIR</name></expr>)</condition><then>
+        <return>return <expr><name>FALSE</name></expr>;</return></then></if>
+    <if>if <condition>(<expr><name>pcm</name> &amp; <name>SSL_PCM_ISNONZERO</name> &amp;&amp; <name><name>finfo</name>.<name>size</name></name> &lt;= 0</expr>)</condition><then>
+        <return>return <expr><name>FALSE</name></expr>;</return></then></if>
+    <return>return <expr><name>TRUE</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/*
+ * certain key data needs to survive restarts,
+ * which are stored in the user data table of s-&gt;process-&gt;pool.
+ * to prevent "leaking" of this data, we use malloc/free
+ * rather than apr_palloc and these wrappers to help make sure
+ * we do not leak the malloc-ed data.
+ */</comment>
+<function><type><name>unsigned</name> <name>char</name> *</type><name>ssl_asn1_table_set</name><parameter_list>(<param><decl><type><name>apr_hash_t</name> *</type><name>table</name></decl></param>,
+                                  <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>key</name></decl></param>,
+                                  <param><decl><type><name>long</name> <name>int</name></type> <name>length</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>apr_ssize_t</name></type> <name>klen</name> <init>= <expr><call><name>strlen</name><argument_list>(<argument><expr><name>key</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>ssl_asn1_t</name> *</type><name>asn1</name> <init>= <expr><call><name>apr_hash_get</name><argument_list>(<argument><expr><name>table</name></expr></argument>, <argument><expr><name>key</name></expr></argument>, <argument><expr><name>klen</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+    <comment type="block">/*
+     * if a value for this key already exists,
+     * reuse as much of the already malloc-ed data
+     * as possible.
+     */</comment>
+    <if>if <condition>(<expr><name>asn1</name></expr>)</condition><then> <block>{
+        <if>if <condition>(<expr><name><name>asn1</name>-&gt;<name>nData</name></name> != <name>length</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>free</name><argument_list>(<argument><expr><name><name>asn1</name>-&gt;<name>cpData</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt> <comment type="block">/* XXX: realloc? */</comment>
+            <expr_stmt><expr><name><name>asn1</name>-&gt;<name>cpData</name></name> = <name>NULL</name></expr>;</expr_stmt>
+        }</block></then></if>
+    }</block></then>
+    <else>else <block>{
+        <expr_stmt><expr><name>asn1</name> = <call><name>ap_malloc</name><argument_list>(<argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>asn1</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>asn1</name>-&gt;<name>source_mtime</name></name> = 0</expr>;</expr_stmt> <comment type="block">/* used as a note for encrypted private keys */</comment>
+        <expr_stmt><expr><name><name>asn1</name>-&gt;<name>cpData</name></name> = <name>NULL</name></expr>;</expr_stmt>
+    }</block></else></if>
+
+    <expr_stmt><expr><name><name>asn1</name>-&gt;<name>nData</name></name> = <name>length</name></expr>;</expr_stmt>
+    <if>if <condition>(<expr>!<name><name>asn1</name>-&gt;<name>cpData</name></name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name><name>asn1</name>-&gt;<name>cpData</name></name> = <call><name>ap_malloc</name><argument_list>(<argument><expr><name>length</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name>table</name></expr></argument>, <argument><expr><name>key</name></expr></argument>, <argument><expr><name>klen</name></expr></argument>, <argument><expr><name>asn1</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <return>return <expr><name><name>asn1</name>-&gt;<name>cpData</name></name></expr>;</return> <comment type="block">/* caller will assign a value to this */</comment>
+}</block></function>
+
+<function><type><name>ssl_asn1_t</name> *</type><name>ssl_asn1_table_get</name><parameter_list>(<param><decl><type><name>apr_hash_t</name> *</type><name>table</name></decl></param>,
+                               <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>key</name></decl></param>)</parameter_list>
+<block>{
+    <return>return <expr>(<name>ssl_asn1_t</name> *)<call><name>apr_hash_get</name><argument_list>(<argument><expr><name>table</name></expr></argument>, <argument><expr><name>key</name></expr></argument>, <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><name>void</name></type> <name>ssl_asn1_table_unset</name><parameter_list>(<param><decl><type><name>apr_hash_t</name> *</type><name>table</name></decl></param>,
+                          <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>key</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>apr_ssize_t</name></type> <name>klen</name> <init>= <expr><call><name>strlen</name><argument_list>(<argument><expr><name>key</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>ssl_asn1_t</name> *</type><name>asn1</name> <init>= <expr><call><name>apr_hash_get</name><argument_list>(<argument><expr><name>table</name></expr></argument>, <argument><expr><name>key</name></expr></argument>, <argument><expr><name>klen</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>!<name>asn1</name></expr>)</condition><then> <block>{
+        <return>return;</return>
+    }</block></then></if>
+
+    <if>if <condition>(<expr><name><name>asn1</name>-&gt;<name>cpData</name></name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>free</name><argument_list>(<argument><expr><name><name>asn1</name>-&gt;<name>cpData</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+    <expr_stmt><expr><call><name>free</name><argument_list>(<argument><expr><name>asn1</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name>table</name></expr></argument>, <argument><expr><name>key</name></expr></argument>, <argument><expr><name>klen</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_HAS_THREADS</name> &amp;&amp; <name>MODSSL_USE_OPENSSL_PRE_1_1_API</name></expr></cpp:if>
+
+<comment type="block">/*
+ * To ensure thread-safetyness in OpenSSL - work in progress
+ */</comment>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>apr_thread_mutex_t</name> **</type><name>lock_cs</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name></type>                  <name>lock_num_locks</name></decl>;</decl_stmt>
+
+<function><type><specifier>static</specifier> <name>void</name></type> <name>ssl_util_thr_lock</name><parameter_list>(<param><decl><type><name>int</name></type> <name>mode</name></decl></param>, <param><decl><type><name>int</name></type> <name>type</name></decl></param>,
+                              <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>file</name></decl></param>, <param><decl><type><name>int</name></type> <name>line</name></decl></param>)</parameter_list>
+<block>{
+    <if>if <condition>(<expr><name>type</name> &lt; <name>lock_num_locks</name></expr>)</condition><then> <block>{
+        <if>if <condition>(<expr><name>mode</name> &amp; <name>CRYPTO_LOCK</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>apr_thread_mutex_lock</name><argument_list>(<argument><expr><name><name>lock_cs</name><index>[<expr><name>type</name></expr>]</index></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+        <else>else <block>{
+            <expr_stmt><expr><call><name>apr_thread_mutex_unlock</name><argument_list>(<argument><expr><name><name>lock_cs</name><index>[<expr><name>type</name></expr>]</index></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></else></if>
+    }</block></then></if>
+}</block></function>
+
+<comment type="block">/* Dynamic lock structure */</comment>
+<struct>struct <name>CRYPTO_dynlock_value</name> <block>{
+    <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name>*</type> <name>file</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>line</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_thread_mutex_t</name> *</type><name>mutex</name></decl>;</decl_stmt>
+}</block>;</struct>
+
+<comment type="block">/* Global reference to the pool passed into ssl_util_thread_setup() */</comment>
+<decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>dynlockpool</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+
+<comment type="block">/*
+ * Dynamic lock creation callback
+ */</comment>
+<function><type><specifier>static</specifier> struct <name>CRYPTO_dynlock_value</name> *</type><name>ssl_dyn_create_function</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>file</name></decl></param>,
+                                                     <param><decl><type><name>int</name></type> <name>line</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type>struct <name>CRYPTO_dynlock_value</name> *</type><name>value</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+
+    <comment type="block">/*
+     * We need a pool to allocate our mutex.  Since we can't clear
+     * allocated memory from a pool, create a subpool that we can blow
+     * away in the destruction callback.
+     */</comment>
+    <expr_stmt><expr><call><name>apr_pool_create</name><argument_list>(<argument><expr>&amp;<name>p</name></expr></argument>, <argument><expr><name>dynlockpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>file</name></expr></argument>, <argument><expr><name>line</name></expr></argument>, <argument><expr><name>APLOG_MODULE_INDEX</name></expr></argument>, <argument><expr><name>APLOG_TRACE1</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>p</name></expr></argument>,
+                  <argument><expr>"Creating dynamic lock"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>value</name> = <call><name>apr_palloc</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument>struct <expr><name>CRYPTO_dynlock_value</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>value</name>-&gt;<name>pool</name></name> = <name>p</name></expr>;</expr_stmt>
+    <comment type="block">/* Keep our own copy of the place from which we were created,
+       using our own pool. */</comment>
+    <expr_stmt><expr><name><name>value</name>-&gt;<name>file</name></name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>file</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>value</name>-&gt;<name>line</name></name> = <name>line</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name>rv</name> = <call><name>apr_thread_mutex_create</name><argument_list>(<argument><expr>&amp;(<name><name>value</name>-&gt;<name>mutex</name></name>)</expr></argument>, <argument><expr><name>APR_THREAD_MUTEX_DEFAULT</name></expr></argument>,
+                                <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>file</name></expr></argument>, <argument><expr><name>line</name></expr></argument>, <argument><expr><name>APLOG_MODULE_INDEX</name></expr></argument>, <argument><expr><name>APLOG_ERR</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name>p</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>02186</expr></argument>)</argument_list></call>
+                      "Failed to create thread mutex for dynamic lock"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>apr_pool_destroy</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+    <return>return <expr><name>value</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/*
+ * Dynamic locking and unlocking function
+ */</comment>
+
+<function><type><specifier>static</specifier> <name>void</name></type> <name>ssl_dyn_lock_function</name><parameter_list>(<param><decl><type><name>int</name></type> <name>mode</name></decl></param>, <param><decl><type>struct <name>CRYPTO_dynlock_value</name> *</type><name>l</name></decl></param>,
+                           <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>file</name></decl></param>, <param><decl><type><name>int</name></type> <name>line</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr><name>mode</name> &amp; <name>CRYPTO_LOCK</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>file</name></expr></argument>, <argument><expr><name>line</name></expr></argument>, <argument><expr><name>APLOG_MODULE_INDEX</name></expr></argument>, <argument><expr><name>APLOG_TRACE3</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name><name>l</name>-&gt;<name>pool</name></name></expr></argument>,
+                      <argument><expr>"Acquiring mutex %s:%d"</expr></argument>, <argument><expr><name><name>l</name>-&gt;<name>file</name></name></expr></argument>, <argument><expr><name><name>l</name>-&gt;<name>line</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><name>rv</name> = <call><name>apr_thread_mutex_lock</name><argument_list>(<argument><expr><name><name>l</name>-&gt;<name>mutex</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>file</name></expr></argument>, <argument><expr><name>line</name></expr></argument>, <argument><expr><name>APLOG_MODULE_INDEX</name></expr></argument>, <argument><expr><name>APLOG_TRACE3</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name><name>l</name>-&gt;<name>pool</name></name></expr></argument>,
+                      <argument><expr>"Mutex %s:%d acquired!"</expr></argument>, <argument><expr><name><name>l</name>-&gt;<name>file</name></name></expr></argument>, <argument><expr><name><name>l</name>-&gt;<name>line</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+    <else>else <block>{
+        <expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>file</name></expr></argument>, <argument><expr><name>line</name></expr></argument>, <argument><expr><name>APLOG_MODULE_INDEX</name></expr></argument>, <argument><expr><name>APLOG_TRACE3</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name><name>l</name>-&gt;<name>pool</name></name></expr></argument>,
+                      <argument><expr>"Releasing mutex %s:%d"</expr></argument>, <argument><expr><name><name>l</name>-&gt;<name>file</name></name></expr></argument>, <argument><expr><name><name>l</name>-&gt;<name>line</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><name>rv</name> = <call><name>apr_thread_mutex_unlock</name><argument_list>(<argument><expr><name><name>l</name>-&gt;<name>mutex</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>file</name></expr></argument>, <argument><expr><name>line</name></expr></argument>, <argument><expr><name>APLOG_MODULE_INDEX</name></expr></argument>, <argument><expr><name>APLOG_TRACE3</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name><name>l</name>-&gt;<name>pool</name></name></expr></argument>,
+                      <argument><expr>"Mutex %s:%d released!"</expr></argument>, <argument><expr><name><name>l</name>-&gt;<name>file</name></name></expr></argument>, <argument><expr><name><name>l</name>-&gt;<name>line</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if>
+}</block></function>
+
+<comment type="block">/*
+ * Dynamic lock destruction callback
+ */</comment>
+<function><type><specifier>static</specifier> <name>void</name></type> <name>ssl_dyn_destroy_function</name><parameter_list>(<param><decl><type>struct <name>CRYPTO_dynlock_value</name> *</type><name>l</name></decl></param>,
+                          <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>file</name></decl></param>, <param><decl><type><name>int</name></type> <name>line</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>file</name></expr></argument>, <argument><expr><name>line</name></expr></argument>, <argument><expr><name>APLOG_MODULE_INDEX</name></expr></argument>, <argument><expr><name>APLOG_TRACE1</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name><name>l</name>-&gt;<name>pool</name></name></expr></argument>,
+                  <argument><expr>"Destroying dynamic lock %s:%d"</expr></argument>, <argument><expr><name><name>l</name>-&gt;<name>file</name></name></expr></argument>, <argument><expr><name><name>l</name>-&gt;<name>line</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name>rv</name> = <call><name>apr_thread_mutex_destroy</name><argument_list>(<argument><expr><name><name>l</name>-&gt;<name>mutex</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>file</name></expr></argument>, <argument><expr><name>line</name></expr></argument>, <argument><expr><name>APLOG_MODULE_INDEX</name></expr></argument>, <argument><expr><name>APLOG_ERR</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name><name>l</name>-&gt;<name>pool</name></name></expr></argument>,
+                      <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>02192</expr></argument>)</argument_list></call> "Failed to destroy mutex for dynamic "
+                      "lock %s:%d"</expr></argument>, <argument><expr><name><name>l</name>-&gt;<name>file</name></name></expr></argument>, <argument><expr><name><name>l</name>-&gt;<name>line</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <comment type="block">/* Trust that whomever owned the CRYPTO_dynlock_value we were
+     * passed has no future use for it...
+     */</comment>
+    <expr_stmt><expr><call><name>apr_pool_destroy</name><argument_list>(<argument><expr><name><name>l</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>OPENSSL_VERSION_NUMBER</name> &gt;= 0x10000000L</expr></cpp:if>
+
+<function><type><specifier>static</specifier> <name>void</name></type> <name>ssl_util_thr_id</name><parameter_list>(<param><decl><type><name>CRYPTO_THREADID</name> *</type><name>id</name></decl></param>)</parameter_list>
+<block>{
+    <comment type="block">/* OpenSSL needs this to return an unsigned long.  On OS/390, the pthread
+     * id is a structure twice that big.  Use the TCB pointer instead as a
+     * unique unsigned long.
+     */</comment>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>__MVS__</name></cpp:ifdef>
+    <struct>struct <name>PSA</name> <block>{
+        <decl_stmt><decl><type><name>char</name></type> <name><name>unmapped</name><index>[<expr>540</expr>]</index></name></decl>;</decl_stmt> <comment type="block">/* PSATOLD is at offset 540 in the PSA */</comment>
+        <decl_stmt><decl><type><name>unsigned</name> <name>long</name></type> <name>PSATOLD</name></decl>;</decl_stmt>
+    }</block> <decl>*<name>psaptr</name> <init>= <expr>0</expr></init></decl>;</struct> <comment type="block">/* PSA is at address 0 */</comment>
+
+    <expr_stmt><expr><call><name>CRYPTO_THREADID_set_numeric</name><argument_list>(<argument><expr><name>id</name></expr></argument>, <argument><expr><name><name>psaptr</name>-&gt;<name>PSATOLD</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+    <expr_stmt><expr><call><name>CRYPTO_THREADID_set_numeric</name><argument_list>(<argument><expr><name>id</name></expr></argument>, <argument><expr>(<name>unsigned</name> <name>long</name>) <call><name>apr_os_thread_current</name><argument_list>()</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>ssl_util_thr_id_cleanup</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>old</name></decl></param>)</parameter_list>
+<block>{
+    <expr_stmt><expr><call><name>CRYPTO_THREADID_set_callback</name><argument_list>(<argument><expr><name>old</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+
+<function><type><specifier>static</specifier> <name>unsigned</name> <name>long</name></type> <name>ssl_util_thr_id</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>
+<block>{
+    <comment type="block">/* OpenSSL needs this to return an unsigned long.  On OS/390, the pthread
+     * id is a structure twice that big.  Use the TCB pointer instead as a
+     * unique unsigned long.
+     */</comment>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>__MVS__</name></cpp:ifdef>
+    <struct>struct <name>PSA</name> <block>{
+        <decl_stmt><decl><type><name>char</name></type> <name><name>unmapped</name><index>[<expr>540</expr>]</index></name></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>unsigned</name> <name>long</name></type> <name>PSATOLD</name></decl>;</decl_stmt>
+    }</block> <decl>*<name>psaptr</name> <init>= <expr>0</expr></init></decl>;</struct>
+
+    <return>return <expr><name><name>psaptr</name>-&gt;<name>PSATOLD</name></name></expr>;</return>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+    <return>return <expr>(<name>unsigned</name> <name>long</name>) <call><name>apr_os_thread_current</name><argument_list>()</argument_list></call></expr>;</return>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>ssl_util_thr_id_cleanup</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>old</name></decl></param>)</parameter_list>
+<block>{
+    <expr_stmt><expr><call><name>CRYPTO_set_id_callback</name><argument_list>(<argument><expr><name>old</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>ssl_util_thread_cleanup</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>data</name></decl></param>)</parameter_list>
+<block>{
+    <expr_stmt><expr><call><name>CRYPTO_set_locking_callback</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>CRYPTO_set_dynlock_create_callback</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>CRYPTO_set_dynlock_lock_callback</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>CRYPTO_set_dynlock_destroy_callback</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>dynlockpool</name> = <name>NULL</name></expr>;</expr_stmt>
+
+    <comment type="block">/* Let the registered mutex cleanups do their own thing
+     */</comment>
+    <return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+
+<function><type><name>void</name></type> <name>ssl_util_thread_setup</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>lock_num_locks</name> = <call><name>CRYPTO_num_locks</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name>lock_cs</name> = <call><name>apr_palloc</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>lock_num_locks</name> * <sizeof>sizeof<argument_list>(<argument><expr>*<name>lock_cs</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name>lock_num_locks</name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>) <block>{
+        <expr_stmt><expr><call><name>apr_thread_mutex_create</name><argument_list>(<argument><expr>&amp;(<name><name>lock_cs</name><index>[<expr><name>i</name></expr>]</index></name>)</expr></argument>, <argument><expr><name>APR_THREAD_MUTEX_DEFAULT</name></expr></argument>, <argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></for>
+
+    <expr_stmt><expr><call><name>CRYPTO_set_locking_callback</name><argument_list>(<argument><expr><name>ssl_util_thr_lock</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* Set up dynamic locking scaffolding for OpenSSL to use at its
+     * convenience.
+     */</comment>
+    <expr_stmt><expr><name>dynlockpool</name> = <name>p</name></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>CRYPTO_set_dynlock_create_callback</name><argument_list>(<argument><expr><name>ssl_dyn_create_function</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>CRYPTO_set_dynlock_lock_callback</name><argument_list>(<argument><expr><name>ssl_dyn_lock_function</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>CRYPTO_set_dynlock_destroy_callback</name><argument_list>(<argument><expr><name>ssl_dyn_destroy_function</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>apr_pool_cleanup_register</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>ssl_util_thread_cleanup</name></expr></argument>,
+                                       <argument><expr><name>apr_pool_cleanup_null</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<function><type><name>void</name></type> <name>ssl_util_thread_id_setup</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>)</parameter_list>
+<block>{
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>OPENSSL_VERSION_NUMBER</name> &gt;= 0x10000000L</expr></cpp:if>
+    <expr_stmt><expr><call><name>CRYPTO_THREADID_set_callback</name><argument_list>(<argument><expr><name>ssl_util_thr_id</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+    <expr_stmt><expr><call><name>CRYPTO_set_id_callback</name><argument_list>(<argument><expr><name>ssl_util_thr_id</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+    <expr_stmt><expr><call><name>apr_pool_cleanup_register</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>ssl_util_thr_id_cleanup</name></expr></argument>,
+                                       <argument><expr><name>apr_pool_cleanup_null</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* #if APR_HAS_THREADS &amp;&amp; MODSSL_USE_OPENSSL_PRE_1_1_API */</comment>
+</unit>

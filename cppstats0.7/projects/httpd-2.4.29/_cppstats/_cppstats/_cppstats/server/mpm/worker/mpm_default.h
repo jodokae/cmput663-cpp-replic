@@ -1,0 +1,15 @@
+#if !defined(APACHE_MPM_DEFAULT_H)
+#define APACHE_MPM_DEFAULT_H
+#if !defined(DEFAULT_START_DAEMON)
+#define DEFAULT_START_DAEMON 3
+#endif
+#if !defined(DEFAULT_MAX_FREE_DAEMON)
+#define DEFAULT_MAX_FREE_DAEMON 10
+#endif
+#if !defined(DEFAULT_MIN_FREE_DAEMON)
+#define DEFAULT_MIN_FREE_DAEMON 3
+#endif
+#if !defined(DEFAULT_THREADS_PER_CHILD)
+#define DEFAULT_THREADS_PER_CHILD 25
+#endif
+#endif

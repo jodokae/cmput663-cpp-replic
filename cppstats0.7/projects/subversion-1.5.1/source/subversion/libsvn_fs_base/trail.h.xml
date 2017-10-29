@@ -1,0 +1,210 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/subversion-1.5.1/source/subversion/libsvn_fs_base/trail.h"><comment type="block">/* trail.h : internal interface to backing out of aborted Berkeley DB txns
+ *
+ * ====================================================================
+ * Copyright (c) 2000-2004 CollabNet.  All rights reserved.
+ *
+ * This software is licensed as described in the file COPYING, which
+ * you should have received as part of this distribution.  The terms
+ * are also available at http://subversion.tigris.org/license-1.html.
+ * If newer versions of this license are posted there, you may use a
+ * newer version instead, at your option.
+ *
+ * This software consists of voluntary contributions made by many
+ * individuals.  For exact contribution history, see the revision
+ * history and logs, available at http://subversion.tigris.org/.
+ * ====================================================================
+ */</comment>
+
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>SVN_LIBSVN_FS_TRAIL_H</name></cpp:ifndef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SVN_LIBSVN_FS_TRAIL_H</name></cpp:macro></cpp:define>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>APU_WANT_DB</name></cpp:macro></cpp:define>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apu_want.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_pools.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_fs.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"fs.h"</cpp:file></cpp:include>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>__cplusplus</name></cpp:ifdef>
+<extern>extern "C" <block>{
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* __cplusplus */</comment>
+
+<escape char="0xc"/>
+<comment type="block">/* "How do I get a trail object?  All these functions in the
+   filesystem expect them, and I can't find a function that returns
+   one."
+
+   Well, there isn't a function that returns a trail.  All trails come
+   from svn_fs_base__retry_txn.  Here's how to use that:
+
+   When using Berkeley DB transactions to protect the integrity of a
+   database, there are several things you need to keep in mind:
+
+   - Any Berkeley DB operation you perform as part of a Berkeley DB
+     transaction may return DB_LOCK_DEADLOCK, meaning that your
+     operation interferes with some other transaction in progress.
+     When this happens, you must abort the transaction, which undoes
+     all the changes you've made so far, and try it again.  So every
+     piece of code you ever write to bang on the DB needs to be
+     wrapped up in a retry loop.
+
+   - If, while you're doing your database operations, you also change
+     some in-memory data structures, then you may want to revert those
+     changes if the transaction deadlocks and needs to be retried.
+
+   - If you get a `real' error (i.e., something other than
+     DB_LOCK_DEADLOCK), you must abort your DB transaction, to release
+     its locks and return the database to its previous state.
+     Similarly, you may want to unroll some changes you've made to
+     in-memory data structures.
+
+   - Since a transaction insulates you from database changes made by
+     other processes, it's often possible to cache information about
+     database contents while the transaction lasts.  However, this
+     cache may become stale once your transaction is over.  So you may
+     need to clear your cache once the transaction completes, either
+     successfully or unsuccessfully.
+
+   The `svn_fs_base__retry_txn' function and its friends help you manage
+   some of that, in one nice package.
+
+   To use it, write your code in a function like this:
+
+       static svn_error_t *
+       txn_body_do_my_thing (void *baton,
+                             trail_t *trail)
+       {
+         ...
+         Do everything which needs to be protected by a Berkeley DB
+         transaction here.  Use TRAIL-&gt;db_txn as your Berkeley DB
+         transaction, and do your allocation in TRAIL-&gt;pool.  Pass
+         TRAIL on through to any functions which require one.
+
+         If a Berkeley DB operation returns DB_LOCK_DEADLOCK, just
+         return that using the normal Subversion error mechanism
+         (using DB_ERR, for example); don't write a retry loop.  If you
+         encounter some other kind of error, return it in the normal
+         fashion.
+         ...
+       }
+
+   Now, call svn_fs_base__retry_txn, passing a pointer to your function as
+   an argument:
+
+       err = svn_fs_base__retry_txn (fs, txn_body_do_my_thing, baton, pool);
+
+   This will simply invoke your function `txn_body_do_my_thing',
+   passing BATON through unchanged, and providing a fresh TRAIL
+   object, containing a pointer to the filesystem object, a Berkeley
+   DB transaction and an APR pool -- a subpool of POOL -- you should
+   use.
+
+   If your function returns a Subversion error wrapping a Berkeley DB
+   DB_LOCK_DEADLOCK error, `svn_fs_base__retry_txn' will abort the trail's
+   Berkeley DB transaction for you (thus undoing any database changes
+   you've made), free the trail's subpool (thus undoing any allocation
+   you may have done), and try the whole thing again with a new trail,
+   containing a new Berkeley DB transaction and pool.
+
+   If your function returns any other kind of Subversion error,
+   `svn_fs_base__retry_txn' will abort the trail's Berkeley DB transaction,
+   free the subpool, and return your error to its caller.
+
+   If, heavens forbid, your function actually succeeds, returning
+   SVN_NO_ERROR, `svn_fs_base__retry_txn' commits the trail's Berkeley DB
+   transaction, thus making your DB changes permanent, leaves the
+   trail's pool alone, so all the objects it contains are still
+   around, and returns SVN_NO_ERROR.  */</comment>
+
+<struct>struct <name>trail_t</name>
+<block>{
+  <comment type="block">/* A Berkeley DB transaction.  */</comment>
+  <decl_stmt><decl><type><name>DB_TXN</name> *</type><name>db_txn</name></decl>;</decl_stmt>
+
+  <comment type="block">/* The filesystem object with which this trail is associated. */</comment>
+  <decl_stmt><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl>;</decl_stmt>
+
+  <comment type="block">/* A pool to allocate things in as part of that transaction --- a
+     subpool of the one passed to `begin_trail'.  We destroy this pool
+     if we abort the transaction, and leave it around otherwise.  */</comment>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl>;</decl_stmt>
+
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>SVN_FS__TRAIL_DEBUG</name></expr></argument>)</argument_list></call></expr></cpp:if>
+  <decl_stmt><decl><type>struct <name>trail_debug_t</name> *</type><name>trail_debug</name></decl>;</decl_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+}</block>;</struct>
+<typedef>typedef <type>struct <name>trail_t</name></type> <name>trail_t</name>;</typedef>
+
+
+<comment type="block">/* Try a Berkeley DB transaction repeatedly until it doesn't deadlock.
+
+   That is:
+   - Begin a new Berkeley DB transaction, DB_TXN, in the filesystem FS.
+   - Allocate a subpool of POOL, TXN_POOL.
+   - Start a new trail, TRAIL, pointing to DB_TXN and TXN_POOL.
+   - Apply TXN_BODY to BATON and TRAIL.  TXN_BODY should try to do
+     some series of DB operations which needs to be atomic, using
+     TRAIL-&gt;db_txn as the transaction, and TRAIL-&gt;pool for allocation.
+     If a DB operation deadlocks, or if any other kind of error
+     happens, TXN_BODY should simply return with an appropriate
+     svn_error_t, E.
+   - If TXN_BODY returns SVN_NO_ERROR, then commit the transaction,
+     run any completion functions, and return SVN_NO_ERROR.  Do *not*
+     free TXN_POOL.
+   - If E is a Berkeley DB error indicating that a deadlock occurred,
+     abort the DB transaction and free TXN_POOL.  Then retry the whole
+     thing from the top.
+   - If E is any other kind of error, free TXN_POOL and return E.
+
+   One benefit of using this function is that it makes it easy to
+   ensure that whatever transactions a filesystem function starts, it
+   either aborts or commits before it returns.  If we don't somehow
+   complete all our transactions, later operations could deadlock.  */</comment>
+<function_decl><type><name>svn_error_t</name> *</type><name>svn_fs_base__retry_txn</name><parameter_list>(<param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+                                    <param><function_decl><type><name>svn_error_t</name> *</type>(*<name>txn_body</name>)<parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>,
+                                                             <param><decl><type><name>trail_t</name> *</type><name>trail</name></decl></param>)</parameter_list></function_decl></param>,
+                                    <param><decl><type><name>void</name> *</type><name>baton</name></decl></param>,
+                                    <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>;</function_decl>
+
+<function_decl><type><name>svn_error_t</name> *</type>
+<name>svn_fs_base__retry_debug</name><parameter_list>(<param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+                         <param><function_decl><type><name>svn_error_t</name> *</type>(*<name>txn_body</name>)<parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>,
+                                                  <param><decl><type><name>trail_t</name> *</type><name>trail</name></decl></param>)</parameter_list></function_decl></param>,
+                         <param><decl><type><name>void</name> *</type><name>baton</name></decl></param>,
+                         <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>,
+                         <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>txn_body_fn_name</name></decl></param>,
+                         <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>filename</name></decl></param>,
+                         <param><decl><type><name>int</name></type> <name>line</name></decl></param>)</parameter_list>;</function_decl>
+
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>SVN_FS__TRAIL_DEBUG</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>svn_fs_base__retry_txn</name><parameter_list>(<param><type><name>fs</name></type></param>, <param><type><name>txn_body</name></type></param>, <param><type><name>baton</name></type></param>, <param><type><name>pool</name></type></param>)</parameter_list></cpp:macro> \
+  <cpp:value>svn_fs_base__retry_debug(fs, txn_body, baton, pool, #txn_body,</cpp:value></cpp:define>
+                           <expr_stmt><expr><name>__FILE__</name></expr>, <expr><name>__LINE__</name></expr></expr_stmt>)</block>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+
+<comment type="block">/* Try an action repeatedly until it doesn't deadlock.  This is
+   exactly like svn_fs_base__retry_txn() (whose documentation you really
+   should read) except that no Berkeley DB transaction is created. */</comment>
+  <function_decl><type><name>svn_error_t</name> *</type><name>svn_fs_base__retry</name><parameter_list>(<param><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl></param>,
+                                  <param><function_decl><type><name>svn_error_t</name> *</type>(*<name>txn_body</name>)<parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>,
+                                                           <param><decl><type><name>trail_t</name> *</type><name>trail</name></decl></param>)</parameter_list></function_decl></param>,
+                                  <param><decl><type><name>void</name> *</type><name>baton</name></decl></param>,
+                                  <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>;</function_decl></extern>
+
+
+<comment type="block">/* Record that OPeration is being done on TABLE in the TRAIL. */</comment>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>SVN_FS__TRAIL_DEBUG</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<function_decl><type><name>void</name></type> <name>svn_fs_base__trail_debug</name><parameter_list>(<param><decl><type><name>trail_t</name> *</type><name>trail</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>table</name></decl></param>,
+                              <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>op</name></decl></param>)</parameter_list>;</function_decl>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>svn_fs_base__trail_debug</name><parameter_list>(<param><type><name>trail</name></type></param>, <param><type><name>table</name></type></param>, <param><type><name>operation</name></type></param>)</parameter_list></cpp:macro></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>__cplusplus</name></cpp:ifdef>
+}
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* __cplusplus */</comment>
+
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* SVN_LIBSVN_FS_TRAIL_H */</comment>
+</unit>

@@ -1,0 +1,631 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/subversion-1.5.1/source/subversion/libsvn_wc/questions.c"><comment type="block">/*
+ * questions.c:  routines for asking questions about working copies
+ *
+ * ====================================================================
+ * Copyright (c) 2000-2004, 2006 CollabNet.  All rights reserved.
+ *
+ * This software is licensed as described in the file COPYING, which
+ * you should have received as part of this distribution.  The terms
+ * are also available at http://subversion.tigris.org/license-1.html.
+ * If newer versions of this license are posted there, you may use a
+ * newer version instead, at your option.
+ *
+ * This software consists of voluntary contributions made by many
+ * individuals.  For exact contribution history, see the revision
+ * history and logs, available at http://subversion.tigris.org/.
+ * ====================================================================
+ */</comment>
+
+
+<escape char="0xc"/>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;string.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_pools.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_file_io.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_file_info.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_time.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_pools.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_types.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_string.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_error.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_path.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_time.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_io.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_props.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"wc.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"adm_files.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"questions.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"entries.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"props.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"translate.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_md5.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_md5.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_private_config.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"private/svn_wc_private.h"</cpp:file></cpp:include>
+
+<escape char="0xc"/>
+<comment type="block">/* ### todo: make this compare repository too?  Or do so in parallel
+   code.  See also adm_files.c:check_adm_exists(), which should
+   probably be merged with this.  */</comment>
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_wc_check_wc</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+                <param><decl><type><name>int</name> *</type><name>wc_format</name></decl></param>,
+                <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name> <init>= <expr><name>SVN_NO_ERROR</name></expr></init></decl>;</decl_stmt>
+
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>format_file_path</name>
+    <init>= <expr><call><name>svn_wc__adm_path</name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>, <argument><expr><name>SVN_WC__ADM_ENTRIES</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <comment type="block">/* First try to read the format number from the entries file. */</comment>
+  <expr_stmt><expr><name>err</name> = <call><name>svn_io_read_version_file</name><argument_list>(<argument><expr><name>wc_format</name></expr></argument>, <argument><expr><name>format_file_path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* If that didn't work and the first line of the entries file contains
+     something other than a number, then it is probably in XML format. */</comment>
+  <if>if <condition>(<expr><name>err</name> &amp;&amp; <name><name>err</name>-&gt;<name>apr_err</name></name> == <name>SVN_ERR_BAD_VERSION_FILE_FORMAT</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <comment type="block">/* Fall back on reading the format file instead.
+         Note that the format file might not exist in newer working copies
+         (format 7 and higher), but in that case, the entries file should
+         have contained the format number. */</comment>
+      <expr_stmt><expr><name>format_file_path</name>
+        = <call><name>svn_wc__adm_path</name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>, <argument><expr><name>SVN_WC__ADM_FORMAT</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name>err</name> = <call><name>svn_io_read_version_file</name><argument_list>(<argument><expr><name>wc_format</name></expr></argument>, <argument><expr><name>format_file_path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <if>if <condition>(<expr><name>err</name> &amp;&amp; (<call><name>APR_STATUS_IS_ENOENT</name><argument_list>(<argument><expr><name><name>err</name>-&gt;<name>apr_err</name></name></expr></argument>)</argument_list></call>
+              || <call><name>APR_STATUS_IS_ENOTDIR</name><argument_list>(<argument><expr><name><name>err</name>-&gt;<name>apr_err</name></name></expr></argument>)</argument_list></call>)</expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>svn_node_kind_t</name></type> <name>kind</name></decl>;</decl_stmt>
+
+      <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <comment type="block">/* Check path itself exists. */</comment>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_io_check_path</name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr>&amp;<name>kind</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <if>if <condition>(<expr><name>kind</name> == <name>svn_node_none</name></expr>)</condition><then>
+        <block>{
+          <return>return <expr><call><name>svn_error_createf</name>
+            <argument_list>(<argument><expr><name>APR_ENOENT</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><call><name>_</name><argument_list>(<argument><expr>"'%s' does not exist"</expr></argument>)</argument_list></call></expr></argument>,
+            <argument><expr><call><name>svn_path_local_style</name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+        }</block></then></if>
+
+      <comment type="block">/* If the format file does not exist or path not directory, then for
+         our purposes this is not a working copy, so return 0. */</comment>
+      <expr_stmt><expr>*<name>wc_format</name> = 0</expr>;</expr_stmt>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>err</name></expr>)</condition><then>
+    <return>return <expr><name>err</name></expr>;</return></then>
+  <else>else
+    <block>{
+      <comment type="block">/* If we managed to read the format file we assume that we
+          are dealing with a real wc so we can return a nice
+          error. */</comment>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_wc__check_format</name><argument_list>(<argument><expr>*<name>wc_format</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if></else></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_wc__check_format</name><parameter_list>(<param><decl><type><name>int</name></type> <name>wc_format</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <if>if <condition>(<expr><name>wc_format</name> &lt; 2</expr>)</condition><then>
+    <block>{
+      <return>return <expr><call><name>svn_error_createf</name>
+        <argument_list>(<argument><expr><name>SVN_ERR_WC_UNSUPPORTED_FORMAT</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+         <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Working copy format of '%s' is too old (%d); "
+           "please check out your working copy again"</expr></argument>)</argument_list></call></expr></argument>,
+         <argument><expr><call><name>svn_path_local_style</name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>wc_format</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>wc_format</name> &gt; <name>SVN_WC__VERSION</name></expr>)</condition><then>
+    <block>{
+      <comment type="block">/* This won't do us much good for the 1.4&lt;-&gt;1.5 crossgrade,
+         since 1.4.x clients don't refer to this FAQ entry, but at
+         least post-1.5 crossgrades will be somewhat less painful. */</comment>
+      <return>return <expr><call><name>svn_error_createf</name>
+        <argument_list>(<argument><expr><name>SVN_ERR_WC_UNSUPPORTED_FORMAT</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+         <argument><expr><call><name>_</name><argument_list>(<argument><expr>"This client is too old to work with working copy '%s'.  You need\n"
+           "to get a newer Subversion client, or to downgrade this working "
+           "copy.\n"
+           "See "
+           "http://subversion.tigris.org/faq.html#working-copy-format-change\n"
+           "for details."</expr></argument>
+           )</argument_list></call></expr></argument>,
+         <argument><expr><call><name>svn_path_local_style</name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if></else></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<escape char="0xc"/>
+<comment type="block">/*** svn_wc_text_modified_p ***/</comment>
+
+<comment type="block">/* svn_wc_text_modified_p answers the question:
+
+   "Are the contents of F different than the contents of
+   .svn/text-base/F.svn-base or .svn/tmp/text-base/F.svn-base?"
+
+   In the first case, we're looking to see if a user has made local
+   modifications to a file since the last update or commit.  In the
+   second, the file may not be versioned yet (it doesn't exist in
+   entries).  Support for the latter case came about to facilitate
+   forced checkouts, updates, and switches, where an unversioned file
+   may obstruct a file about to be added.
+
+   Note: Assuming that F lives in a directory D at revision V, please
+   notice that we are *NOT* answering the question, "are the contents
+   of F different than revision V of F?"  While F may be at a different
+   revision number than its parent directory, but we're only looking
+   for local edits on F, not for consistent directory revisions.
+
+   TODO:  the logic of the routines on this page might change in the
+   future, as they bear some relation to the user interface.  For
+   example, if a file is removed -- without telling subversion about
+   it -- how should subversion react?  Should it copy the file back
+   out of text-base?  Should it ask whether one meant to officially
+   mark it for removal?
+*/</comment>
+
+
+<comment type="block">/* Is PATH's timestamp the same as the one recorded in our
+   `entries' file?  Return the answer in EQUAL_P.  TIMESTAMP_KIND
+   should be one of the enumerated type above. */</comment>
+<decl_stmt><decl><type><name>svn_error_t</name> *</type>
+<name>svn_wc__timestamps_equal_p</name><argument_list>(<argument><expr><name>svn_boolean_t</name> *<name>equal_p</name></expr></argument>,
+                           <argument><expr>const <name>char</name> *<name>path</name></expr></argument>,
+                           <argument><expr><name>svn_wc_adm_access_t</name> *<name>adm_access</name></expr></argument>,
+                           <argument>enum <expr><name>svn_wc__timestamp_kind</name> <name>timestamp_kind</name></expr></argument>,
+                           <argument><expr><name>apr_pool_t</name> *<name>pool</name></expr></argument>)</argument_list>
+<block>{
+  <decl_stmt><decl><type><name>apr_time_t</name></type> <name>wfile_time</name></decl>, <decl><type ref="prev"/><name>entrytime</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>svn_wc_entry_t</name> *</type><name>entry</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Get the timestamp from the entries file */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_wc__entry_versioned</name><argument_list>(<argument><expr>&amp;<name>entry</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>adm_access</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Get the timestamp from the working file and the entry */</comment>
+  <if>if <condition>(<expr><name>timestamp_kind</name> == <name>svn_wc__text_time</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_io_file_affected_time</name><argument_list>(<argument><expr>&amp;<name>wfile_time</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name>entrytime</name> = <name><name>entry</name>-&gt;<name>text_time</name></name></expr>;</expr_stmt>
+    }</block></then>
+
+  <else>else <if>if <condition>(<expr><name>timestamp_kind</name> == <name>svn_wc__prop_time</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_wc__props_last_modified</name><argument_list>(<argument><expr>&amp;<name>wfile_time</name></expr></argument>,
+                                          <argument><expr><name>path</name></expr></argument>, <argument><expr><name>svn_wc__props_working</name></expr></argument>,
+                                          <argument><expr><name>adm_access</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name>entrytime</name> = <name><name>entry</name>-&gt;<name>prop_time</name></name></expr>;</expr_stmt>
+    }</block></then></if></else></if>
+
+  <if>if <condition>(<expr>! <name>entrytime</name></expr>)</condition><then>
+    <block>{
+      <comment type="block">/* TODO: If either timestamp is inaccessible, the test cannot
+         return an answer.  Assume that the timestamps are
+         different. */</comment>
+      <expr_stmt><expr>*<name>equal_p</name> = <name>FALSE</name></expr>;</expr_stmt>
+      <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+    }</block></then></if>
+
+  <block>{
+    <comment type="block">/* Put the disk timestamp through a string conversion, so it's
+       at the same resolution as entry timestamps. */</comment>
+    <comment type="block">/* This string conversion here may be goodness, but it does
+       nothing currently _and_ it is somewhat expensive _and_ it eats
+       memory _and_ it is tested for in the regression tests. But I
+       will only comment it out because I do not possess the guts to
+       remove it altogether. */</comment>
+    <comment type="block">/*
+    const char *tstr = svn_time_to_cstring (wfile_time, pool);
+    SVN_ERR (svn_time_from_cstring (&amp;wfile_time, tstr, pool));
+    */</comment>
+  }</block>
+
+  <if>if <condition>(<expr><name>wfile_time</name> == <name>entrytime</name></expr>)</condition><then>
+    <expr_stmt><expr>*<name>equal_p</name> = <name>TRUE</name></expr>;</expr_stmt></then>
+  <else>else
+    <expr_stmt><expr>*<name>equal_p</name> = <name>FALSE</name></expr>;</expr_stmt></else></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></decl></decl_stmt>
+
+
+<comment type="block">/* Set *MODIFIED_P to TRUE if (after translation) VERSIONED_FILE
+ * differs from BASE_FILE, else to FALSE if not.  Also verify that
+ * BASE_FILE matches the entry checksum for VERSIONED_FILE, if
+ * verify_checksum is TRUE. If checksum does not match, return the error
+ * SVN_ERR_WC_CORRUPT_TEXT_BASE.
+ *
+ * ADM_ACCESS is an access baton for VERSIONED_FILE.  Use POOL for
+ * temporary allocation.
+ */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>compare_and_verify</name><parameter_list>(<param><decl><type><name>svn_boolean_t</name> *</type><name>modified_p</name></decl></param>,
+                   <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>versioned_file</name></decl></param>,
+                   <param><decl><type><name>svn_wc_adm_access_t</name> *</type><name>adm_access</name></decl></param>,
+                   <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>base_file</name></decl></param>,
+                   <param><decl><type><name>svn_boolean_t</name></type> <name>compare_textbases</name></decl></param>,
+                   <param><decl><type><name>svn_boolean_t</name></type> <name>verify_checksum</name></decl></param>,
+                   <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>same</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_subst_eol_style_t</name></type> <name>eol_style</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>eol_str</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_hash_t</name> *</type><name>keywords</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>special</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>need_translation</name></decl>;</decl_stmt>
+
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_wc__get_eol_style</name><argument_list>(<argument><expr>&amp;<name>eol_style</name></expr></argument>, <argument><expr>&amp;<name>eol_str</name></expr></argument>, <argument><expr><name>versioned_file</name></expr></argument>,
+                                <argument><expr><name>adm_access</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_wc__get_keywords</name><argument_list>(<argument><expr>&amp;<name>keywords</name></expr></argument>, <argument><expr><name>versioned_file</name></expr></argument>,
+                              <argument><expr><name>adm_access</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_wc__get_special</name><argument_list>(<argument><expr>&amp;<name>special</name></expr></argument>, <argument><expr><name>versioned_file</name></expr></argument>, <argument><expr><name>adm_access</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+
+  <expr_stmt><expr><name>need_translation</name> = <call><name>svn_subst_translation_required</name><argument_list>(<argument><expr><name>eol_style</name></expr></argument>, <argument><expr><name>eol_str</name></expr></argument>,
+                                                    <argument><expr><name>keywords</name></expr></argument>, <argument><expr><name>special</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <comment type="block">/* Special files can only be compared through their text bases:
+     they have no working copy representation
+     for example: symlinks aren't guaranteed to be valid, nor does
+                  it make sense to compare with the linked file-or-directory. */</comment>
+  <expr_stmt><expr><name>compare_textbases</name> |= <name>special</name></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>verify_checksum</name> || <name>need_translation</name></expr>)</condition><then>
+    <block>{
+      <comment type="block">/* Reading files is necessary. */</comment>
+      <decl_stmt><decl><type><specifier>const</specifier> <name>unsigned</name> <name>char</name> *</type><name>digest</name></decl>;</decl_stmt>
+      <comment type="block">/* "v_" means versioned_file, "b_" means base_file. */</comment>
+      <decl_stmt><decl><type><name>apr_file_t</name> *</type><name>v_file_h</name></decl>, *<decl><type ref="prev"/><name>b_file_h</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>svn_stream_t</name> *</type><name>v_stream</name></decl>, *<decl><type ref="prev"/><name>b_stream</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><specifier>const</specifier> <name>svn_wc_entry_t</name> *</type><name>entry</name></decl>;</decl_stmt>
+
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_io_file_open</name><argument_list>(<argument><expr>&amp;<name>b_file_h</name></expr></argument>, <argument><expr><name>base_file</name></expr></argument>, <argument><expr><name>APR_READ</name></expr></argument>,
+                               <argument><expr><name>APR_OS_DEFAULT</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name>b_stream</name> = <call><name>svn_stream_from_aprfile2</name><argument_list>(<argument><expr><name>b_file_h</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <if>if <condition>(<expr><name>verify_checksum</name></expr>)</condition><then>
+        <block>{
+          <comment type="block">/* Need checksum verification, so read checksum from entries file
+           * and setup checksummed stream for base file. */</comment>
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_wc__entry_versioned</name><argument_list>(<argument><expr>&amp;<name>entry</name></expr></argument>, <argument><expr><name>versioned_file</name></expr></argument>, <argument><expr><name>adm_access</name></expr></argument>,
+                                         <argument><expr><name>TRUE</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+          <if>if <condition>(<expr><name><name>entry</name>-&gt;<name>checksum</name></name></expr>)</condition><then>
+            <expr_stmt><expr><name>b_stream</name> = <call><name>svn_stream_checksummed</name><argument_list>(<argument><expr><name>b_stream</name></expr></argument>, <argument><expr>&amp;<name>digest</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>,
+                                              <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+        }</block></then></if>
+
+      <if>if <condition>(<expr><name>compare_textbases</name> &amp;&amp; <name>need_translation</name></expr>)</condition><then>
+        <block>{
+          <comment type="block">/* Create stream for detranslate versioned file to normal form. */</comment>
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_subst_stream_detranslated</name><argument_list>(<argument><expr>&amp;<name>v_stream</name></expr></argument>,
+                                                <argument><expr><name>versioned_file</name></expr></argument>,
+                                                <argument><expr><name>eol_style</name></expr></argument>,
+                                                <argument><expr><name>eol_str</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>,
+                                                <argument><expr><name>keywords</name></expr></argument>, <argument><expr><name>special</name></expr></argument>,
+                                                <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+      <else>else
+        <block>{
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_io_file_open</name><argument_list>(<argument><expr>&amp;<name>v_file_h</name></expr></argument>, <argument><expr><name>versioned_file</name></expr></argument>, <argument><expr><name>APR_READ</name></expr></argument>,
+                              <argument><expr><name>APR_OS_DEFAULT</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><name>v_stream</name> = <call><name>svn_stream_from_aprfile2</name><argument_list>(<argument><expr><name>v_file_h</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+          <if>if <condition>(<expr><name>need_translation</name></expr>)</condition><then>
+            <block>{
+              <comment type="block">/* Translate text-base to working copy form. */</comment>
+              <expr_stmt><expr><name>b_stream</name> = <call><name>svn_subst_stream_translated</name><argument_list>(<argument><expr><name>b_stream</name></expr></argument>, <argument><expr><name>eol_str</name></expr></argument>,
+                                                     <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>keywords</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>,
+                                                     <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></then></if>
+        }</block></else></if>
+
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_stream_contents_same</name><argument_list>(<argument><expr>&amp;<name>same</name></expr></argument>, <argument><expr><name>b_stream</name></expr></argument>, <argument><expr><name>v_stream</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_stream_close</name><argument_list>(<argument><expr><name>v_stream</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_stream_close</name><argument_list>(<argument><expr><name>b_stream</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <if>if <condition>(<expr><name>verify_checksum</name> &amp;&amp; <name><name>entry</name>-&gt;<name>checksum</name></name></expr>)</condition><then>
+        <block>{
+          <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>checksum</name></decl>;</decl_stmt>
+          <expr_stmt><expr><name>checksum</name> = <call><name>svn_md5_digest_to_cstring_display</name><argument_list>(<argument><expr><name>digest</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>checksum</name></expr></argument>, <argument><expr><name><name>entry</name>-&gt;<name>checksum</name></name></expr></argument>)</argument_list></call> != 0</expr>)</condition><then>
+            <block>{
+              <return>return <expr><call><name>svn_error_createf</name>
+                <argument_list>(<argument><expr><name>SVN_ERR_WC_CORRUPT_TEXT_BASE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                  <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Checksum mismatch indicates corrupt text base: '%s'\n"
+                    "   expected:  %s\n"
+                    "     actual:  %s\n"</expr></argument>)</argument_list></call></expr></argument>,
+                  <argument><expr><call><name>svn_path_local_style</name><argument_list>(<argument><expr><name>base_file</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>,
+                  <argument><expr><name><name>entry</name>-&gt;<name>checksum</name></name></expr></argument>,
+                  <argument><expr><name>checksum</name></expr></argument>)</argument_list></call></expr>;</return>
+            }</block></then></if>
+        }</block></then></if>
+    }</block></then>
+  <else>else
+    <block>{
+      <comment type="block">/* Translation would be a no-op, so compare the original file. */</comment>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_io_files_contents_same_p</name><argument_list>(<argument><expr>&amp;<name>same</name></expr></argument>, <argument><expr><name>base_file</name></expr></argument>, <argument><expr><name>versioned_file</name></expr></argument>,
+                                           <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if>
+
+
+
+  <expr_stmt><expr>*<name>modified_p</name> = (! <name>same</name>)</expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_wc__versioned_file_modcheck</name><parameter_list>(<param><decl><type><name>svn_boolean_t</name> *</type><name>modified_p</name></decl></param>,
+                                <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>versioned_file</name></decl></param>,
+                                <param><decl><type><name>svn_wc_adm_access_t</name> *</type><name>adm_access</name></decl></param>,
+                                <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>base_file</name></decl></param>,
+                                <param><decl><type><name>svn_boolean_t</name></type> <name>compare_textbases</name></decl></param>,
+                                <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <return>return <expr><call><name>compare_and_verify</name><argument_list>(<argument><expr><name>modified_p</name></expr></argument>, <argument><expr><name>versioned_file</name></expr></argument>, <argument><expr><name>adm_access</name></expr></argument>,
+                            <argument><expr><name>base_file</name></expr></argument>, <argument><expr><name>compare_textbases</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_wc__text_modified_internal_p</name><parameter_list>(<param><decl><type><name>svn_boolean_t</name> *</type><name>modified_p</name></decl></param>,
+                                 <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>filename</name></decl></param>,
+                                 <param><decl><type><name>svn_boolean_t</name></type> <name>force_comparison</name></decl></param>,
+                                 <param><decl><type><name>svn_wc_adm_access_t</name> *</type><name>adm_access</name></decl></param>,
+                                 <param><decl><type><name>svn_boolean_t</name></type> <name>compare_textbases</name></decl></param>,
+                                 <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>textbase_filename</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_node_kind_t</name></type> <name>kind</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_finfo_t</name></type> <name>finfo</name></decl>;</decl_stmt>
+
+
+  <comment type="block">/* No matter which way you look at it, the file needs to exist. */</comment>
+  <expr_stmt><expr><name>err</name> = <call><name>svn_io_stat</name><argument_list>(<argument><expr>&amp;<name>finfo</name></expr></argument>, <argument><expr><name>filename</name></expr></argument>,
+                    <argument><expr><name>APR_FINFO_SIZE</name> | <name>APR_FINFO_MTIME</name> | <name>APR_FINFO_TYPE</name>
+                    | <name>APR_FINFO_LINK</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr>(<name>err</name> &amp;&amp; <call><name>APR_STATUS_IS_ENOENT</name><argument_list>(<argument><expr><name><name>err</name>-&gt;<name>apr_err</name></name></expr></argument>)</argument_list></call>)
+      || (!<name>err</name> &amp;&amp; !(<name><name>finfo</name>.<name>filetype</name></name> == <name>APR_REG</name> ||
+                    <name><name>finfo</name>.<name>filetype</name></name> == <name>APR_LNK</name>))</expr>)</condition><then>
+    <block>{
+      <comment type="block">/* There is no entity, or, the entity is not a regular file or link.
+         So, it can't be modified. */</comment>
+      <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr>*<name>modified_p</name> = <name>FALSE</name></expr>;</expr_stmt>
+      <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><name>err</name></expr>)</condition><then>
+    <return>return <expr><name>err</name></expr>;</return></then></if></else></if>
+
+  <if>if <condition>(<expr>! <name>force_comparison</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><specifier>const</specifier> <name>svn_wc_entry_t</name> *</type><name>entry</name></decl>;</decl_stmt>
+
+      <comment type="block">/* We're allowed to use a heuristic to determine whether files may
+         have changed.  The heuristic has these steps:
+
+
+         1. Compare the working file's size
+            with the size cached in the entries file
+         2. If they differ, do a full file compare
+         3. Compare the working file's timestamp
+            with the timestamp cached in the entries file
+         4. If they differ, do a full file compare
+         5. Otherwise, return indicating an unchanged file.
+
+         There are 2 problematic situations which may occur:
+
+         1. The cached working size is missing
+         --&gt; In this case, we forget we ever tried to compare
+             and skip to the timestamp comparison.  This is
+             because old working copies do not contain cached sizes
+
+         2. The cached timestamp is missing
+         --&gt; In this case, we forget we ever tried to compare
+             and skip to full file comparison.  This is because
+             the timestamp will be removed when the library
+             updates a locally changed file.  (ie, this only happens
+             when the file was locally modified.)
+
+      */</comment>
+
+
+      <comment type="block">/* Get the entry */</comment>
+      <expr_stmt><expr><name>err</name> = <call><name>svn_wc_entry</name><argument_list>(<argument><expr>&amp;<name>entry</name></expr></argument>, <argument><expr><name>filename</name></expr></argument>, <argument><expr><name>adm_access</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>err</name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <goto>goto <name>compare_them</name>;</goto>
+        }</block></then></if>
+
+      <if>if <condition>(<expr>! <name>entry</name></expr>)</condition><then>
+        <goto>goto <name>compare_them</name>;</goto></then></if>
+
+      <comment type="block">/* Compare the sizes, if applicable */</comment>
+      <if>if <condition>(<expr><name><name>entry</name>-&gt;<name>working_size</name></name> != <name>SVN_WC_ENTRY_WORKING_SIZE_UNKNOWN</name>
+          &amp;&amp; <name><name>finfo</name>.<name>size</name></name> != <name><name>entry</name>-&gt;<name>working_size</name></name></expr>)</condition><then>
+        <goto>goto <name>compare_them</name>;</goto></then></if>
+
+
+      <comment type="block">/* Compare the timestamps
+
+         Note: text_time == 0 means absent from entries,
+               which also means the timestamps won't be equal,
+               so there's no need to explicitly check the 'absent' value. */</comment>
+      <if>if <condition>(<expr><name><name>entry</name>-&gt;<name>text_time</name></name> != <name><name>finfo</name>.<name>mtime</name></name></expr>)</condition><then>
+        <goto>goto <name>compare_them</name>;</goto></then></if>
+
+
+      <expr_stmt><expr>*<name>modified_p</name> = <name>FALSE</name></expr>;</expr_stmt>
+      <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+    }</block></then></if>
+
+ <label><name>compare_them</name>:</label>
+ <comment type="block">/* If there's no text-base file, we have to assume the working file
+     is modified.  For example, a file scheduled for addition but not
+     yet committed. */</comment>
+  <comment type="block">/* We used to stat for the working base here, but we just give
+     compare_and_verify a try; we'll check for errors afterwards */</comment>
+  <expr_stmt><expr><name>textbase_filename</name> = <call><name>svn_wc__text_base_path</name><argument_list>(<argument><expr><name>filename</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Check all bytes, and verify checksum if requested. */</comment>
+  <block>{
+    <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>subpool</name> <init>= <expr><call><name>svn_pool_create</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>err</name> = <call><name>compare_and_verify</name><argument_list>(<argument><expr><name>modified_p</name></expr></argument>,
+                             <argument><expr><name>filename</name></expr></argument>,
+                             <argument><expr><name>adm_access</name></expr></argument>,
+                             <argument><expr><name>textbase_filename</name></expr></argument>,
+                             <argument><expr><name>compare_textbases</name></expr></argument>,
+                             <argument><expr><name>force_comparison</name></expr></argument>,
+                             <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>err</name></expr>)</condition><then>
+      <block>{
+        <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err2</name></decl>;</decl_stmt>
+
+        <expr_stmt><expr><name>err2</name> = <call><name>svn_io_check_path</name><argument_list>(<argument><expr><name>textbase_filename</name></expr></argument>, <argument><expr>&amp;<name>kind</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr>! <name>err2</name> &amp;&amp; <name>kind</name> != <name>svn_node_file</name></expr>)</condition><then>
+          <block>{
+            <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr>*<name>modified_p</name> = <name>TRUE</name></expr>;</expr_stmt>
+            <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+          }</block></then></if>
+
+        <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>err2</name></expr>;</return>
+      }</block></then></if>
+
+    <expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  }</block>
+
+  <comment type="block">/* It is quite legitimate for modifications to the working copy to
+     produce a timestamp variation with no text variation. If it turns out
+     that there are no differences then we might be able to "repair" the
+     text-time in the entries file and so avoid the expensive file contents
+     comparison in the future.
+     Though less likely, the same may be true for the size
+     of the working file. */</comment>
+  <if>if <condition>(<expr>! *<name>modified_p</name> &amp;&amp; <call><name>svn_wc_adm_locked</name><argument_list>(<argument><expr><name>adm_access</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>svn_wc_entry_t</name></type> <name>tmp</name></decl>;</decl_stmt>
+
+      <expr_stmt><expr><name><name>tmp</name>.<name>working_size</name></name> = <name><name>finfo</name>.<name>size</name></name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>tmp</name>.<name>text_time</name></name> = <name><name>finfo</name>.<name>mtime</name></name></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_wc__entry_modify</name><argument_list>(<argument><expr><name>adm_access</name></expr></argument>,
+                                   <argument><expr><call><name>svn_path_basename</name><argument_list>(<argument><expr><name>filename</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>,
+                                   <argument><expr>&amp;<name>tmp</name></expr></argument>,
+                                   <argument><expr><name>SVN_WC__ENTRY_MODIFY_TEXT_TIME</name>
+                                   | <name>SVN_WC__ENTRY_MODIFY_WORKING_SIZE</name></expr></argument>,
+                                   <argument><expr><name>TRUE</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_wc_text_modified_p</name><parameter_list>(<param><decl><type><name>svn_boolean_t</name> *</type><name>modified_p</name></decl></param>,
+                        <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>filename</name></decl></param>,
+                        <param><decl><type><name>svn_boolean_t</name></type> <name>force_comparison</name></decl></param>,
+                        <param><decl><type><name>svn_wc_adm_access_t</name> *</type><name>adm_access</name></decl></param>,
+                        <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <return>return <expr><call><name>svn_wc__text_modified_internal_p</name><argument_list>(<argument><expr><name>modified_p</name></expr></argument>, <argument><expr><name>filename</name></expr></argument>,
+                                          <argument><expr><name>force_comparison</name></expr></argument>, <argument><expr><name>adm_access</name></expr></argument>,
+                                          <argument><expr><name>TRUE</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+<escape char="0xc"/>
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_wc_conflicted_p</name><parameter_list>(<param><decl><type><name>svn_boolean_t</name> *</type><name>text_conflicted_p</name></decl></param>,
+                    <param><decl><type><name>svn_boolean_t</name> *</type><name>prop_conflicted_p</name></decl></param>,
+                    <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>dir_path</name></decl></param>,
+                    <param><decl><type><specifier>const</specifier> <name>svn_wc_entry_t</name> *</type><name>entry</name></decl></param>,
+                    <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_node_kind_t</name></type> <name>kind</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>subpool</name> <init>= <expr><call><name>svn_pool_create</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>  <comment type="block">/* ### Why? */</comment>
+
+  <expr_stmt><expr>*<name>text_conflicted_p</name> = <name>FALSE</name></expr>;</expr_stmt>
+  <expr_stmt><expr>*<name>prop_conflicted_p</name> = <name>FALSE</name></expr>;</expr_stmt>
+
+  <comment type="block">/* Look for any text conflict, exercising only as much effort as
+     necessary to obtain a definitive answer.  This only applies to
+     files, but we don't have to explicitly check that entry is a
+     file, since these attributes would never be set on a directory
+     anyway.  A conflict file entry notation only counts if the
+     conflict file still exists on disk.  */</comment>
+  <if>if <condition>(<expr><name><name>entry</name>-&gt;<name>conflict_old</name></name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><name>path</name> = <call><name>svn_path_join</name><argument_list>(<argument><expr><name>dir_path</name></expr></argument>, <argument><expr><name><name>entry</name>-&gt;<name>conflict_old</name></name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_io_check_path</name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr>&amp;<name>kind</name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>kind</name> == <name>svn_node_file</name></expr>)</condition><then>
+        <expr_stmt><expr>*<name>text_conflicted_p</name> = <name>TRUE</name></expr>;</expr_stmt></then></if>
+    }</block></then></if>
+
+  <if>if <condition>(<expr>(! *<name>text_conflicted_p</name>) &amp;&amp; (<name><name>entry</name>-&gt;<name>conflict_new</name></name>)</expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><name>path</name> = <call><name>svn_path_join</name><argument_list>(<argument><expr><name>dir_path</name></expr></argument>, <argument><expr><name><name>entry</name>-&gt;<name>conflict_new</name></name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_io_check_path</name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr>&amp;<name>kind</name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>kind</name> == <name>svn_node_file</name></expr>)</condition><then>
+        <expr_stmt><expr>*<name>text_conflicted_p</name> = <name>TRUE</name></expr>;</expr_stmt></then></if>
+    }</block></then></if>
+
+  <if>if <condition>(<expr>(! *<name>text_conflicted_p</name>) &amp;&amp; (<name><name>entry</name>-&gt;<name>conflict_wrk</name></name>)</expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><name>path</name> = <call><name>svn_path_join</name><argument_list>(<argument><expr><name>dir_path</name></expr></argument>, <argument><expr><name><name>entry</name>-&gt;<name>conflict_wrk</name></name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_io_check_path</name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr>&amp;<name>kind</name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>kind</name> == <name>svn_node_file</name></expr>)</condition><then>
+        <expr_stmt><expr>*<name>text_conflicted_p</name> = <name>TRUE</name></expr>;</expr_stmt></then></if>
+    }</block></then></if>
+
+  <comment type="block">/* What about prop conflicts? */</comment>
+  <if>if <condition>(<expr><name><name>entry</name>-&gt;<name>prejfile</name></name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><name>path</name> = <call><name>svn_path_join</name><argument_list>(<argument><expr><name>dir_path</name></expr></argument>, <argument><expr><name><name>entry</name>-&gt;<name>prejfile</name></name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_io_check_path</name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr>&amp;<name>kind</name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>kind</name> == <name>svn_node_file</name></expr>)</condition><then>
+        <expr_stmt><expr>*<name>prop_conflicted_p</name> = <name>TRUE</name></expr>;</expr_stmt></then></if>
+    }</block></then></if>
+
+  <expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+
+<escape char="0xc"/>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_wc_has_binary_prop</name><parameter_list>(<param><decl><type><name>svn_boolean_t</name> *</type><name>has_binary_prop</name></decl></param>,
+                       <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+                       <param><decl><type><name>svn_wc_adm_access_t</name> *</type><name>adm_access</name></decl></param>,
+                       <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>svn_string_t</name> *</type><name>value</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>subpool</name> <init>= <expr><call><name>svn_pool_create</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_wc_prop_get</name><argument_list>(<argument><expr>&amp;<name>value</name></expr></argument>, <argument><expr><name>SVN_PROP_MIME_TYPE</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>adm_access</name></expr></argument>,
+                          <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name>value</name> &amp;&amp; (<call><name>svn_mime_type_is_binary</name><argument_list>(<argument><expr><name><name>value</name>-&gt;<name>data</name></name></expr></argument>)</argument_list></call>)</expr>)</condition><then>
+    <expr_stmt><expr>*<name>has_binary_prop</name> = <name>TRUE</name></expr>;</expr_stmt></then>
+  <else>else
+    <expr_stmt><expr>*<name>has_binary_prop</name> = <name>FALSE</name></expr>;</expr_stmt></else></if>
+
+  <expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+</unit>

@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/cpython-2.6.1/source/Modules/zlib/inflate.h"><comment type="block">/* inflate.h -- internal inflate state definition
+ * Copyright (C) 1995-2004 Mark Adler
+ * For conditions of distribution and use, see copyright notice in zlib.h
+ */</comment>
+
+<comment type="block">/* WARNING: this file should *not* be used by applications. It is
+   part of the implementation of the compression library and is
+   subject to change. Applications should only use zlib.h.
+ */</comment>
+
+<comment type="block">/* define NO_GZIP when compiling if you want to disable gzip header and
+   trailer decoding by inflate().  NO_GZIP would be used to avoid linking in
+   the crc code when it is not needed.  For shared libraries, gzip decoding
+   should be left enabled. */</comment>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>NO_GZIP</name></cpp:ifndef>
+<cpp:define>#  <cpp:directive>define</cpp:directive> <cpp:macro><name>GUNZIP</name></cpp:macro></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<comment type="block">/* Possible inflate modes between inflate() calls */</comment>
+<typedef>typedef <type><enum>enum <block>{
+    <decl><name>HEAD</name></decl>,       <comment type="block">/* i: waiting for magic header */</comment>
+    <decl><name>FLAGS</name></decl>,      <comment type="block">/* i: waiting for method and flags (gzip) */</comment>
+    <decl><name>TIME</name></decl>,       <comment type="block">/* i: waiting for modification time (gzip) */</comment>
+    <decl><name>OS</name></decl>,         <comment type="block">/* i: waiting for extra flags and operating system (gzip) */</comment>
+    <decl><name>EXLEN</name></decl>,      <comment type="block">/* i: waiting for extra length (gzip) */</comment>
+    <decl><name>EXTRA</name></decl>,      <comment type="block">/* i: waiting for extra bytes (gzip) */</comment>
+    <decl><name>NAME</name></decl>,       <comment type="block">/* i: waiting for end of file name (gzip) */</comment>
+    <decl><name>COMMENT</name></decl>,    <comment type="block">/* i: waiting for end of comment (gzip) */</comment>
+    <decl><name>HCRC</name></decl>,       <comment type="block">/* i: waiting for header crc (gzip) */</comment>
+    <decl><name>DICTID</name></decl>,     <comment type="block">/* i: waiting for dictionary check value */</comment>
+    <decl><name>DICT</name></decl>,       <comment type="block">/* waiting for inflateSetDictionary() call */</comment>
+        <decl><name>TYPE</name></decl>,       <comment type="block">/* i: waiting for type bits, including last-flag bit */</comment>
+        <decl><name>TYPEDO</name></decl>,     <comment type="block">/* i: same, but skip check to exit inflate on new block */</comment>
+        <decl><name>STORED</name></decl>,     <comment type="block">/* i: waiting for stored size (length and complement) */</comment>
+        <decl><name>COPY</name></decl>,       <comment type="block">/* i/o: waiting for input or output to copy stored block */</comment>
+        <decl><name>TABLE</name></decl>,      <comment type="block">/* i: waiting for dynamic block table lengths */</comment>
+        <decl><name>LENLENS</name></decl>,    <comment type="block">/* i: waiting for code length code lengths */</comment>
+        <decl><name>CODELENS</name></decl>,   <comment type="block">/* i: waiting for length/lit and distance code lengths */</comment>
+            <decl><name>LEN</name></decl>,        <comment type="block">/* i: waiting for length/lit code */</comment>
+            <decl><name>LENEXT</name></decl>,     <comment type="block">/* i: waiting for length extra bits */</comment>
+            <decl><name>DIST</name></decl>,       <comment type="block">/* i: waiting for distance code */</comment>
+            <decl><name>DISTEXT</name></decl>,    <comment type="block">/* i: waiting for distance extra bits */</comment>
+            <decl><name>MATCH</name></decl>,      <comment type="block">/* o: waiting for output space to copy string */</comment>
+            <decl><name>LIT</name></decl>,        <comment type="block">/* o: waiting for output space to write literal */</comment>
+    <decl><name>CHECK</name></decl>,      <comment type="block">/* i: waiting for 32-bit check value */</comment>
+    <decl><name>LENGTH</name></decl>,     <comment type="block">/* i: waiting for 32-bit length (gzip) */</comment>
+    <decl><name>DONE</name></decl>,       <comment type="block">/* finished check, done -- remain here until reset */</comment>
+    <decl><name>BAD</name></decl>,        <comment type="block">/* got a data error -- remain here until reset */</comment>
+    <decl><name>MEM</name></decl>,        <comment type="block">/* got an inflate() memory error -- remain here until reset */</comment>
+    <decl><name>SYNC</name></decl>        <comment type="block">/* looking for synchronization bytes to restart inflate() */</comment>
+}</block></enum></type> <name>inflate_mode</name>;</typedef>
+
+<comment type="block">/*
+    State transitions between above modes -
+
+    (most modes can go to the BAD or MEM mode -- not shown for clarity)
+
+    Process header:
+        HEAD -&gt; (gzip) or (zlib)
+        (gzip) -&gt; FLAGS -&gt; TIME -&gt; OS -&gt; EXLEN -&gt; EXTRA -&gt; NAME
+        NAME -&gt; COMMENT -&gt; HCRC -&gt; TYPE
+        (zlib) -&gt; DICTID or TYPE
+        DICTID -&gt; DICT -&gt; TYPE
+    Read deflate blocks:
+            TYPE -&gt; STORED or TABLE or LEN or CHECK
+            STORED -&gt; COPY -&gt; TYPE
+            TABLE -&gt; LENLENS -&gt; CODELENS -&gt; LEN
+    Read deflate codes:
+                LEN -&gt; LENEXT or LIT or TYPE
+                LENEXT -&gt; DIST -&gt; DISTEXT -&gt; MATCH -&gt; LEN
+                LIT -&gt; LEN
+    Process trailer:
+        CHECK -&gt; LENGTH -&gt; DONE
+ */</comment>
+
+<comment type="block">/* state maintained between inflate() calls.  Approximately 7K bytes. */</comment>
+<struct>struct <name>inflate_state</name> <block>{
+    <decl_stmt><decl><type><name>inflate_mode</name></type> <name>mode</name></decl>;</decl_stmt>          <comment type="block">/* current inflate mode */</comment>
+    <decl_stmt><decl><type><name>int</name></type> <name>last</name></decl>;</decl_stmt>                   <comment type="block">/* true if processing last block */</comment>
+    <decl_stmt><decl><type><name>int</name></type> <name>wrap</name></decl>;</decl_stmt>                   <comment type="block">/* bit 0 true for zlib, bit 1 true for gzip */</comment>
+    <decl_stmt><decl><type><name>int</name></type> <name>havedict</name></decl>;</decl_stmt>               <comment type="block">/* true if dictionary provided */</comment>
+    <decl_stmt><decl><type><name>int</name></type> <name>flags</name></decl>;</decl_stmt>                  <comment type="block">/* gzip header method and flags (0 if zlib) */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>dmax</name></decl>;</decl_stmt>              <comment type="block">/* zlib header max distance (INFLATE_STRICT) */</comment>
+    <decl_stmt><decl><type><name>unsigned</name> <name>long</name></type> <name>check</name></decl>;</decl_stmt>        <comment type="block">/* protected copy of check value */</comment>
+    <decl_stmt><decl><type><name>unsigned</name> <name>long</name></type> <name>total</name></decl>;</decl_stmt>        <comment type="block">/* protected copy of output count */</comment>
+    <decl_stmt><decl><type><name>gz_headerp</name></type> <name>head</name></decl>;</decl_stmt>            <comment type="block">/* where to save gzip header information */</comment>
+        <comment type="block">/* sliding window */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>wbits</name></decl>;</decl_stmt>             <comment type="block">/* log base 2 of requested window size */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>wsize</name></decl>;</decl_stmt>             <comment type="block">/* window size or zero if not using window */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>whave</name></decl>;</decl_stmt>             <comment type="block">/* valid bytes in the window */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>write</name></decl>;</decl_stmt>             <comment type="block">/* window write index */</comment>
+    <decl_stmt><decl><type><name>unsigned</name> <name>char</name> <name>FAR</name> *</type><name>window</name></decl>;</decl_stmt>  <comment type="block">/* allocated sliding window, if needed */</comment>
+        <comment type="block">/* bit accumulator */</comment>
+    <decl_stmt><decl><type><name>unsigned</name> <name>long</name></type> <name>hold</name></decl>;</decl_stmt>         <comment type="block">/* input bit accumulator */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>bits</name></decl>;</decl_stmt>              <comment type="block">/* number of bits in "in" */</comment>
+        <comment type="block">/* for string and stored block copying */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>length</name></decl>;</decl_stmt>            <comment type="block">/* literal or length of data to copy */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>offset</name></decl>;</decl_stmt>            <comment type="block">/* distance back to copy string from */</comment>
+        <comment type="block">/* for table and code decoding */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>extra</name></decl>;</decl_stmt>             <comment type="block">/* extra bits needed */</comment>
+        <comment type="block">/* fixed and dynamic code tables */</comment>
+    <decl_stmt><decl><type><name>code</name> <specifier>const</specifier> <name>FAR</name> *</type><name>lencode</name></decl>;</decl_stmt>    <comment type="block">/* starting table for length/literal codes */</comment>
+    <decl_stmt><decl><type><name>code</name> <specifier>const</specifier> <name>FAR</name> *</type><name>distcode</name></decl>;</decl_stmt>   <comment type="block">/* starting table for distance codes */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>lenbits</name></decl>;</decl_stmt>           <comment type="block">/* index bits for lencode */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>distbits</name></decl>;</decl_stmt>          <comment type="block">/* index bits for distcode */</comment>
+        <comment type="block">/* dynamic table building */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>ncode</name></decl>;</decl_stmt>             <comment type="block">/* number of code length code lengths */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>nlen</name></decl>;</decl_stmt>              <comment type="block">/* number of length code lengths */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>ndist</name></decl>;</decl_stmt>             <comment type="block">/* number of distance code lengths */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>have</name></decl>;</decl_stmt>              <comment type="block">/* number of code lengths in lens[] */</comment>
+    <decl_stmt><decl><type><name>code</name> <name>FAR</name> *</type><name>next</name></decl>;</decl_stmt>             <comment type="block">/* next available space in codes[] */</comment>
+    <decl_stmt><decl><type><name>unsigned</name> <name>short</name></type> <name><name>lens</name><index>[<expr>320</expr>]</index></name></decl>;</decl_stmt>   <comment type="block">/* temporary storage for code lengths */</comment>
+    <decl_stmt><decl><type><name>unsigned</name> <name>short</name></type> <name><name>work</name><index>[<expr>288</expr>]</index></name></decl>;</decl_stmt>   <comment type="block">/* work area for code table building */</comment>
+    <decl_stmt><decl><type><name>code</name></type> <name><name>codes</name><index>[<expr><name>ENOUGH</name></expr>]</index></name></decl>;</decl_stmt>         <comment type="block">/* space for code tables */</comment>
+}</block>;</struct>
+</unit>

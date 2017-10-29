@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/cpython-2.6.1/source/Modules/_ctypes/malloc_closure.c"><comment type="block">/*****************************************************************
+  This file should be kept compatible with Python 2.3, see PEP 291.
+ *****************************************************************/</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;Python.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;ffi.h&gt;</cpp:file></cpp:include>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>MS_WIN32</name></cpp:ifdef>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;windows.h&gt;</cpp:file></cpp:include>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;sys/mman.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;unistd.h&gt;</cpp:file></cpp:include>
+<cpp:if># <cpp:directive>if</cpp:directive> <expr>!<call><name>defined</name><argument_list>(<argument><expr><name>MAP_ANONYMOUS</name></expr></argument>)</argument_list></call> &amp;&amp; <call><name>defined</name><argument_list>(<argument><expr><name>MAP_ANON</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<cpp:define>#  <cpp:directive>define</cpp:directive> <cpp:macro><name>MAP_ANONYMOUS</name></cpp:macro> <cpp:value>MAP_ANON</cpp:value></cpp:define>
+<cpp:endif># <cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"ctypes.h"</cpp:file></cpp:include>
+
+<comment type="block">/* BLOCKSIZE can be adjusted.  Larger blocksize will take a larger memory
+   overhead, but allocate less blocks from the system.  It may be that some
+   systems have a limit of how many mmap'd blocks can be open.
+*/</comment>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>BLOCKSIZE</name></cpp:macro> <cpp:value>_pagesize</cpp:value></cpp:define>
+
+<comment type="block">/* #define MALLOC_CLOSURE_DEBUG */</comment> <comment type="block">/* enable for some debugging output */</comment>
+
+<comment type="block">/******************************************************************/</comment>
+
+<typedef>typedef <type><union>union <name>_tagITEM</name> <block>{
+	<decl_stmt><decl><type><name>ffi_closure</name></type> <name>closure</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type>union <name>_tagITEM</name> *</type><name>next</name></decl>;</decl_stmt>
+}</block></union></type> <name>ITEM</name>;</typedef>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>ITEM</name> *</type><name>free_list</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>int</name></type> <name>_pagesize</name></decl>;</decl_stmt>
+
+<function><type><specifier>static</specifier> <name>void</name></type> <name>more_core</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>ITEM</name> *</type><name>item</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>count</name></decl>, <decl><type ref="prev"/><name>i</name></decl>;</decl_stmt>
+
+<comment type="block">/* determine the pagesize */</comment>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>MS_WIN32</name></cpp:ifdef>
+	<if>if <condition>(<expr>!<name>_pagesize</name></expr>)</condition><then> <block>{
+		<decl_stmt><decl><type><name>SYSTEM_INFO</name></type> <name>systeminfo</name></decl>;</decl_stmt>
+		<expr_stmt><expr><call><name>GetSystemInfo</name><argument_list>(<argument><expr>&amp;<name>systeminfo</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><name>_pagesize</name> = <name><name>systeminfo</name>.<name>dwPageSize</name></name></expr>;</expr_stmt>
+	}</block></then></if>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+	<if>if <condition>(<expr>!<name>_pagesize</name></expr>)</condition><then> <block>{
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>_SC_PAGESIZE</name></cpp:ifdef>
+		<expr_stmt><expr><name>_pagesize</name> = <call><name>sysconf</name><argument_list>(<argument><expr><name>_SC_PAGESIZE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+		<expr_stmt><expr><name>_pagesize</name> = <call><name>getpagesize</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	}</block></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+	<comment type="block">/* calculate the number of nodes to allocate */</comment>
+	<expr_stmt><expr><name>count</name> = <name>BLOCKSIZE</name> / <sizeof>sizeof<argument_list>(<argument><expr><name>ITEM</name></expr></argument>)</argument_list></sizeof></expr>;</expr_stmt>
+
+	<comment type="block">/* allocate a memory block */</comment>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>MS_WIN32</name></cpp:ifdef>
+	<expr_stmt><expr><name>item</name> = (<name>ITEM</name> *)<call><name>VirtualAlloc</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>,
+					       <argument><expr><name>count</name> * <sizeof>sizeof<argument_list>(<argument><expr><name>ITEM</name></expr></argument>)</argument_list></sizeof></expr></argument>,
+					       <argument><expr><name>MEM_COMMIT</name></expr></argument>,
+					       <argument><expr><name>PAGE_EXECUTE_READWRITE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>item</name> == <name>NULL</name></expr>)</condition><then>
+		<return>return;</return></then></if>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+	<expr_stmt><expr><name>item</name> = (<name>ITEM</name> *)<call><name>mmap</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>,
+			    <argument><expr><name>count</name> * <sizeof>sizeof<argument_list>(<argument><expr><name>ITEM</name></expr></argument>)</argument_list></sizeof></expr></argument>,
+			    <argument><expr><name>PROT_READ</name> | <name>PROT_WRITE</name> | <name>PROT_EXEC</name></expr></argument>,
+			    <argument><expr><name>MAP_PRIVATE</name> | <name>MAP_ANONYMOUS</name></expr></argument>,
+			    <argument><expr>-1</expr></argument>,
+			    <argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>item</name> == (<name>void</name> *)<name>MAP_FAILED</name></expr>)</condition><then>
+		<return>return;</return></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>MALLOC_CLOSURE_DEBUG</name></cpp:ifdef>
+	<expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"block at %p allocated (%d bytes), %d ITEMs\n"</expr></argument>,
+	       <argument><expr><name>item</name></expr></argument>, <argument><expr><name>count</name> * <sizeof>sizeof<argument_list>(<argument><expr><name>ITEM</name></expr></argument>)</argument_list></sizeof></expr></argument>, <argument><expr><name>count</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<comment type="block">/* put them into the free list */</comment>
+	<for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name>count</name></expr>;</condition> <incr><expr>++<name>i</name></expr></incr>) <block>{
+		<expr_stmt><expr><name><name>item</name>-&gt;<name>next</name></name> = <name>free_list</name></expr>;</expr_stmt>
+		<expr_stmt><expr><name>free_list</name> = <name>item</name></expr>;</expr_stmt>
+		<expr_stmt><expr>++<name>item</name></expr>;</expr_stmt>
+	}</block></for>
+}</block></function>
+
+<comment type="block">/******************************************************************/</comment>
+
+<comment type="block">/* put the item back into the free list */</comment>
+<function><type><name>void</name></type> <name>FreeClosure</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>p</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>ITEM</name> *</type><name>item</name> <init>= <expr>(<name>ITEM</name> *)<name>p</name></expr></init></decl>;</decl_stmt>
+	<expr_stmt><expr><name><name>item</name>-&gt;<name>next</name></name> = <name>free_list</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name>free_list</name> = <name>item</name></expr>;</expr_stmt>
+}</block></function>
+
+<comment type="block">/* return one item from the free list, allocating more if needed */</comment>
+<function><type><name>void</name> *</type><name>MallocClosure</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>ITEM</name> *</type><name>item</name></decl>;</decl_stmt>
+	<if>if <condition>(<expr>!<name>free_list</name></expr>)</condition><then>
+		<expr_stmt><expr><call><name>more_core</name><argument_list>()</argument_list></call></expr>;</expr_stmt></then></if>
+	<if>if <condition>(<expr>!<name>free_list</name></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>item</name> = <name>free_list</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name>free_list</name> = <name><name>item</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+	<return>return <expr><name>item</name></expr>;</return>
+}</block></function>
+</unit>

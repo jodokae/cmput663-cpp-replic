@@ -1,0 +1,577 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/cpython-2.6.1/source/Modules/_ctypes/stgdict.c"><comment type="block">/*****************************************************************
+  This file should be kept compatible with Python 2.3, see PEP 291.
+ *****************************************************************/</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"Python.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;ffi.h&gt;</cpp:file></cpp:include>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>MS_WIN32</name></cpp:ifdef>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;windows.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;malloc.h&gt;</cpp:file></cpp:include>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"ctypes.h"</cpp:file></cpp:include>
+
+<comment type="block">/******************************************************************/</comment>
+<comment type="block">/*
+  StdDict - a dictionary subclass, containing additional C accessible fields
+
+  XXX blabla more
+*/</comment>
+
+<comment type="block">/* Seems we need this, otherwise we get problems when calling
+ * PyDict_SetItem() (ma_lookup is NULL)
+ */</comment>
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>StgDict_init</name><parameter_list>(<param><decl><type><name>StgDictObject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>kwds</name></decl></param>)</parameter_list>
+<block>{
+	<if>if <condition>(<expr><call><name><name>PyDict_Type</name>.<name>tp_init</name></name><argument_list>(<argument><expr>(<name>PyObject</name> *)<name>self</name></expr></argument>, <argument><expr><name>args</name></expr></argument>, <argument><expr><name>kwds</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+		<return>return <expr>-1</expr>;</return></then></if>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>format</name></name> = <name>NULL</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>ndim</name></name> = 0</expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>shape</name></name> = <name>NULL</name></expr>;</expr_stmt>
+	<return>return <expr>0</expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>StgDict_clear</name><parameter_list>(<param><decl><type><name>StgDictObject</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+	<expr_stmt><expr><call><name>Py_CLEAR</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>proto</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_CLEAR</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>argtypes</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_CLEAR</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>converters</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_CLEAR</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>restype</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_CLEAR</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>checker</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr>0</expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>StgDict_dealloc</name><parameter_list>(<param><decl><type><name>StgDictObject</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+	<expr_stmt><expr><call><name>StgDict_clear</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>PyMem_Free</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>format</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>PyMem_Free</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>shape</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>PyMem_Free</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>ffi_type_pointer</name>.<name>elements</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name><name>PyDict_Type</name>.<name>tp_dealloc</name></name><argument_list>(<argument><expr>(<name>PyObject</name> *)<name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<function><type><name>int</name></type>
+<name>StgDict_clone</name><parameter_list>(<param><decl><type><name>StgDictObject</name> *</type><name>dst</name></decl></param>, <param><decl><type><name>StgDictObject</name> *</type><name>src</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>char</name> *</type><name>d</name></decl>, *<decl><type ref="prev"/><name>s</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>size</name></decl>;</decl_stmt>
+
+	<expr_stmt><expr><call><name>StgDict_clear</name><argument_list>(<argument><expr><name>dst</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>PyMem_Free</name><argument_list>(<argument><expr><name><name>dst</name>-&gt;<name>ffi_type_pointer</name>.<name>elements</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>PyMem_Free</name><argument_list>(<argument><expr><name><name>dst</name>-&gt;<name>format</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>dst</name>-&gt;<name>format</name></name> = <name>NULL</name></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>PyMem_Free</name><argument_list>(<argument><expr><name><name>dst</name>-&gt;<name>shape</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>dst</name>-&gt;<name>shape</name></name> = <name>NULL</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>dst</name>-&gt;<name>ffi_type_pointer</name>.<name>elements</name></name> = <name>NULL</name></expr>;</expr_stmt>
+
+	<expr_stmt><expr><name>d</name> = (<name>char</name> *)<name>dst</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name>s</name> = (<name>char</name> *)<name>src</name></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>d</name> + <sizeof>sizeof<argument_list>(<argument><expr><name>PyDictObject</name></expr></argument>)</argument_list></sizeof></expr></argument>,
+	       <argument><expr><name>s</name> + <sizeof>sizeof<argument_list>(<argument><expr><name>PyDictObject</name></expr></argument>)</argument_list></sizeof></expr></argument>,
+	       <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>StgDictObject</name></expr></argument>)</argument_list></sizeof> - <sizeof>sizeof<argument_list>(<argument><expr><name>PyDictObject</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+	<expr_stmt><expr><call><name>Py_XINCREF</name><argument_list>(<argument><expr><name><name>dst</name>-&gt;<name>proto</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_XINCREF</name><argument_list>(<argument><expr><name><name>dst</name>-&gt;<name>argtypes</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_XINCREF</name><argument_list>(<argument><expr><name><name>dst</name>-&gt;<name>converters</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_XINCREF</name><argument_list>(<argument><expr><name><name>dst</name>-&gt;<name>restype</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_XINCREF</name><argument_list>(<argument><expr><name><name>dst</name>-&gt;<name>checker</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+	<if>if <condition>(<expr><name><name>src</name>-&gt;<name>format</name></name></expr>)</condition><then> <block>{
+		<expr_stmt><expr><name><name>dst</name>-&gt;<name>format</name></name> = <call><name>PyMem_Malloc</name><argument_list>(<argument><expr><call><name>strlen</name><argument_list>(<argument><expr><name><name>src</name>-&gt;<name>format</name></name></expr></argument>)</argument_list></call> + 1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<if>if <condition>(<expr><name><name>dst</name>-&gt;<name>format</name></name> == <name>NULL</name></expr>)</condition><then>
+			<return>return <expr>-1</expr>;</return></then></if>
+		<expr_stmt><expr><call><name>strcpy</name><argument_list>(<argument><expr><name><name>dst</name>-&gt;<name>format</name></name></expr></argument>, <argument><expr><name><name>src</name>-&gt;<name>format</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	}</block></then></if>
+	<if>if <condition>(<expr><name><name>src</name>-&gt;<name>shape</name></name></expr>)</condition><then> <block>{
+		<expr_stmt><expr><name><name>dst</name>-&gt;<name>shape</name></name> = <call><name>PyMem_Malloc</name><argument_list>(<argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>Py_ssize_t</name></expr></argument>)</argument_list></sizeof> * <name><name>src</name>-&gt;<name>ndim</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<if>if <condition>(<expr><name><name>dst</name>-&gt;<name>shape</name></name> == <name>NULL</name></expr>)</condition><then>
+			<return>return <expr>-1</expr>;</return></then></if>
+		<expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name><name>dst</name>-&gt;<name>shape</name></name></expr></argument>, <argument><expr><name><name>src</name>-&gt;<name>shape</name></name></expr></argument>,
+		       <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>Py_ssize_t</name></expr></argument>)</argument_list></sizeof> * <name><name>src</name>-&gt;<name>ndim</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	}</block></then></if>
+
+	<if>if <condition>(<expr><name><name>src</name>-&gt;<name>ffi_type_pointer</name>.<name>elements</name></name> == <name>NULL</name></expr>)</condition><then>
+		<return>return <expr>0</expr>;</return></then></if>
+	<expr_stmt><expr><name>size</name> = <sizeof>sizeof<argument_list>(<argument><expr><name>ffi_type</name> *</expr></argument>)</argument_list></sizeof> * (<name><name>src</name>-&gt;<name>length</name></name> + 1)</expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>dst</name>-&gt;<name>ffi_type_pointer</name>.<name>elements</name></name> = <call><name>PyMem_Malloc</name><argument_list>(<argument><expr><name>size</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name><name>dst</name>-&gt;<name>ffi_type_pointer</name>.<name>elements</name></name> == <name>NULL</name></expr>)</condition><then> <block>{
+		<expr_stmt><expr><call><name>PyErr_NoMemory</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+		<return>return <expr>-1</expr>;</return>
+	}</block></then></if>
+	<expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name><name>dst</name>-&gt;<name>ffi_type_pointer</name>.<name>elements</name></name></expr></argument>,
+	       <argument><expr><name><name>src</name>-&gt;<name>ffi_type_pointer</name>.<name>elements</name></name></expr></argument>,
+	       <argument><expr><name>size</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr>0</expr>;</return>
+}</block></function>
+
+<decl_stmt><decl><type><name>PyTypeObject</name></type> <name>StgDict_Type</name> <init>= <expr><block>{
+	<expr><call><name>PyVarObject_HEAD_INIT</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call>
+	"StgDict"</expr>,
+	<expr><sizeof>sizeof<argument_list>(<argument><expr><name>StgDictObject</name></expr></argument>)</argument_list></sizeof></expr>,
+	<expr>0</expr>,
+	<expr>(<name>destructor</name>)<name>StgDict_dealloc</name></expr>,		<comment type="block">/* tp_dealloc */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_print */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_getattr */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_setattr */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_compare */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_repr */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_as_number */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_as_sequence */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_as_mapping */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_hash */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_call */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_str */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_getattro */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_setattro */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_as_buffer */</comment>
+	<expr><name>Py_TPFLAGS_DEFAULT</name> | <name>Py_TPFLAGS_BASETYPE</name></expr>, <comment type="block">/* tp_flags */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_doc */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_traverse */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_clear */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_richcompare */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_weaklistoffset */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_iter */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_iternext */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_methods */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_members */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_getset */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_base */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_dict */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_descr_get */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_descr_set */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_dictoffset */</comment>
+	<expr>(<name>initproc</name>)<name>StgDict_init</name></expr>,			<comment type="block">/* tp_init */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_alloc */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_new */</comment>
+	<expr>0</expr>,					<comment type="block">/* tp_free */</comment>
+}</block></expr></init></decl>;</decl_stmt>
+
+<comment type="block">/* May return NULL, but does not set an exception! */</comment>
+<function><type><name>StgDictObject</name> *</type>
+<name>PyType_stgdict</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>obj</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyTypeObject</name> *</type><name>type</name></decl>;</decl_stmt>
+
+	<if>if <condition>(<expr>!<call><name>PyType_Check</name><argument_list>(<argument><expr><name>obj</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>type</name> = (<name>PyTypeObject</name> *)<name>obj</name></expr>;</expr_stmt>
+	<if>if <condition>(<expr>!<call><name>PyType_HasFeature</name><argument_list>(<argument><expr><name>type</name></expr></argument>, <argument><expr><name>Py_TPFLAGS_HAVE_CLASS</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<if>if <condition>(<expr>!<name><name>type</name>-&gt;<name>tp_dict</name></name> || !<call><name>StgDict_CheckExact</name><argument_list>(<argument><expr><name><name>type</name>-&gt;<name>tp_dict</name></name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<return>return <expr>(<name>StgDictObject</name> *)<name><name>type</name>-&gt;<name>tp_dict</name></name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* May return NULL, but does not set an exception! */</comment>
+<comment type="block">/*
+  This function should be as fast as possible, so we don't call PyType_stgdict
+  above but inline the code, and avoid the PyType_Check().
+*/</comment>
+<function><type><name>StgDictObject</name> *</type>
+<name>PyObject_stgdict</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyTypeObject</name> *</type><name>type</name> <init>= <expr><name><name>self</name>-&gt;<name>ob_type</name></name></expr></init></decl>;</decl_stmt>
+	<if>if <condition>(<expr>!<call><name>PyType_HasFeature</name><argument_list>(<argument><expr><name>type</name></expr></argument>, <argument><expr><name>Py_TPFLAGS_HAVE_CLASS</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<if>if <condition>(<expr>!<name><name>type</name>-&gt;<name>tp_dict</name></name> || !<call><name>StgDict_CheckExact</name><argument_list>(<argument><expr><name><name>type</name>-&gt;<name>tp_dict</name></name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<return>return <expr>(<name>StgDictObject</name> *)<name><name>type</name>-&gt;<name>tp_dict</name></name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* descr is the descriptor for a field marked as anonymous.  Get all the
+ _fields_ descriptors from descr-&gt;proto, create new descriptors with offset
+ and index adjusted, and stuff them into type.
+ */</comment>
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>MakeFields</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>type</name></decl></param>, <param><decl><type><name>CFieldObject</name> *</type><name>descr</name></decl></param>,
+	   <param><decl><type><name>Py_ssize_t</name></type> <name>index</name></decl></param>, <param><decl><type><name>Py_ssize_t</name></type> <name>offset</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>i</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>fields</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>fieldlist</name></decl>;</decl_stmt>
+
+	<expr_stmt><expr><name>fields</name> = <call><name>PyObject_GetAttrString</name><argument_list>(<argument><expr><name><name>descr</name>-&gt;<name>proto</name></name></expr></argument>, <argument><expr>"_fields_"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>fields</name> == <name>NULL</name></expr>)</condition><then>
+		<return>return <expr>-1</expr>;</return></then></if>
+	<expr_stmt><expr><name>fieldlist</name> = <call><name>PySequence_Fast</name><argument_list>(<argument><expr><name>fields</name></expr></argument>, <argument><expr>"_fields_ must be a sequence"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>fields</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>fieldlist</name> == <name>NULL</name></expr>)</condition><then>
+		<return>return <expr>-1</expr>;</return></then></if>
+
+	<for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <call><name>PySequence_Fast_GET_SIZE</name><argument_list>(<argument><expr><name>fieldlist</name></expr></argument>)</argument_list></call></expr>;</condition> <incr><expr>++<name>i</name></expr></incr>) <block>{
+		<decl_stmt><decl><type><name>PyObject</name> *</type><name>pair</name> <init>= <expr><call><name>PySequence_Fast_GET_ITEM</name><argument_list>(<argument><expr><name>fieldlist</name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt> <comment type="block">/* borrowed */</comment>
+		<decl_stmt><decl><type><name>PyObject</name> *</type><name>fname</name></decl>, *<decl><type ref="prev"/><name>ftype</name></decl>, *<decl><type ref="prev"/><name>bits</name></decl>;</decl_stmt>
+		<decl_stmt><decl><type><name>CFieldObject</name> *</type><name>fdescr</name></decl>;</decl_stmt>
+		<decl_stmt><decl><type><name>CFieldObject</name> *</type><name>new_descr</name></decl>;</decl_stmt>
+		<comment type="block">/* Convert to PyArg_UnpackTuple... */</comment>
+		<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>pair</name></expr></argument>, <argument><expr>"OO|O"</expr></argument>, <argument><expr>&amp;<name>fname</name></expr></argument>, <argument><expr>&amp;<name>ftype</name></expr></argument>, <argument><expr>&amp;<name>bits</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+			<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>fieldlist</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr>-1</expr>;</return>
+		}</block></then></if>
+		<expr_stmt><expr><name>fdescr</name> = (<name>CFieldObject</name> *)<call><name>PyObject_GetAttr</name><argument_list>(<argument><expr><name><name>descr</name>-&gt;<name>proto</name></name></expr></argument>, <argument><expr><name>fname</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<if>if <condition>(<expr><name>fdescr</name> == <name>NULL</name></expr>)</condition><then> <block>{
+			<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>fieldlist</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr>-1</expr>;</return>
+		}</block></then></if>
+		<if>if <condition>(<expr><call><name>Py_TYPE</name><argument_list>(<argument><expr><name>fdescr</name></expr></argument>)</argument_list></call> != &amp;<name>CField_Type</name></expr>)</condition><then> <block>{
+			<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_TypeError</name></expr></argument>, <argument><expr>"unexpected type"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>fdescr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>fieldlist</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr>-1</expr>;</return>
+		}</block></then></if>
+		<if>if <condition>(<expr><name><name>fdescr</name>-&gt;<name>anonymous</name></name></expr>)</condition><then> <block>{
+			<decl_stmt><decl><type><name>int</name></type> <name>rc</name> <init>= <expr><call><name>MakeFields</name><argument_list>(<argument><expr><name>type</name></expr></argument>, <argument><expr><name>fdescr</name></expr></argument>,
+					    <argument><expr><name>index</name> + <name><name>fdescr</name>-&gt;<name>index</name></name></expr></argument>,
+					    <argument><expr><name>offset</name> + <name><name>fdescr</name>-&gt;<name>offset</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+			<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>fdescr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<if>if <condition>(<expr><name>rc</name> == -1</expr>)</condition><then> <block>{
+				<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>fieldlist</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+				<return>return <expr>-1</expr>;</return>
+			}</block></then></if>
+			<continue>continue;</continue>
+		}</block></then></if>
+ 		<expr_stmt><expr><name>new_descr</name> = (<name>CFieldObject</name> *)<call><name>PyObject_CallObject</name><argument_list>(<argument><expr>(<name>PyObject</name> *)&amp;<name>CField_Type</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<if>if <condition>(<expr><name>new_descr</name> == <name>NULL</name></expr>)</condition><then> <block>{
+			<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>fdescr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>fieldlist</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr>-1</expr>;</return>
+		}</block></then></if>
+		<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><call><name>Py_TYPE</name><argument_list>(<argument><expr><name>new_descr</name></expr></argument>)</argument_list></call> == &amp;<name>CField_Type</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+ 		<expr_stmt><expr><name><name>new_descr</name>-&gt;<name>size</name></name> = <name><name>fdescr</name>-&gt;<name>size</name></name></expr>;</expr_stmt>
+ 		<expr_stmt><expr><name><name>new_descr</name>-&gt;<name>offset</name></name> = <name><name>fdescr</name>-&gt;<name>offset</name></name> + <name>offset</name></expr>;</expr_stmt>
+ 		<expr_stmt><expr><name><name>new_descr</name>-&gt;<name>index</name></name> = <name><name>fdescr</name>-&gt;<name>index</name></name> + <name>index</name></expr>;</expr_stmt>
+ 		<expr_stmt><expr><name><name>new_descr</name>-&gt;<name>proto</name></name> = <name><name>fdescr</name>-&gt;<name>proto</name></name></expr>;</expr_stmt>
+ 		<expr_stmt><expr><call><name>Py_XINCREF</name><argument_list>(<argument><expr><name><name>new_descr</name>-&gt;<name>proto</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+ 		<expr_stmt><expr><name><name>new_descr</name>-&gt;<name>getfunc</name></name> = <name><name>fdescr</name>-&gt;<name>getfunc</name></name></expr>;</expr_stmt>
+ 		<expr_stmt><expr><name><name>new_descr</name>-&gt;<name>setfunc</name></name> = <name><name>fdescr</name>-&gt;<name>setfunc</name></name></expr>;</expr_stmt>
+
+  		<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>fdescr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		
+		<if>if <condition>(<expr>-1 == <call><name>PyObject_SetAttr</name><argument_list>(<argument><expr><name>type</name></expr></argument>, <argument><expr><name>fname</name></expr></argument>, <argument><expr>(<name>PyObject</name> *)<name>new_descr</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+			<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>fieldlist</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>new_descr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr>-1</expr>;</return>
+		}</block></then></if>
+		<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>new_descr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	}</block></for>
+	<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>fieldlist</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr>0</expr>;</return>
+}</block></function>
+
+<comment type="block">/* Iterate over the names in the type's _anonymous_ attribute, if present,
+ */</comment>
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>MakeAnonFields</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>type</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>anon</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>anon_names</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>i</name></decl>;</decl_stmt>
+
+	<expr_stmt><expr><name>anon</name> = <call><name>PyObject_GetAttrString</name><argument_list>(<argument><expr><name>type</name></expr></argument>, <argument><expr>"_anonymous_"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>anon</name> == <name>NULL</name></expr>)</condition><then> <block>{
+		<expr_stmt><expr><call><name>PyErr_Clear</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+		<return>return <expr>0</expr>;</return>
+	}</block></then></if>
+	<expr_stmt><expr><name>anon_names</name> = <call><name>PySequence_Fast</name><argument_list>(<argument><expr><name>anon</name></expr></argument>, <argument><expr>"_anonymous_ must be a sequence"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>anon</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>anon_names</name> == <name>NULL</name></expr>)</condition><then>
+		<return>return <expr>-1</expr>;</return></then></if>
+
+	<for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <call><name>PySequence_Fast_GET_SIZE</name><argument_list>(<argument><expr><name>anon_names</name></expr></argument>)</argument_list></call></expr>;</condition> <incr><expr>++<name>i</name></expr></incr>) <block>{
+		<decl_stmt><decl><type><name>PyObject</name> *</type><name>fname</name> <init>= <expr><call><name>PySequence_Fast_GET_ITEM</name><argument_list>(<argument><expr><name>anon_names</name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt> <comment type="block">/* borrowed */</comment>
+		<decl_stmt><decl><type><name>CFieldObject</name> *</type><name>descr</name> <init>= <expr>(<name>CFieldObject</name> *)<call><name>PyObject_GetAttr</name><argument_list>(<argument><expr><name>type</name></expr></argument>, <argument><expr><name>fname</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>descr</name> == <name>NULL</name></expr>)</condition><then> <block>{
+			<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>anon_names</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr>-1</expr>;</return>
+		}</block></then></if>
+		<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><call><name>Py_TYPE</name><argument_list>(<argument><expr><name>descr</name></expr></argument>)</argument_list></call> == &amp;<name>CField_Type</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><name><name>descr</name>-&gt;<name>anonymous</name></name> = 1</expr>;</expr_stmt>
+
+		<comment type="block">/* descr is in the field descriptor. */</comment>
+		<if>if <condition>(<expr>-1 == <call><name>MakeFields</name><argument_list>(<argument><expr><name>type</name></expr></argument>, <argument><expr>(<name>CFieldObject</name> *)<name>descr</name></expr></argument>,
+				     <argument><expr>((<name>CFieldObject</name> *)<name>descr</name>)-&gt;<name>index</name></expr></argument>,
+				     <argument><expr>((<name>CFieldObject</name> *)<name>descr</name>)-&gt;<name>offset</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+			<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>descr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>anon_names</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr>-1</expr>;</return>
+		}</block></then></if>
+		<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>descr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	}</block></for>
+
+	<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>anon_names</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr>0</expr>;</return>
+}</block></function>
+
+<comment type="block">/*
+  Retrive the (optional) _pack_ attribute from a type, the _fields_ attribute,
+  and create an StgDictObject.  Used for Structure and Union subclasses.
+*/</comment>
+<function><type><name>int</name></type>
+<name>StructUnionType_update_stgdict</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>type</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>fields</name></decl></param>, <param><decl><type><name>int</name></type> <name>isStruct</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>StgDictObject</name> *</type><name>stgdict</name></decl>, *<decl><type ref="prev"/><name>basedict</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>len</name></decl>, <decl><type ref="prev"/><name>offset</name></decl>, <decl><type ref="prev"/><name>size</name></decl>, <decl><type ref="prev"/><name>align</name></decl>, <decl><type ref="prev"/><name>i</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>union_size</name></decl>, <decl><type ref="prev"/><name>total_align</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>field_size</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>bitofs</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>isPacked</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>pack</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>ffi_ofs</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>big_endian</name></decl>;</decl_stmt>
+
+	<comment type="block">/* HACK Alert: I cannot be bothered to fix ctypes.com, so there has to
+	   be a way to use the old, broken sematics: _fields_ are not extended
+	   but replaced in subclasses.
+	   
+	   XXX Remove this in ctypes 1.0!
+	*/</comment>
+	<decl_stmt><decl><type><name>int</name></type> <name>use_broken_old_ctypes_semantics</name></decl>;</decl_stmt>
+
+	<if>if <condition>(<expr><name>fields</name> == <name>NULL</name></expr>)</condition><then>
+		<return>return <expr>0</expr>;</return></then></if>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>WORDS_BIGENDIAN</name></cpp:ifdef>
+	<expr_stmt><expr><name>big_endian</name> = <call><name>PyObject_HasAttrString</name><argument_list>(<argument><expr><name>type</name></expr></argument>, <argument><expr>"_swappedbytes_"</expr></argument>)</argument_list></call> ? 0 : 1</expr>;</expr_stmt>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+	<expr_stmt><expr><name>big_endian</name> = <call><name>PyObject_HasAttrString</name><argument_list>(<argument><expr><name>type</name></expr></argument>, <argument><expr>"_swappedbytes_"</expr></argument>)</argument_list></call> ? 1 : 0</expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+	<expr_stmt><expr><name>use_broken_old_ctypes_semantics</name> = \
+		<call><name>PyObject_HasAttrString</name><argument_list>(<argument><expr><name>type</name></expr></argument>, <argument><expr>"_use_broken_old_ctypes_structure_semantics_"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+	<expr_stmt><expr><name>isPacked</name> = <call><name>PyObject_GetAttrString</name><argument_list>(<argument><expr><name>type</name></expr></argument>, <argument><expr>"_pack_"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>isPacked</name></expr>)</condition><then> <block>{
+		<expr_stmt><expr><name>pack</name> = <call><name>PyInt_AsLong</name><argument_list>(<argument><expr><name>isPacked</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<if>if <condition>(<expr><name>pack</name> &lt; 0 || <call><name>PyErr_Occurred</name><argument_list>()</argument_list></call></expr>)</condition><then> <block>{
+			<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>isPacked</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>,
+					<argument><expr>"_pack_ must be a non-negative integer"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr>-1</expr>;</return>
+		}</block></then></if>
+		<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>isPacked</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	}</block></then> <else>else
+		<expr_stmt><expr><call><name>PyErr_Clear</name><argument_list>()</argument_list></call></expr>;</expr_stmt></else></if>
+
+	<expr_stmt><expr><name>len</name> = <call><name>PySequence_Length</name><argument_list>(<argument><expr><name>fields</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>len</name> == -1</expr>)</condition><then> <block>{
+		<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_TypeError</name></expr></argument>,
+				<argument><expr>"'_fields_' must be a sequence of pairs"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<return>return <expr>-1</expr>;</return>
+	}</block></then></if>
+
+	<expr_stmt><expr><name>stgdict</name> = <call><name>PyType_stgdict</name><argument_list>(<argument><expr><name>type</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr>!<name>stgdict</name></expr>)</condition><then>
+		<return>return <expr>-1</expr>;</return></then></if>
+	<comment type="block">/* If this structure/union is already marked final we cannot assign
+	   _fields_ anymore. */</comment>
+
+	<if>if <condition>(<expr><name><name>stgdict</name>-&gt;<name>flags</name></name> &amp; <name>DICTFLAG_FINAL</name></expr>)</condition><then> <block>{<comment type="block">/* is final ? */</comment>
+		<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_AttributeError</name></expr></argument>,
+				<argument><expr>"_fields_ is final"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<return>return <expr>-1</expr>;</return>
+	}</block></then></if>
+
+	<if>if <condition>(<expr><name><name>stgdict</name>-&gt;<name>format</name></name></expr>)</condition><then> <block>{
+		<expr_stmt><expr><call><name>PyMem_Free</name><argument_list>(<argument><expr><name><name>stgdict</name>-&gt;<name>format</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><name><name>stgdict</name>-&gt;<name>format</name></name> = <name>NULL</name></expr>;</expr_stmt>
+	}</block></then></if>
+
+	<if>if <condition>(<expr><name><name>stgdict</name>-&gt;<name>ffi_type_pointer</name>.<name>elements</name></name></expr>)</condition><then>
+		<expr_stmt><expr><call><name>PyMem_Free</name><argument_list>(<argument><expr><name><name>stgdict</name>-&gt;<name>ffi_type_pointer</name>.<name>elements</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+	<expr_stmt><expr><name>basedict</name> = <call><name>PyType_stgdict</name><argument_list>(<argument><expr><call>(<name>PyObject</name> *)<argument_list>(<argument><expr>(<name>PyTypeObject</name> *)<name>type</name></expr></argument>)</argument_list></call>-&gt;<name>tp_base</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>basedict</name> &amp;&amp; !<name>use_broken_old_ctypes_semantics</name></expr>)</condition><then> <block>{
+		<expr_stmt><expr><name>size</name> = <name>offset</name> = <name><name>basedict</name>-&gt;<name>size</name></name></expr>;</expr_stmt>
+		<expr_stmt><expr><name>align</name> = <name><name>basedict</name>-&gt;<name>align</name></name></expr>;</expr_stmt>
+		<expr_stmt><expr><name>union_size</name> = 0</expr>;</expr_stmt>
+		<expr_stmt><expr><name>total_align</name> = <name>align</name> ? <name>align</name> : 1</expr>;</expr_stmt>
+		<expr_stmt><expr><name><name>stgdict</name>-&gt;<name>ffi_type_pointer</name>.<name>type</name></name> = <name>FFI_TYPE_STRUCT</name></expr>;</expr_stmt>
+		<expr_stmt><expr><name><name>stgdict</name>-&gt;<name>ffi_type_pointer</name>.<name>elements</name></name> = <call><name>PyMem_Malloc</name><argument_list>(<argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>ffi_type</name> *</expr></argument>)</argument_list></sizeof> * (<name><name>basedict</name>-&gt;<name>length</name></name> + <name>len</name> + 1)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<if>if <condition>(<expr><name><name>stgdict</name>-&gt;<name>ffi_type_pointer</name>.<name>elements</name></name> == <name>NULL</name></expr>)</condition><then> <block>{
+			<expr_stmt><expr><call><name>PyErr_NoMemory</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr>-1</expr>;</return>
+		}</block></then></if>
+		<expr_stmt><expr><call><name>memset</name><argument_list>(<argument><expr><name><name>stgdict</name>-&gt;<name>ffi_type_pointer</name>.<name>elements</name></name></expr></argument>, <argument><expr>0</expr></argument>,
+		       <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>ffi_type</name> *</expr></argument>)</argument_list></sizeof> * (<name><name>basedict</name>-&gt;<name>length</name></name> + <name>len</name> + 1)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name><name>stgdict</name>-&gt;<name>ffi_type_pointer</name>.<name>elements</name></name></expr></argument>,
+		       <argument><expr><name><name>basedict</name>-&gt;<name>ffi_type_pointer</name>.<name>elements</name></name></expr></argument>,
+		       <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>ffi_type</name> *</expr></argument>)</argument_list></sizeof> * (<name><name>basedict</name>-&gt;<name>length</name></name>)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><name>ffi_ofs</name> = <name><name>basedict</name>-&gt;<name>length</name></name></expr>;</expr_stmt>
+	}</block></then> <else>else <block>{
+		<expr_stmt><expr><name>offset</name> = 0</expr>;</expr_stmt>
+		<expr_stmt><expr><name>size</name> = 0</expr>;</expr_stmt>
+		<expr_stmt><expr><name>align</name> = 0</expr>;</expr_stmt>
+		<expr_stmt><expr><name>union_size</name> = 0</expr>;</expr_stmt>
+		<expr_stmt><expr><name>total_align</name> = 1</expr>;</expr_stmt>
+		<expr_stmt><expr><name><name>stgdict</name>-&gt;<name>ffi_type_pointer</name>.<name>type</name></name> = <name>FFI_TYPE_STRUCT</name></expr>;</expr_stmt>
+		<expr_stmt><expr><name><name>stgdict</name>-&gt;<name>ffi_type_pointer</name>.<name>elements</name></name> = <call><name>PyMem_Malloc</name><argument_list>(<argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>ffi_type</name> *</expr></argument>)</argument_list></sizeof> * (<name>len</name> + 1)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<if>if <condition>(<expr><name><name>stgdict</name>-&gt;<name>ffi_type_pointer</name>.<name>elements</name></name> == <name>NULL</name></expr>)</condition><then> <block>{
+			<expr_stmt><expr><call><name>PyErr_NoMemory</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr>-1</expr>;</return>
+		}</block></then></if>
+		<expr_stmt><expr><call><name>memset</name><argument_list>(<argument><expr><name><name>stgdict</name>-&gt;<name>ffi_type_pointer</name>.<name>elements</name></name></expr></argument>, <argument><expr>0</expr></argument>,
+		       <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>ffi_type</name> *</expr></argument>)</argument_list></sizeof> * (<name>len</name> + 1)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><name>ffi_ofs</name> = 0</expr>;</expr_stmt>
+	}</block></else></if>
+
+	<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name><name>stgdict</name>-&gt;<name>format</name></name> == <name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>isStruct</name> &amp;&amp; !<name>isPacked</name></expr>)</condition><then> <block>{
+		<expr_stmt><expr><name><name>stgdict</name>-&gt;<name>format</name></name> = <call><name>alloc_format_string</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr>"T{"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	}</block></then> <else>else <block>{
+		<comment type="block">/* PEP3118 doesn't support union, or packed structures (well,
+		   only standard packing, but we dont support the pep for
+		   that). Use 'B' for bytes. */</comment>
+		<expr_stmt><expr><name><name>stgdict</name>-&gt;<name>format</name></name> = <call><name>alloc_format_string</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr>"B"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	}</block></else></if>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>realdict</name></cpp:macro> <cpp:value>((PyObject *)&amp;stgdict-&gt;dict)</cpp:value></cpp:define>
+	<for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name>len</name></expr>;</condition> <incr><expr>++<name>i</name></expr></incr>) <block>{
+		<decl_stmt><decl><type><name>PyObject</name> *</type><name>name</name> <init>= <expr><name>NULL</name></expr></init>, *<name>desc</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+		<decl_stmt><decl><type><name>PyObject</name> *</type><name>pair</name> <init>= <expr><call><name>PySequence_GetItem</name><argument_list>(<argument><expr><name>fields</name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+		<decl_stmt><decl><type><name>PyObject</name> *</type><name>prop</name></decl>;</decl_stmt>
+		<decl_stmt><decl><type><name>StgDictObject</name> *</type><name>dict</name></decl>;</decl_stmt>
+		<decl_stmt><decl><type><name>int</name></type> <name>bitsize</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+
+		<if>if <condition>(<expr>!<name>pair</name> || !<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>pair</name></expr></argument>, <argument><expr>"OO|i"</expr></argument>, <argument><expr>&amp;<name>name</name></expr></argument>, <argument><expr>&amp;<name>desc</name></expr></argument>, <argument><expr>&amp;<name>bitsize</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+			<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_AttributeError</name></expr></argument>,
+					<argument><expr>"'_fields_' must be a sequence of pairs"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>pair</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr>-1</expr>;</return>
+		}</block></then></if>
+		<expr_stmt><expr><name>dict</name> = <call><name>PyType_stgdict</name><argument_list>(<argument><expr><name>desc</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<if>if <condition>(<expr><name>dict</name> == <name>NULL</name></expr>)</condition><then> <block>{
+			<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>pair</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<expr_stmt><expr><call><name>PyErr_Format</name><argument_list>(<argument><expr><name>PyExc_TypeError</name></expr></argument>,
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr>(<name>PY_VERSION_HEX</name> &lt; 0x02050000)</expr></cpp:if>
+				     <argument><expr>"second item in _fields_ tuple (index %d) must be a C type"</expr></argument>,
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+				     <argument><expr>"second item in _fields_ tuple (index %zd) must be a C type"</expr></argument>,
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+				     <argument><expr><name>i</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr>-1</expr>;</return>
+		}</block></then></if>
+		<expr_stmt><expr><name><name>stgdict</name>-&gt;<name>ffi_type_pointer</name>.<name>elements</name><index>[<expr><name>ffi_ofs</name> + <name>i</name></expr>]</index></name> = &amp;<name><name>dict</name>-&gt;<name>ffi_type_pointer</name></name></expr>;</expr_stmt>
+		<if>if <condition>(<expr><name><name>dict</name>-&gt;<name>flags</name></name> &amp; (<name>TYPEFLAG_ISPOINTER</name> | <name>TYPEFLAG_HASPOINTER</name>)</expr>)</condition><then>
+			<expr_stmt><expr><name><name>stgdict</name>-&gt;<name>flags</name></name> |= <name>TYPEFLAG_HASPOINTER</name></expr>;</expr_stmt></then></if>
+		<expr_stmt><expr><name><name>dict</name>-&gt;<name>flags</name></name> |= <name>DICTFLAG_FINAL</name></expr>;</expr_stmt> <comment type="block">/* mark field type final */</comment>
+		<if>if <condition>(<expr><call><name>PyTuple_Size</name><argument_list>(<argument><expr><name>pair</name></expr></argument>)</argument_list></call> == 3</expr>)</condition><then> <block>{ <comment type="block">/* bits specified */</comment>
+			<switch>switch<condition>(<expr><name><name>dict</name>-&gt;<name>ffi_type_pointer</name>.<name>type</name></name></expr>)</condition> <block>{
+			<case>case <expr><name>FFI_TYPE_UINT8</name></expr>:
+			</case><case>case <expr><name>FFI_TYPE_UINT16</name></expr>:
+			</case><case>case <expr><name>FFI_TYPE_UINT32</name></expr>:
+			</case><case>case <expr><name>FFI_TYPE_SINT64</name></expr>:
+			</case><case>case <expr><name>FFI_TYPE_UINT64</name></expr>:
+				<break>break;</break>
+
+			</case><case>case <expr><name>FFI_TYPE_SINT8</name></expr>:
+			</case><case>case <expr><name>FFI_TYPE_SINT16</name></expr>:
+			</case><case>case <expr><name>FFI_TYPE_SINT32</name></expr>:
+				<if>if <condition>(<expr><name><name>dict</name>-&gt;<name>getfunc</name></name> != <call><name>getentry</name><argument_list>(<argument><expr>"c"</expr></argument>)</argument_list></call>-&gt;<name>getfunc</name>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>CTYPES_UNICODE</name></cpp:ifdef>
+				    &amp;&amp; <name><name>dict</name>-&gt;<name>getfunc</name></name> != <call><name>getentry</name><argument_list>(<argument><expr>"u"</expr></argument>)</argument_list></call>-&gt;<name>getfunc</name></expr>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+					)</condition><then>
+					<break>break;</break></then></if>
+				<comment type="block">/* else fall through */</comment>
+			</case><default>default:
+				<expr_stmt><expr><call><name>PyErr_Format</name><argument_list>(<argument><expr><name>PyExc_TypeError</name></expr></argument>,
+					     <argument><expr>"bit fields not allowed for type %s"</expr></argument>,
+					     <argument><expr>((<name>PyTypeObject</name> *)<name>desc</name>)-&gt;<name>tp_name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+				<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>pair</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+				<return>return <expr>-1</expr>;</return>
+			</default>}</block></switch>
+			<if>if <condition>(<expr><name>bitsize</name> &lt;= 0 || <name>bitsize</name> &gt; <name><name>dict</name>-&gt;<name>size</name></name> * 8</expr>)</condition><then> <block>{
+				<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>,
+						<argument><expr>"number of bits invalid for bit field"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+				<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>pair</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+				<return>return <expr>-1</expr>;</return>
+			}</block></then></if>
+		}</block></then> <else>else
+			<expr_stmt><expr><name>bitsize</name> = 0</expr>;</expr_stmt></else></if>
+		<if>if <condition>(<expr><name>isStruct</name> &amp;&amp; !<name>isPacked</name></expr>)</condition><then> <block>{
+			<decl_stmt><decl><type><name>char</name> *</type><name>fieldfmt</name> <init>= <expr><name><name>dict</name>-&gt;<name>format</name></name> ? <name><name>dict</name>-&gt;<name>format</name></name> : "B"</expr></init></decl>;</decl_stmt>
+			<decl_stmt><decl><type><name>char</name> *</type><name>fieldname</name> <init>= <expr><call><name>PyString_AsString</name><argument_list>(<argument><expr><name>name</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+			<decl_stmt><decl><type><name>char</name> *</type><name>ptr</name></decl>;</decl_stmt>
+			<decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>len</name> <init>= <expr><call><name>strlen</name><argument_list>(<argument><expr><name>fieldname</name></expr></argument>)</argument_list></call> + <call><name>strlen</name><argument_list>(<argument><expr><name>fieldfmt</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+			<decl_stmt><decl><type><name>char</name> *</type><name>buf</name> <init>= <expr><call><name>alloca</name><argument_list>(<argument><expr><name>len</name> + 2 + 1</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+			<expr_stmt><expr><call><name>sprintf</name><argument_list>(<argument><expr><name>buf</name></expr></argument>, <argument><expr>"%s:%s:"</expr></argument>, <argument><expr><name>fieldfmt</name></expr></argument>, <argument><expr><name>fieldname</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+			<expr_stmt><expr><name>ptr</name> = <name><name>stgdict</name>-&gt;<name>format</name></name></expr>;</expr_stmt>
+			<expr_stmt><expr><name><name>stgdict</name>-&gt;<name>format</name></name> = <call><name>alloc_format_string</name><argument_list>(<argument><expr><name><name>stgdict</name>-&gt;<name>format</name></name></expr></argument>, <argument><expr><name>buf</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<expr_stmt><expr><call><name>PyMem_Free</name><argument_list>(<argument><expr><name>ptr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+			<if>if <condition>(<expr><name><name>stgdict</name>-&gt;<name>format</name></name> == <name>NULL</name></expr>)</condition><then> <block>{
+				<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>pair</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+				<return>return <expr>-1</expr>;</return>
+			}</block></then></if>
+		}</block></then></if>
+		<if>if <condition>(<expr><name>isStruct</name></expr>)</condition><then> <block>{
+			<expr_stmt><expr><name>prop</name> = <call><name>CField_FromDesc</name><argument_list>(<argument><expr><name>desc</name></expr></argument>, <argument><expr><name>i</name></expr></argument>,
+					       <argument><expr>&amp;<name>field_size</name></expr></argument>, <argument><expr><name>bitsize</name></expr></argument>, <argument><expr>&amp;<name>bitofs</name></expr></argument>,
+					       <argument><expr>&amp;<name>size</name></expr></argument>, <argument><expr>&amp;<name>offset</name></expr></argument>, <argument><expr>&amp;<name>align</name></expr></argument>,
+					       <argument><expr><name>pack</name></expr></argument>, <argument><expr><name>big_endian</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		}</block></then> <else>else <comment type="block">/* union */</comment> <block>{
+			<expr_stmt><expr><name>size</name> = 0</expr>;</expr_stmt>
+			<expr_stmt><expr><name>offset</name> = 0</expr>;</expr_stmt>
+			<expr_stmt><expr><name>align</name> = 0</expr>;</expr_stmt>
+			<expr_stmt><expr><name>prop</name> = <call><name>CField_FromDesc</name><argument_list>(<argument><expr><name>desc</name></expr></argument>, <argument><expr><name>i</name></expr></argument>,
+					       <argument><expr>&amp;<name>field_size</name></expr></argument>, <argument><expr><name>bitsize</name></expr></argument>, <argument><expr>&amp;<name>bitofs</name></expr></argument>,
+					       <argument><expr>&amp;<name>size</name></expr></argument>, <argument><expr>&amp;<name>offset</name></expr></argument>, <argument><expr>&amp;<name>align</name></expr></argument>,
+					       <argument><expr><name>pack</name></expr></argument>, <argument><expr><name>big_endian</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<expr_stmt><expr><name>union_size</name> = <call><name>max</name><argument_list>(<argument><expr><name>size</name></expr></argument>, <argument><expr><name>union_size</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		}</block></else></if>
+		<expr_stmt><expr><name>total_align</name> = <call><name>max</name><argument_list>(<argument><expr><name>align</name></expr></argument>, <argument><expr><name>total_align</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+		<if>if <condition>(<expr>!<name>prop</name></expr>)</condition><then> <block>{
+			<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>pair</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr>-1</expr>;</return>
+		}</block></then></if>
+		<if>if <condition>(<expr>-1 == <call><name>PyObject_SetAttr</name><argument_list>(<argument><expr><name>type</name></expr></argument>, <argument><expr><name>name</name></expr></argument>, <argument><expr><name>prop</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+			<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>prop</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>pair</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr>-1</expr>;</return>
+		}</block></then></if>
+		<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>pair</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>prop</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	}</block></for>
+<cpp:undef>#<cpp:directive>undef</cpp:directive> <name>realdict</name></cpp:undef>
+
+	<if>if <condition>(<expr><name>isStruct</name> &amp;&amp; !<name>isPacked</name></expr>)</condition><then> <block>{
+		<decl_stmt><decl><type><name>char</name> *</type><name>ptr</name> <init>= <expr><name><name>stgdict</name>-&gt;<name>format</name></name></expr></init></decl>;</decl_stmt>
+		<expr_stmt><expr><name><name>stgdict</name>-&gt;<name>format</name></name> = <call><name>alloc_format_string</name><argument_list>(<argument><expr><name><name>stgdict</name>-&gt;<name>format</name></name></expr></argument>, <argument><expr>"}"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><call><name>PyMem_Free</name><argument_list>(<argument><expr><name>ptr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<if>if <condition>(<expr><name><name>stgdict</name>-&gt;<name>format</name></name> == <name>NULL</name></expr>)</condition><then>
+			<return>return <expr>-1</expr>;</return></then></if>
+	}</block></then></if>
+
+	<if>if <condition>(<expr>!<name>isStruct</name></expr>)</condition><then>
+		<expr_stmt><expr><name>size</name> = <name>union_size</name></expr>;</expr_stmt></then></if>
+
+	<comment type="block">/* Adjust the size according to the alignment requirements */</comment>
+	<expr_stmt><expr><name>size</name> = ((<name>size</name> + <name>total_align</name> - 1) / <name>total_align</name>) * <name>total_align</name></expr>;</expr_stmt>
+
+	<expr_stmt><expr><name><name>stgdict</name>-&gt;<name>ffi_type_pointer</name>.<name>alignment</name></name> = <macro><name>Py_SAFE_DOWNCAST</name><argument_list>(<argument>total_align</argument>,
+							       <argument>Py_ssize_t</argument>,
+							       <argument>unsigned short</argument>)</argument_list></macro></expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>stgdict</name>-&gt;<name>ffi_type_pointer</name>.<name>size</name></name> = <name>size</name></expr>;</expr_stmt>
+
+	<expr_stmt><expr><name><name>stgdict</name>-&gt;<name>size</name></name> = <name>size</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>stgdict</name>-&gt;<name>align</name></name> = <name>total_align</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>stgdict</name>-&gt;<name>length</name></name> = <name>len</name></expr>;</expr_stmt>	<comment type="block">/* ADD ffi_ofs? */</comment>
+
+	<comment type="block">/* We did check that this flag was NOT set above, it must not
+	   have been set until now. */</comment>
+	<if>if <condition>(<expr><name><name>stgdict</name>-&gt;<name>flags</name></name> &amp; <name>DICTFLAG_FINAL</name></expr>)</condition><then> <block>{
+		<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_AttributeError</name></expr></argument>,
+				<argument><expr>"Structure or union cannot contain itself"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<return>return <expr>-1</expr>;</return>
+	}</block></then></if>
+	<expr_stmt><expr><name><name>stgdict</name>-&gt;<name>flags</name></name> |= <name>DICTFLAG_FINAL</name></expr>;</expr_stmt>
+
+	<return>return <expr><call><name>MakeAnonFields</name><argument_list>(<argument><expr><name>type</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+</unit>

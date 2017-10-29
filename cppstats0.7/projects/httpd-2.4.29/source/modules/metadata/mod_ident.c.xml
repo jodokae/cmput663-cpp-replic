@@ -1,0 +1,346 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/httpd-2.4.29/modules/metadata/mod_ident.c"><comment type="block">/* Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */</comment>
+
+<comment type="block">/*
+ * mod_ident: Handle RFC 1413 ident request
+ * obtained from rfc1413.c
+ *
+ * rfc1413() speaks a common subset of the RFC 1413, AUTH, TAP and IDENT
+ * protocols. The code queries an RFC 1413 etc. compatible daemon on a remote
+ * host to look up the owner of a connection. The information should not be
+ * used for authentication purposes. This routine intercepts alarm signals.
+ *
+ * Author: Wietse Venema, Eindhoven University of Technology,
+ * The Netherlands.
+ */</comment>
+
+<comment type="block">/* Some small additions for Apache --- ditch the "sccsid" var if
+ * compiling with gcc (it *has* changed), include ap_config.h for the
+ * prototypes it defines on at least one system (SunlOSs) which has
+ * them missing from the standard header files, and one minor change
+ * below (extra parens around assign "if (foo = bar) ..." to shut up
+ * gcc -Wall).
+ */</comment>
+
+<comment type="block">/* Rewritten by David Robinson */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_network_io.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_strings.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_optional.h"</cpp:file></cpp:include>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>APR_WANT_STDIO</name></cpp:macro></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>APR_WANT_STRFUNC</name></cpp:macro></cpp:define>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_want.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"httpd.h"</cpp:file></cpp:include>              <comment type="block">/* for server_rec, conn_rec, etc. */</comment>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_config.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_core.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_log.h"</cpp:file></cpp:include>           <comment type="block">/* for aplog_error */</comment>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"util_ebcdic.h"</cpp:file></cpp:include>
+
+<comment type="block">/* Whether we should enable rfc1413 identity checking */</comment>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>DEFAULT_RFC1413</name></cpp:ifndef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>DEFAULT_RFC1413</name></cpp:macro>    <cpp:value>0</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>RFC1413_UNSET</name></cpp:macro> <cpp:value>2</cpp:value></cpp:define>
+
+<comment type="block">/* request timeout (sec) */</comment>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>RFC1413_TIMEOUT</name></cpp:ifndef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>RFC1413_TIMEOUT</name></cpp:macro>   <cpp:value>30</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<comment type="block">/* Local stuff. */</comment>
+
+<comment type="block">/* Semi-well-known port */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>RFC1413_PORT</name></cpp:macro>     <cpp:value>113</cpp:value></cpp:define>
+
+<comment type="block">/* maximum allowed length of userid */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>RFC1413_USERLEN</name></cpp:macro>  <cpp:value>512</cpp:value></cpp:define>
+
+<comment type="block">/* rough limit on the amount of data we accept. */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>RFC1413_MAXDATA</name></cpp:macro> <cpp:value>1000</cpp:value></cpp:define>
+
+<comment type="block">/* default username, if it could not determined */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>FROM_UNKNOWN</name></cpp:macro>  <cpp:value>"unknown"</cpp:value></cpp:define>
+
+<typedef>typedef <type><struct>struct <block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>do_rfc1413</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>timeout_unset</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_time_t</name></type> <name>timeout</name></decl>;</decl_stmt>
+}</block></struct></type> <name>ident_config_rec</name>;</typedef>
+
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>rfc1413_connect</name><parameter_list>(<param><decl><type><name>apr_socket_t</name> **</type><name>newsock</name></decl></param>, <param><decl><type><name>conn_rec</name> *</type><name>conn</name></decl></param>,
+                                    <param><decl><type><name>server_rec</name> *</type><name>srv</name></decl></param>, <param><decl><type><name>apr_time_t</name></type> <name>timeout</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_sockaddr_t</name> *</type><name>localsa</name></decl>, *<decl><type ref="prev"/><name>destsa</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>(<name>rv</name> = <call><name>apr_sockaddr_info_get</name><argument_list>(<argument><expr>&amp;<name>localsa</name></expr></argument>, <argument><expr><name><name>conn</name>-&gt;<name>local_ip</name></name></expr></argument>, <argument><expr><name>APR_UNSPEC</name></expr></argument>,
+                              <argument><expr>0</expr></argument>, <comment type="block">/* ephemeral port */</comment>
+                              <argument><expr>0</expr></argument>, <argument><expr><name><name>conn</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call>) != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+        <comment type="block">/* This should not fail since we have a numeric address string
+         * as the host. */</comment>
+        <expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_CRIT</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name>srv</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>01492</expr></argument>)</argument_list></call>
+                     "rfc1413: apr_sockaddr_info_get(%s) failed"</expr></argument>,
+                     <argument><expr><name><name>conn</name>-&gt;<name>local_ip</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>rv</name></expr>;</return>
+    }</block></then></if>
+
+    <if>if <condition>(<expr>(<name>rv</name> = <call><name>apr_sockaddr_info_get</name><argument_list>(<argument><expr>&amp;<name>destsa</name></expr></argument>, <argument><expr><name><name>conn</name>-&gt;<name>client_ip</name></name></expr></argument>,
+                              <argument><expr><name><name>localsa</name>-&gt;<name>family</name></name></expr></argument>, <comment type="block">/* has to match */</comment>
+                              <argument><expr><name>RFC1413_PORT</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name><name>conn</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call>) != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+        <comment type="block">/* This should not fail since we have a numeric address string
+         * as the host. */</comment>
+        <expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_CRIT</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name>srv</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>01493</expr></argument>)</argument_list></call>
+                     "rfc1413: apr_sockaddr_info_get(%s) failed"</expr></argument>,
+                     <argument><expr><name><name>conn</name>-&gt;<name>client_ip</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>rv</name></expr>;</return>
+    }</block></then></if>
+
+    <if>if <condition>(<expr>(<name>rv</name> = <call><name>apr_socket_create</name><argument_list>(<argument><expr><name>newsock</name></expr></argument>,
+                                <argument><expr><name><name>localsa</name>-&gt;<name>family</name></name></expr></argument>, <comment type="block">/* has to match */</comment>
+                                <argument><expr><name>SOCK_STREAM</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name><name>conn</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call>) != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_CRIT</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name>srv</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>01494</expr></argument>)</argument_list></call>
+                     "rfc1413: error creating query socket"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>rv</name></expr>;</return>
+    }</block></then></if>
+
+    <if>if <condition>(<expr>(<name>rv</name> = <call><name>apr_socket_timeout_set</name><argument_list>(<argument><expr>*<name>newsock</name></expr></argument>, <argument><expr><name>timeout</name></expr></argument>)</argument_list></call>) != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_CRIT</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name>srv</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>01495</expr></argument>)</argument_list></call>
+                     "rfc1413: error setting query socket timeout"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>apr_socket_close</name><argument_list>(<argument><expr>*<name>newsock</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>rv</name></expr>;</return>
+    }</block></then></if>
+
+<comment type="block">/*
+ * Bind the local and remote ends of the query socket to the same
+ * IP addresses as the connection under investigation. We go
+ * through all this trouble because the local or remote system
+ * might have more than one network address. The RFC1413 etc.
+ * client sends only port numbers; the server takes the IP
+ * addresses from the query socket.
+ */</comment>
+
+    <if>if <condition>(<expr>(<name>rv</name> = <call><name>apr_socket_bind</name><argument_list>(<argument><expr>*<name>newsock</name></expr></argument>, <argument><expr><name>localsa</name></expr></argument>)</argument_list></call>) != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_CRIT</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name>srv</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>01496</expr></argument>)</argument_list></call>
+                     "rfc1413: Error binding query socket to local port"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>apr_socket_close</name><argument_list>(<argument><expr>*<name>newsock</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>rv</name></expr>;</return>
+    }</block></then></if>
+
+<comment type="block">/*
+ * errors from connect usually imply the remote machine doesn't support
+ * the service; don't log such an error
+ */</comment>
+    <if>if <condition>(<expr>(<name>rv</name> = <call><name>apr_socket_connect</name><argument_list>(<argument><expr>*<name>newsock</name></expr></argument>, <argument><expr><name>destsa</name></expr></argument>)</argument_list></call>) != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>apr_socket_close</name><argument_list>(<argument><expr>*<name>newsock</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>rv</name></expr>;</return>
+    }</block></then></if>
+
+    <return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>rfc1413_query</name><parameter_list>(<param><decl><type><name>apr_socket_t</name> *</type><name>sock</name></decl></param>, <param><decl><type><name>conn_rec</name> *</type><name>conn</name></decl></param>,
+                                  <param><decl><type><name>server_rec</name> *</type><name>srv</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>apr_port_t</name></type> <name>rmt_port</name></decl>, <decl><type ref="prev"/><name>our_port</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_port_t</name></type> <name>sav_rmt_port</name></decl>, <decl><type ref="prev"/><name>sav_our_port</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_size_t</name></type> <name>i</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name> *</type><name>cp</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name></type> <name><name>buffer</name><index>[<expr><name>RFC1413_MAXDATA</name> + 1</expr>]</index></name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name></type> <name><name>user</name><index>[<expr><name>RFC1413_USERLEN</name> + 1</expr>]</index></name></decl>;</decl_stmt>     <comment type="block">/* XXX */</comment>
+    <decl_stmt><decl><type><name>apr_size_t</name></type> <name>buflen</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>sav_our_port</name> = <name><name>conn</name>-&gt;<name>local_addr</name>-&gt;<name>port</name></name></expr>;</expr_stmt>
+    <expr_stmt><expr><name>sav_rmt_port</name> = <name><name>conn</name>-&gt;<name>client_addr</name>-&gt;<name>port</name></name></expr>;</expr_stmt>
+
+    <comment type="block">/* send the data */</comment>
+    <expr_stmt><expr><name>buflen</name> = <call><name>apr_snprintf</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>buffer</name></expr></argument>)</argument_list></sizeof></expr></argument>, <argument><expr>"%hu,%hu\r\n"</expr></argument>, <argument><expr><name>sav_rmt_port</name></expr></argument>,
+                          <argument><expr><name>sav_our_port</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>ap_xlate_proto_to_ascii</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>, <argument><expr><name>buflen</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* send query to server. Handle short write. */</comment>
+    <expr_stmt><expr><name>i</name> = 0</expr>;</expr_stmt>
+    <while>while <condition>(<expr><name>i</name> &lt; <name>buflen</name></expr>)</condition> <block>{
+        <decl_stmt><decl><type><name>apr_size_t</name></type> <name>j</name> <init>= <expr><call><name>strlen</name><argument_list>(<argument><expr><name>buffer</name> + <name>i</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>apr_status_t</name></type> <name>status</name></decl>;</decl_stmt>
+        <expr_stmt><expr><name>status</name>  = <call><name>apr_socket_send</name><argument_list>(<argument><expr><name>sock</name></expr></argument>, <argument><expr><name>buffer</name>+<name>i</name></expr></argument>, <argument><expr>&amp;<name>j</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>status</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_CRIT</name></expr></argument>, <argument><expr><name>status</name></expr></argument>, <argument><expr><name>srv</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>01497</expr></argument>)</argument_list></call>
+                         "write: rfc1413: error sending request"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <return>return <expr><name>status</name></expr>;</return>
+        }</block></then>
+        <else>else <if>if <condition>(<expr><name>j</name> &gt; 0</expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>i</name>+=<name>j</name></expr>;</expr_stmt>
+        }</block></then></if></else></if>
+    }</block></while>
+
+    <comment type="block">/*
+     * Read response from server. - the response should be newline
+     * terminated according to rfc - make sure it doesn't stomp its
+     * way out of the buffer.
+     */</comment>
+
+    <expr_stmt><expr><name>i</name> = 0</expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>memset</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>, <argument><expr>'\0'</expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>buffer</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <comment type="block">/*
+     * Note that the strchr function below checks for \012 instead of '\n'
+     * this allows it to work on both ASCII and EBCDIC machines.
+     */</comment>
+    <while>while <condition>(<expr>(<name>cp</name> = <call><name>strchr</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>, <argument><expr>'\012'</expr></argument>)</argument_list></call>) == <name>NULL</name> &amp;&amp; <name>i</name> &lt; <sizeof>sizeof<argument_list>(<argument><expr><name>buffer</name></expr></argument>)</argument_list></sizeof> - 1</expr>)</condition> <block>{
+        <decl_stmt><decl><type><name>apr_size_t</name></type> <name>j</name> <init>= <expr><sizeof>sizeof<argument_list>(<argument><expr><name>buffer</name></expr></argument>)</argument_list></sizeof> - 1 - <name>i</name></expr></init></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>apr_status_t</name></type> <name>status</name></decl>;</decl_stmt>
+        <expr_stmt><expr><name>status</name> = <call><name>apr_socket_recv</name><argument_list>(<argument><expr><name>sock</name></expr></argument>, <argument><expr><name>buffer</name>+<name>i</name></expr></argument>, <argument><expr>&amp;<name>j</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>status</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_CRIT</name></expr></argument>, <argument><expr><name>status</name></expr></argument>, <argument><expr><name>srv</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>01498</expr></argument>)</argument_list></call>
+                         "read: rfc1413: error reading response"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <return>return <expr><name>status</name></expr>;</return>
+        }</block></then>
+        <else>else <if>if <condition>(<expr><name>j</name> &gt; 0</expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>i</name>+=<name>j</name></expr>;</expr_stmt>
+        }</block></then>
+        <else>else <if>if <condition>(<expr><name>status</name> == <name>APR_SUCCESS</name> &amp;&amp; <name>j</name> == 0</expr>)</condition><then> <block>{
+            <comment type="block">/* Oops... we ran out of data before finding newline */</comment>
+            <return>return <expr><name>APR_EINVAL</name></expr>;</return>
+        }</block></then></if></else></if></else></if>
+    }</block></while>
+
+<comment type="block">/* RFC1413_USERLEN = 512 */</comment>
+    <expr_stmt><expr><call><name>ap_xlate_proto_from_ascii</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>, <argument><expr><name>i</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><call><name>sscanf</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>, <argument><expr>"%hu , %hu : USERID :%*[^:]:%512s"</expr></argument>, <argument><expr>&amp;<name>rmt_port</name></expr></argument>, <argument><expr>&amp;<name>our_port</name></expr></argument>,
+               <argument><expr><name>user</name></expr></argument>)</argument_list></call> != 3 || <name>sav_rmt_port</name> != <name>rmt_port</name>
+        || <name>sav_our_port</name> != <name>our_port</name></expr>)</condition><then>
+        <return>return <expr><name>APR_EINVAL</name></expr>;</return></then></if>
+
+    <comment type="block">/*
+     * Strip trailing carriage return. It is part of the
+     * protocol, not part of the data.
+     */</comment>
+
+    <if>if <condition>(<expr>(<name>cp</name> = <call><name>strchr</name><argument_list>(<argument><expr><name>user</name></expr></argument>, <argument><expr>'\r'</expr></argument>)</argument_list></call>)</expr>)</condition><then>
+        <expr_stmt><expr>*<name>cp</name> = '\0'</expr>;</expr_stmt></then></if>
+
+    <expr_stmt><expr><name><name>conn</name>-&gt;<name>remote_logname</name></name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name><name>conn</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>user</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *</type><name>set_idcheck</name><parameter_list>(<param><decl><type><name>cmd_parms</name> *</type><name>cmd</name></decl></param>, <param><decl><type><name>void</name> *</type><name>d_</name></decl></param>, <param><decl><type><name>int</name></type> <name>arg</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>ident_config_rec</name> *</type><name>d</name> <init>= <expr><name>d_</name></expr></init></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name><name>d</name>-&gt;<name>do_rfc1413</name></name> = <name>arg</name> ? 1 : 0</expr>;</expr_stmt>
+    <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *</type><name>set_timeout</name><parameter_list>(<param><decl><type><name>cmd_parms</name> *</type><name>cmd</name></decl></param>, <param><decl><type><name>void</name> *</type><name>d_</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>arg</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>ident_config_rec</name> *</type><name>d</name> <init>= <expr><name>d_</name></expr></init></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name><name>d</name>-&gt;<name>timeout</name></name> = <call><name>apr_time_from_sec</name><argument_list>(<argument><expr><call><name>atoi</name><argument_list>(<argument><expr><name>arg</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>d</name>-&gt;<name>timeout_unset</name></name> = 0</expr>;</expr_stmt>
+    <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>void</name> *</type><name>create_ident_dir_config</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>, <param><decl><type><name>char</name> *</type><name>d</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>ident_config_rec</name> *</type><name>conf</name> <init>= <expr><call><name>apr_palloc</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>conf</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name><name>conf</name>-&gt;<name>do_rfc1413</name></name> = <name>DEFAULT_RFC1413</name> | <name>RFC1413_UNSET</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>conf</name>-&gt;<name>timeout</name></name> = <call><name>apr_time_from_sec</name><argument_list>(<argument><expr><name>RFC1413_TIMEOUT</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>conf</name>-&gt;<name>timeout_unset</name></name> = 1</expr>;</expr_stmt>
+
+    <return>return <expr>(<name>void</name> *)<name>conf</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>void</name> *</type><name>merge_ident_dir_config</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>, <param><decl><type><name>void</name> *</type><name>old_</name></decl></param>, <param><decl><type><name>void</name> *</type><name>new_</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>ident_config_rec</name> *</type><name>conf</name> <init>= <expr>(<name>ident_config_rec</name> *)<call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>conf</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>ident_config_rec</name> *</type><name>old</name> <init>= <expr>(<name>ident_config_rec</name> *) <name>old_</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>ident_config_rec</name> *</type><name>new</name> <init>= <expr>(<name>ident_config_rec</name> *) <name>new_</name></expr></init></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name><name>conf</name>-&gt;<name>timeout</name></name> = <name><name>new</name>-&gt;<name>timeout_unset</name></name>
+                        ? <name><name>old</name>-&gt;<name>timeout</name></name>
+                        : <name><name>new</name>-&gt;<name>timeout</name></name></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name><name>conf</name>-&gt;<name>do_rfc1413</name></name> = <name><name>new</name>-&gt;<name>do_rfc1413</name></name> &amp; <name>RFC1413_UNSET</name>
+                           ? <name><name>old</name>-&gt;<name>do_rfc1413</name></name>
+                           : <name><name>new</name>-&gt;<name>do_rfc1413</name></name></expr>;</expr_stmt>
+
+    <return>return <expr>(<name>void</name> *)<name>conf</name></expr>;</return>
+}</block></function>
+
+<decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>command_rec</name></type> <name><name>ident_cmds</name><index>[]</index></name> <init>=
+<expr><block>{
+    <expr><call><name>AP_INIT_FLAG</name><argument_list>(<argument><expr>"IdentityCheck"</expr></argument>, <argument><expr><name>set_idcheck</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>RSRC_CONF</name>|<name>ACCESS_CONF</name></expr></argument>,
+                 <argument><expr>"Enable identd (RFC 1413) user lookups - SLOW"</expr></argument>)</argument_list></call></expr>,
+    <expr><call><name>AP_INIT_TAKE1</name><argument_list>(<argument><expr>"IdentityCheckTimeout"</expr></argument>, <argument><expr><name>set_timeout</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                  <argument><expr><name>RSRC_CONF</name>|<name>ACCESS_CONF</name></expr></argument>,
+                  <argument><expr>"Identity check (RFC 1413) timeout duration (sec)"</expr></argument>)</argument_list></call></expr>,
+    <expr><block>{<expr><name>NULL</name></expr>}</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+
+<decl_stmt><decl><type><name>module</name> <name>AP_MODULE_DECLARE_DATA</name></type> <name>ident_module</name></decl>;</decl_stmt>
+
+<comment type="block">/*
+ * Optional function for the core to the actual ident request
+ */</comment>
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *</type><name>ap_ident_lookup</name><parameter_list>(<param><decl><type><name>request_rec</name> *</type><name>r</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>ident_config_rec</name> *</type><name>conf</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_socket_t</name> *</type><name>sock</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>conn_rec</name> *</type><name>conn</name> <init>= <expr><name><name>r</name>-&gt;<name>connection</name></name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>server_rec</name> *</type><name>srv</name> <init>= <expr><name><name>r</name>-&gt;<name>server</name></name></expr></init></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>conf</name> = <call><name>ap_get_module_config</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>per_dir_config</name></name></expr></argument>, <argument><expr>&amp;<name>ident_module</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* return immediately if ident requests are disabled */</comment>
+    <if>if <condition>(<expr>!(<name><name>conf</name>-&gt;<name>do_rfc1413</name></name> &amp; ~<name>RFC1413_UNSET</name>)</expr>)</condition><then> <block>{
+        <return>return <expr><name>NULL</name></expr>;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><name>rv</name> = <call><name>rfc1413_connect</name><argument_list>(<argument><expr>&amp;<name>sock</name></expr></argument>, <argument><expr><name>conn</name></expr></argument>, <argument><expr><name>srv</name></expr></argument>, <argument><expr><name><name>conf</name>-&gt;<name>timeout</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>rv</name> == <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>rv</name> = <call><name>rfc1413_query</name><argument_list>(<argument><expr><name>sock</name></expr></argument>, <argument><expr><name>conn</name></expr></argument>, <argument><expr><name>srv</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>apr_socket_close</name><argument_list>(<argument><expr><name>sock</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+    <if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name><name>conn</name>-&gt;<name>remote_logname</name></name> = <name>FROM_UNKNOWN</name></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <return>return <expr>(const <name>char</name> *)<name><name>conn</name>-&gt;<name>remote_logname</name></name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>void</name></type> <name>register_hooks</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>p</name></decl></param>)</parameter_list>
+<block>{
+    <expr_stmt><expr><call><name>APR_REGISTER_OPTIONAL_FN</name><argument_list>(<argument><expr><name>ap_ident_lookup</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<expr_stmt><expr><call><name>AP_DECLARE_MODULE</name><argument_list>(<argument><expr><name>ident</name></expr></argument>)</argument_list></call> =
+<block>{
+    <expr><name>STANDARD20_MODULE_STUFF</name></expr>,
+    <expr><name>create_ident_dir_config</name></expr>,       <comment type="block">/* dir config creater */</comment>
+    <expr><name>merge_ident_dir_config</name></expr>,        <comment type="block">/* dir merger --- default is to override */</comment>
+    <expr><name>NULL</name></expr>,                          <comment type="block">/* server config */</comment>
+    <expr><name>NULL</name></expr>,                          <comment type="block">/* merge server config */</comment>
+    <expr><name>ident_cmds</name></expr>,                    <comment type="block">/* command apr_table_t */</comment>
+    <expr><name>register_hooks</name></expr>                 <comment type="block">/* register hooks */</comment>
+}</block></expr>;</expr_stmt>
+</unit>

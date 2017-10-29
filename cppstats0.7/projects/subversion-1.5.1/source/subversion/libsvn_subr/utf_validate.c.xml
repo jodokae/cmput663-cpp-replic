@@ -1,0 +1,377 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/subversion-1.5.1/source/subversion/libsvn_subr/utf_validate.c"><comment type="block">/*
+ * utf_validate.c:  Validate a UTF-8 string
+ *
+ * ====================================================================
+ * Copyright (c) 2004 CollabNet.  All rights reserved.
+ *
+ * This software is licensed as described in the file COPYING, which
+ * you should have received as part of this distribution.  The terms
+ * are also available at http://subversion.tigris.org/license-1.html.
+ * If newer versions of this license are posted there, you may use a
+ * newer version instead, at your option.
+ *
+ * This software consists of voluntary contributions made by many
+ * individuals.  For exact contribution history, see the revision
+ * history and logs, available at http://subversion.tigris.org/.
+ * ====================================================================
+ */</comment>
+
+<comment type="block">/* Validate a UTF-8 string according to the rules in
+ *
+ *    Table 3-6. Well-Formed UTF-8 Bytes Sequences
+ *
+ * in
+ *
+ *    The Unicode Standard, Version 4.0
+ *
+ * which is available at
+ *
+ *    http://www.unicode.org/
+ *
+ * UTF-8 was originally defined in RFC-2279, Unicode's "well-formed UTF-8"
+ * is a subset of that enconding.  The Unicode enconding prohibits things
+ * like non-shortest encodings (some characters can be represented by more
+ * than one multi-byte encoding) and the encodings for the surrogate code
+ * points.  RFC-3629 superceeds RFC-2279 and adopts the same well-formed
+ * rules as Unicode.  This is the ABNF in RFC-3629 that describes
+ * well-formed UTF-8 rules:
+ *
+ *   UTF8-octets = *( UTF8-char )
+ *   UTF8-char   = UTF8-1 / UTF8-2 / UTF8-3 / UTF8-4
+ *   UTF8-1      = %x00-7F
+ *   UTF8-2      = %xC2-DF UTF8-tail
+ *   UTF8-3      = %xE0 %xA0-BF UTF8-tail /
+ *                 %xE1-EC 2( UTF8-tail ) /
+ *                 %xED %x80-9F UTF8-tail /
+ *                 %xEE-EF 2( UTF8-tail )
+ *   UTF8-4      = %xF0 %x90-BF 2( UTF8-tail ) /
+ *                 %xF1-F3 3( UTF8-tail ) /
+ *                 %xF4 %x80-8F 2( UTF8-tail )
+ *   UTF8-tail   = %x80-BF
+ *
+ */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"utf_impl.h"</cpp:file></cpp:include>
+
+<comment type="block">/* Lookup table to categorise each octet in the string. */</comment>
+<decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name></type> <name><name>octet_category</name><index>[<expr>256</expr>]</index></name> <init>= <expr><block>{
+  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>, <comment type="block">/* 0x00-0x7f */</comment>
+  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,
+  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,
+  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,
+  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,
+  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,
+  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,
+  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,  <expr>0</expr>,
+  <expr>1</expr>,  <expr>1</expr>,  <expr>1</expr>,  <expr>1</expr>,  <expr>1</expr>,  <expr>1</expr>,  <expr>1</expr>,  <expr>1</expr>,  <expr>1</expr>,  <expr>1</expr>,  <expr>1</expr>,  <expr>1</expr>,  <expr>1</expr>,  <expr>1</expr>,  <expr>1</expr>,  <expr>1</expr>, <comment type="block">/* 0x80-0x8f */</comment>
+  <expr>2</expr>,  <expr>2</expr>,  <expr>2</expr>,  <expr>2</expr>,  <expr>2</expr>,  <expr>2</expr>,  <expr>2</expr>,  <expr>2</expr>,  <expr>2</expr>,  <expr>2</expr>,  <expr>2</expr>,  <expr>2</expr>,  <expr>2</expr>,  <expr>2</expr>,  <expr>2</expr>,  <expr>2</expr>, <comment type="block">/* 0x90-0x9f */</comment>
+  <expr>3</expr>,  <expr>3</expr>,  <expr>3</expr>,  <expr>3</expr>,  <expr>3</expr>,  <expr>3</expr>,  <expr>3</expr>,  <expr>3</expr>,  <expr>3</expr>,  <expr>3</expr>,  <expr>3</expr>,  <expr>3</expr>,  <expr>3</expr>,  <expr>3</expr>,  <expr>3</expr>,  <expr>3</expr>, <comment type="block">/* 0xa0-0xbf */</comment>
+  <expr>3</expr>,  <expr>3</expr>,  <expr>3</expr>,  <expr>3</expr>,  <expr>3</expr>,  <expr>3</expr>,  <expr>3</expr>,  <expr>3</expr>,  <expr>3</expr>,  <expr>3</expr>,  <expr>3</expr>,  <expr>3</expr>,  <expr>3</expr>,  <expr>3</expr>,  <expr>3</expr>,  <expr>3</expr>,
+  <expr>4</expr>,  <expr>4</expr>,                                                         <comment type="block">/* 0xc0-0xc1 */</comment>
+          <expr>5</expr>,  <expr>5</expr>,  <expr>5</expr>,  <expr>5</expr>,  <expr>5</expr>,  <expr>5</expr>,  <expr>5</expr>,  <expr>5</expr>,  <expr>5</expr>,  <expr>5</expr>,  <expr>5</expr>,  <expr>5</expr>,  <expr>5</expr>,  <expr>5</expr>, <comment type="block">/* 0xc2-0xdf */</comment>
+  <expr>5</expr>,  <expr>5</expr>,  <expr>5</expr>,  <expr>5</expr>,  <expr>5</expr>,  <expr>5</expr>,  <expr>5</expr>,  <expr>5</expr>,  <expr>5</expr>,  <expr>5</expr>,  <expr>5</expr>,  <expr>5</expr>,  <expr>5</expr>,  <expr>5</expr>,  <expr>5</expr>,  <expr>5</expr>,
+  <expr>6</expr>,                                                             <comment type="block">/* 0xe0 */</comment>
+      <expr>7</expr>,  <expr>7</expr>,  <expr>7</expr>,  <expr>7</expr>,  <expr>7</expr>,  <expr>7</expr>,  <expr>7</expr>,  <expr>7</expr>,  <expr>7</expr>,  <expr>7</expr>,  <expr>7</expr>,  <expr>7</expr>,             <comment type="block">/* 0xe1-0xec */</comment>
+                                                      <expr>8</expr>,         <comment type="block">/* 0xed */</comment>
+                                                          <expr>9</expr>,  <expr>9</expr>, <comment type="block">/* 0xee-0xef */</comment>
+  <expr>10</expr>,                                                            <comment type="block">/* 0xf0 */</comment>
+      <expr>11</expr>, <expr>11</expr>, <expr>11</expr>,                                                <comment type="block">/* 0xf1-0xf3 */</comment>
+                  <expr>12</expr>,                                            <comment type="block">/* 0xf4 */</comment>
+                      <expr>13</expr>, <expr>13</expr>, <expr>13</expr>, <expr>13</expr>, <expr>13</expr>, <expr>13</expr>, <expr>13</expr>, <expr>13</expr>, <expr>13</expr>, <expr>13</expr>, <expr>13</expr> <comment type="block">/* 0xf5-0xff */</comment>
+}</block></expr></init></decl>;</decl_stmt>
+
+<comment type="block">/* Machine states */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>FSM_START</name></cpp:macro>         <cpp:value>0</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>FSM_80BF</name></cpp:macro>          <cpp:value>1</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>FSM_A0BF</name></cpp:macro>          <cpp:value>2</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>FSM_80BF80BF</name></cpp:macro>      <cpp:value>3</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>FSM_809F</name></cpp:macro>          <cpp:value>4</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>FSM_90BF</name></cpp:macro>          <cpp:value>5</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>FSM_80BF80BF80BF</name></cpp:macro>  <cpp:value>6</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>FSM_808F</name></cpp:macro>          <cpp:value>7</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>FSM_ERROR</name></cpp:macro>         <cpp:value>8</cpp:value></cpp:define>
+
+<comment type="block">/* In the FSM it appears that categories 0xc0-0xc1 and 0xf5-0xff make the
+   same transitions, as do categories 0xe1-0xec and 0xee-0xef.  I wonder if
+   there is any great benefit in combining categories?  It would reduce the
+   memory footprint of the transition table by 16 bytes, but might it be
+   harder to understand?  */</comment>
+
+<comment type="block">/* Machine transition table */</comment>
+<decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name></type> <name><name>machine</name> <index>[<expr>9</expr>]</index><index>[<expr>14</expr>]</index></name> <init>= <expr><block>{
+  <comment type="block">/* FSM_START */</comment>
+  <expr><block>{<expr><name>FSM_START</name></expr>,         <comment type="block">/* 0x00-0x7f */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0x80-0x8f */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0x90-0x9f */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xa0-0xbf */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xc0-0xc1 */</comment>
+   <expr><name>FSM_80BF</name></expr>,          <comment type="block">/* 0xc2-0xdf */</comment>
+   <expr><name>FSM_A0BF</name></expr>,          <comment type="block">/* 0xe0 */</comment>
+   <expr><name>FSM_80BF80BF</name></expr>,      <comment type="block">/* 0xe1-0xec */</comment>
+   <expr><name>FSM_809F</name></expr>,          <comment type="block">/* 0xed */</comment>
+   <expr><name>FSM_80BF80BF</name></expr>,      <comment type="block">/* 0xee-0xef */</comment>
+   <expr><name>FSM_90BF</name></expr>,          <comment type="block">/* 0xf0 */</comment>
+   <expr><name>FSM_80BF80BF80BF</name></expr>,  <comment type="block">/* 0xf1-0xf3 */</comment>
+   <expr><name>FSM_808F</name></expr>,          <comment type="block">/* 0xf4 */</comment>
+   <expr><name>FSM_ERROR</name></expr>}</block></expr>,        <comment type="block">/* 0xf5-0xff */</comment>
+
+  <comment type="block">/* FSM_80BF */</comment>
+  <expr><block>{<expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0x00-0x7f */</comment>
+   <expr><name>FSM_START</name></expr>,         <comment type="block">/* 0x80-0x8f */</comment>
+   <expr><name>FSM_START</name></expr>,         <comment type="block">/* 0x90-0x9f */</comment>
+   <expr><name>FSM_START</name></expr>,         <comment type="block">/* 0xa0-0xbf */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xc0-0xc1 */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xc2-0xdf */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xe0 */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xe1-0xec */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xed */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xee-0xef */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xf0 */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xf1-0xf3 */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xf4 */</comment>
+   <expr><name>FSM_ERROR</name></expr>}</block></expr>,        <comment type="block">/* 0xf5-0xff */</comment>
+
+  <comment type="block">/* FSM_A0BF */</comment>
+  <expr><block>{<expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0x00-0x7f */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0x80-0x8f */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0x90-0x9f */</comment>
+   <expr><name>FSM_80BF</name></expr>,          <comment type="block">/* 0xa0-0xbf */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xc0-0xc1 */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xc2-0xdf */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xe0 */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xe1-0xec */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xed */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xee-0xef */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xf0 */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xf1-0xf3 */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xf4 */</comment>
+   <expr><name>FSM_ERROR</name></expr>}</block></expr>,        <comment type="block">/* 0xf5-0xff */</comment>
+
+  <comment type="block">/* FSM_80BF80BF */</comment>
+  <expr><block>{<expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0x00-0x7f */</comment>
+   <expr><name>FSM_80BF</name></expr>,          <comment type="block">/* 0x80-0x8f */</comment>
+   <expr><name>FSM_80BF</name></expr>,          <comment type="block">/* 0x90-0x9f */</comment>
+   <expr><name>FSM_80BF</name></expr>,          <comment type="block">/* 0xa0-0xbf */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xc0-0xc1 */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xc2-0xdf */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xe0 */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xe1-0xec */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xed */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xee-0xef */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xf0 */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xf1-0xf3 */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xf4 */</comment>
+   <expr><name>FSM_ERROR</name></expr>}</block></expr>,        <comment type="block">/* 0xf5-0xff */</comment>
+
+  <comment type="block">/* FSM_809F */</comment>
+  <expr><block>{<expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0x00-0x7f */</comment>
+   <expr><name>FSM_80BF</name></expr>,          <comment type="block">/* 0x80-0x8f */</comment>
+   <expr><name>FSM_80BF</name></expr>,          <comment type="block">/* 0x90-0x9f */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xa0-0xbf */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xc0-0xc1 */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xc2-0xdf */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xe0 */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xe1-0xec */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xed */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xee-0xef */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xf0 */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xf1-0xf3 */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xf4 */</comment>
+   <expr><name>FSM_ERROR</name></expr>}</block></expr>,        <comment type="block">/* 0xf5-0xff */</comment>
+
+  <comment type="block">/* FSM_90BF */</comment>
+  <expr><block>{<expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0x00-0x7f */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0x80-0x8f */</comment>
+   <expr><name>FSM_80BF80BF</name></expr>,      <comment type="block">/* 0x90-0x9f */</comment>
+   <expr><name>FSM_80BF80BF</name></expr>,      <comment type="block">/* 0xa0-0xbf */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xc0-0xc1 */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xc2-0xdf */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xe0 */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xe1-0xec */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xed */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xee-0xef */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xf0 */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xf1-0xf3 */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xf4 */</comment>
+   <expr><name>FSM_ERROR</name></expr>}</block></expr>,        <comment type="block">/* 0xf5-0xff */</comment>
+
+  <comment type="block">/* FSM_80BF80BF80BF */</comment>
+  <expr><block>{<expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0x00-0x7f */</comment>
+   <expr><name>FSM_80BF80BF</name></expr>,      <comment type="block">/* 0x80-0x8f */</comment>
+   <expr><name>FSM_80BF80BF</name></expr>,      <comment type="block">/* 0x90-0x9f */</comment>
+   <expr><name>FSM_80BF80BF</name></expr>,      <comment type="block">/* 0xa0-0xbf */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xc0-0xc1 */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xc2-0xdf */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xe0 */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xe1-0xec */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xed */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xee-0xef */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xf0 */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xf1-0xf3 */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xf4 */</comment>
+   <expr><name>FSM_ERROR</name></expr>}</block></expr>,        <comment type="block">/* 0xf5-0xff */</comment>
+
+  <comment type="block">/* FSM_808F */</comment>
+  <expr><block>{<expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0x00-0x7f */</comment>
+   <expr><name>FSM_80BF80BF</name></expr>,      <comment type="block">/* 0x80-0x8f */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0x90-0x9f */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xa0-0xbf */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xc0-0xc1 */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xc2-0xdf */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xe0 */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xe1-0xec */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xed */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xee-0xef */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xf0 */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xf1-0xf3 */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xf4 */</comment>
+   <expr><name>FSM_ERROR</name></expr>}</block></expr>,        <comment type="block">/* 0xf5-0xff */</comment>
+
+  <comment type="block">/* FSM_ERROR */</comment>
+  <expr><block>{<expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0x00-0x7f */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0x80-0x8f */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0x90-0x9f */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xa0-0xbf */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xc0-0xc1 */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xc2-0xdf */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xe0 */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xe1-0xec */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xed */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xee-0xef */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xf0 */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xf1-0xf3 */</comment>
+   <expr><name>FSM_ERROR</name></expr>,         <comment type="block">/* 0xf4 */</comment>
+   <expr><name>FSM_ERROR</name></expr>}</block></expr>,        <comment type="block">/* 0xf5-0xff */</comment>
+}</block></expr></init></decl>;</decl_stmt>
+
+
+<function><type><specifier>const</specifier> <name>char</name> *</type>
+<name>svn_utf__last_valid</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>data</name></decl></param>, <param><decl><type><name>apr_size_t</name></type> <name>len</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>start</name> <init>= <expr><name>data</name></expr></init>, *<name>end</name> <init>= <expr><name>data</name> + <name>len</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>state</name> <init>= <expr><name>FSM_START</name></expr></init></decl>;</decl_stmt>
+  <while>while <condition>(<expr><name>data</name> &lt; <name>end</name></expr>)</condition>
+    <block>{
+      <decl_stmt><decl><type><name>unsigned</name> <name>char</name></type> <name>octet</name> <init>= <expr>*<name>data</name>++</expr></init></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>int</name></type> <name>category</name> <init>= <expr><name><name>octet_category</name><index>[<expr><name>octet</name></expr>]</index></name></expr></init></decl>;</decl_stmt>
+      <expr_stmt><expr><name>state</name> = <name><name>machine</name><index>[<expr><name>state</name></expr>]</index><index>[<expr><name>category</name></expr>]</index></name></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>state</name> == <name>FSM_START</name></expr>)</condition><then>
+        <expr_stmt><expr><name>start</name> = <name>data</name></expr>;</expr_stmt></then></if>
+    }</block></while>
+  <return>return <expr><name>start</name></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_boolean_t</name></type>
+<name>svn_utf__cstring_is_valid</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>data</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>int</name></type> <name>state</name> <init>= <expr><name>FSM_START</name></expr></init></decl>;</decl_stmt>
+  <while>while <condition>(<expr>*<name>data</name></expr>)</condition>
+    <block>{
+      <decl_stmt><decl><type><name>unsigned</name> <name>char</name></type> <name>octet</name> <init>= <expr>*<name>data</name>++</expr></init></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>int</name></type> <name>category</name> <init>= <expr><name><name>octet_category</name><index>[<expr><name>octet</name></expr>]</index></name></expr></init></decl>;</decl_stmt>
+      <expr_stmt><expr><name>state</name> = <name><name>machine</name><index>[<expr><name>state</name></expr>]</index><index>[<expr><name>category</name></expr>]</index></name></expr>;</expr_stmt>
+    }</block></while>
+  <return>return <expr><name>state</name> == <name>FSM_START</name> ? <name>TRUE</name> : <name>FALSE</name></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_boolean_t</name></type>
+<name>svn_utf__is_valid</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>data</name></decl></param>, <param><decl><type><name>apr_size_t</name></type> <name>len</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>end</name> <init>= <expr><name>data</name> + <name>len</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>state</name> <init>= <expr><name>FSM_START</name></expr></init></decl>;</decl_stmt>
+  <while>while <condition>(<expr><name>data</name> &lt; <name>end</name></expr>)</condition>
+    <block>{
+      <decl_stmt><decl><type><name>unsigned</name> <name>char</name></type> <name>octet</name> <init>= <expr>*<name>data</name>++</expr></init></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>int</name></type> <name>category</name> <init>= <expr><name><name>octet_category</name><index>[<expr><name>octet</name></expr>]</index></name></expr></init></decl>;</decl_stmt>
+      <expr_stmt><expr><name>state</name> = <name><name>machine</name><index>[<expr><name>state</name></expr>]</index><index>[<expr><name>category</name></expr>]</index></name></expr>;</expr_stmt>
+    }</block></while>
+  <return>return <expr><name>state</name> == <name>FSM_START</name> ? <name>TRUE</name> : <name>FALSE</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>const</specifier> <name>char</name> *</type>
+<name>svn_utf__last_valid2</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>data</name></decl></param>, <param><decl><type><name>apr_size_t</name></type> <name>len</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>start</name> <init>= <expr><name>data</name></expr></init>, *<name>end</name> <init>= <expr><name>data</name> + <name>len</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>state</name> <init>= <expr><name>FSM_START</name></expr></init></decl>;</decl_stmt>
+  <while>while <condition>(<expr><name>data</name> &lt; <name>end</name></expr>)</condition>
+    <block>{
+      <decl_stmt><decl><type><name>unsigned</name> <name>char</name></type> <name>octet</name> <init>= <expr>*<name>data</name>++</expr></init></decl>;</decl_stmt>
+      <switch>switch <condition>(<expr><name>state</name></expr>)</condition>
+        <block>{
+        <case>case <expr><name>FSM_START</name></expr>:
+          <if>if <condition>(<expr><name>octet</name> &lt;= 0x7F</expr>)</condition><then>
+            <break>break;</break></then>
+          <else>else <if>if <condition>(<expr><name>octet</name> &lt;= 0xC1</expr>)</condition><then>
+            <expr_stmt><expr><name>state</name> = <name>FSM_ERROR</name></expr>;</expr_stmt></then>
+          <else>else <if>if <condition>(<expr><name>octet</name> &lt;= 0xDF</expr>)</condition><then>
+            <expr_stmt><expr><name>state</name> = <name>FSM_80BF</name></expr>;</expr_stmt></then>
+          <else>else <if>if <condition>(<expr><name>octet</name> == 0xE0</expr>)</condition><then>
+            <expr_stmt><expr><name>state</name> = <name>FSM_A0BF</name></expr>;</expr_stmt></then>
+          <else>else <if>if <condition>(<expr><name>octet</name> &lt;= 0xEC</expr>)</condition><then>
+            <expr_stmt><expr><name>state</name> = <name>FSM_80BF80BF</name></expr>;</expr_stmt></then>
+          <else>else <if>if <condition>(<expr><name>octet</name> == 0xED</expr>)</condition><then>
+            <expr_stmt><expr><name>state</name> = <name>FSM_809F</name></expr>;</expr_stmt></then>
+          <else>else <if>if <condition>(<expr><name>octet</name> &lt;= 0xEF</expr>)</condition><then>
+            <expr_stmt><expr><name>state</name> = <name>FSM_80BF80BF</name></expr>;</expr_stmt></then>
+          <else>else <if>if <condition>(<expr><name>octet</name> == 0xF0</expr>)</condition><then>
+            <expr_stmt><expr><name>state</name> = <name>FSM_90BF</name></expr>;</expr_stmt></then>
+          <else>else <if>if <condition>(<expr><name>octet</name> &lt;= 0xF3</expr>)</condition><then>
+            <expr_stmt><expr><name>state</name> = <name>FSM_80BF80BF80BF</name></expr>;</expr_stmt></then>
+          <else>else <if>if <condition>(<expr><name>octet</name> &lt;= 0xF4</expr>)</condition><then>
+            <expr_stmt><expr><name>state</name> = <name>FSM_808F</name></expr>;</expr_stmt></then>
+          <else>else
+            <expr_stmt><expr><name>state</name> = <name>FSM_ERROR</name></expr>;</expr_stmt></else></if></else></if></else></if></else></if></else></if></else></if></else></if></else></if></else></if></else></if>
+          <break>break;</break>
+        </case><case>case <expr><name>FSM_80BF</name></expr>:
+          <if>if <condition>(<expr><name>octet</name> &gt;= 0x80 &amp;&amp; <name>octet</name> &lt;= 0xBF</expr>)</condition><then>
+            <expr_stmt><expr><name>state</name> = <name>FSM_START</name></expr>;</expr_stmt></then>
+          <else>else
+            <expr_stmt><expr><name>state</name> = <name>FSM_ERROR</name></expr>;</expr_stmt></else></if>
+          <break>break;</break>
+        </case><case>case <expr><name>FSM_A0BF</name></expr>:
+          <if>if <condition>(<expr><name>octet</name> &gt;= 0xA0 &amp;&amp; <name>octet</name> &lt;= 0xBF</expr>)</condition><then>
+            <expr_stmt><expr><name>state</name> = <name>FSM_80BF</name></expr>;</expr_stmt></then>
+          <else>else
+            <expr_stmt><expr><name>state</name> = <name>FSM_ERROR</name></expr>;</expr_stmt></else></if>
+          <break>break;</break>
+        </case><case>case <expr><name>FSM_80BF80BF</name></expr>:
+          <if>if <condition>(<expr><name>octet</name> &gt;= 0x80 &amp;&amp; <name>octet</name> &lt;= 0xBF</expr>)</condition><then>
+            <expr_stmt><expr><name>state</name> = <name>FSM_80BF</name></expr>;</expr_stmt></then>
+          <else>else
+            <expr_stmt><expr><name>state</name> = <name>FSM_ERROR</name></expr>;</expr_stmt></else></if>
+          <break>break;</break>
+        </case><case>case <expr><name>FSM_809F</name></expr>:
+          <if>if <condition>(<expr><name>octet</name> &gt;= 0x80 &amp;&amp; <name>octet</name> &lt;= 0x9F</expr>)</condition><then>
+            <expr_stmt><expr><name>state</name> = <name>FSM_80BF</name></expr>;</expr_stmt></then>
+          <else>else
+            <expr_stmt><expr><name>state</name> = <name>FSM_ERROR</name></expr>;</expr_stmt></else></if>
+          <break>break;</break>
+        </case><case>case <expr><name>FSM_90BF</name></expr>:
+          <if>if <condition>(<expr><name>octet</name> &gt;= 0x90 &amp;&amp; <name>octet</name> &lt;= 0xBF</expr>)</condition><then>
+            <expr_stmt><expr><name>state</name> = <name>FSM_80BF80BF</name></expr>;</expr_stmt></then>
+          <else>else
+            <expr_stmt><expr><name>state</name> = <name>FSM_ERROR</name></expr>;</expr_stmt></else></if>
+          <break>break;</break>
+        </case><case>case <expr><name>FSM_80BF80BF80BF</name></expr>:
+          <if>if <condition>(<expr><name>octet</name> &gt;= 0x80 &amp;&amp; <name>octet</name> &lt;= 0xBF</expr>)</condition><then>
+            <expr_stmt><expr><name>state</name> = <name>FSM_80BF80BF</name></expr>;</expr_stmt></then>
+          <else>else
+            <expr_stmt><expr><name>state</name> = <name>FSM_ERROR</name></expr>;</expr_stmt></else></if>
+          <break>break;</break>
+        </case><case>case <expr><name>FSM_808F</name></expr>:
+          <if>if <condition>(<expr><name>octet</name> &gt;= 0x80 &amp;&amp; <name>octet</name> &lt;= 0x8F</expr>)</condition><then>
+            <expr_stmt><expr><name>state</name> = <name>FSM_80BF80BF</name></expr>;</expr_stmt></then>
+          <else>else
+            <expr_stmt><expr><name>state</name> = <name>FSM_ERROR</name></expr>;</expr_stmt></else></if>
+          <break>break;</break>
+        </case><default>default:
+        </default><case>case <expr><name>FSM_ERROR</name></expr>:
+          <return>return <expr><name>start</name></expr>;</return>
+        </case>}</block></switch>
+      <if>if <condition>(<expr><name>state</name> == <name>FSM_START</name></expr>)</condition><then>
+        <expr_stmt><expr><name>start</name> = <name>data</name></expr>;</expr_stmt></then></if>
+    }</block></while>
+  <return>return <expr><name>start</name></expr>;</return>
+}</block></function>
+</unit>

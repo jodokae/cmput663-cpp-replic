@@ -1,0 +1,1762 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/cpython-2.6.1/source/Mac/Modules/res/_Resmodule.c">
+<comment type="block">/* ========================== Module _Res =========================== */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"Python.h"</cpp:file></cpp:include>
+
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"pymactoolbox.h"</cpp:file></cpp:include>
+
+<comment type="block">/* Macro to test whether a weak-loaded CFM function exists */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyMac_PRECHECK</name><parameter_list>(<param><type><name>rtn</name></type></param>)</parameter_list></cpp:macro> <cpp:value>do { if ( &amp;rtn == NULL )  {\
+        PyErr_SetString(PyExc_NotImplementedError, \
+        "Not available in this shared library/OS version"); \
+        return NULL; \
+    }} while(0)</cpp:value></cpp:define>
+
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;Carbon/Carbon.h&gt;</cpp:file></cpp:include>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>USE_TOOLBOX_OBJECT_GLUE</name></cpp:ifdef>
+<function_decl><type><specifier>extern</specifier> <name>PyObject</name> *</type><name>_ResObj_New</name><parameter_list>(<param><decl><type><name>Handle</name></type></decl></param>)</parameter_list>;</function_decl>
+<function_decl><type><specifier>extern</specifier> <name>int</name></type> <name>_ResObj_Convert</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>Handle</name> *</type></decl></param>)</parameter_list>;</function_decl>
+<function_decl><type><specifier>extern</specifier> <name>PyObject</name> *</type><name>_OptResObj_New</name><parameter_list>(<param><decl><type><name>Handle</name></type></decl></param>)</parameter_list>;</function_decl>
+<function_decl><type><specifier>extern</specifier> <name>int</name></type> <name>_OptResObj_Convert</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type></decl></param>, <param><decl><type><name>Handle</name> *</type></decl></param>)</parameter_list>;</function_decl>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>ResObj_New</name></cpp:macro> <cpp:value>_ResObj_New</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>ResObj_Convert</name></cpp:macro> <cpp:value>_ResObj_Convert</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>OptResObj_New</name></cpp:macro> <cpp:value>_OptResObj_New</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>OptResObj_Convert</name></cpp:macro> <cpp:value>_OptResObj_Convert</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<comment type="block">/* Function to dispose a resource, with a "normal" calling sequence */</comment>
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>PyMac_AutoDisposeHandle</name><parameter_list>(<param><decl><type><name>Handle</name></type> <name>h</name></decl></param>)</parameter_list>
+<block>{
+        <expr_stmt><expr><call><name>DisposeHandle</name><argument_list>(<argument><expr><name>h</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_Error</name></decl>;</decl_stmt>
+
+<comment type="block">/* ---------------------- Object type Resource ---------------------- */</comment>
+
+<decl_stmt><decl><type><name>PyTypeObject</name></type> <name>Resource_Type</name></decl>;</decl_stmt>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>ResObj_Check</name><parameter_list>(<param><type><name>x</name></type></param>)</parameter_list></cpp:macro> <cpp:value>((x)-&gt;ob_type == &amp;Resource_Type || PyObject_TypeCheck((x), &amp;Resource_Type))</cpp:value></cpp:define>
+
+<typedef>typedef <type><struct>struct <name>ResourceObject</name> <block>{
+	<decl_stmt><decl><type><name>PyObject_HEAD</name>
+	<name>Handle</name></type> <name>ob_itself</name></decl>;</decl_stmt>
+	<function_decl><type><name>void</name></type> (*<name>ob_freeit</name>)<parameter_list>(<param><decl><type><name>Handle</name></type> <name>ptr</name></decl></param>)</parameter_list>;</function_decl>
+}</block></struct></type> <name>ResourceObject</name>;</typedef>
+
+<function><type><name>PyObject</name> *</type><name>ResObj_New</name><parameter_list>(<param><decl><type><name>Handle</name></type> <name>itself</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>ResourceObject</name> *</type><name>it</name></decl>;</decl_stmt>
+	<if>if <condition>(<expr><name>itself</name> == <name>NULL</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>resNotFound</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	<expr_stmt><expr><name>it</name> = <call><name>PyObject_NEW</name><argument_list>(<argument><expr><name>ResourceObject</name></expr></argument>, <argument><expr>&amp;<name>Resource_Type</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>it</name> == <name>NULL</name></expr>)</condition><then> <return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name><name>it</name>-&gt;<name>ob_itself</name></name> = <name>itself</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>it</name>-&gt;<name>ob_freeit</name></name> = <name>NULL</name></expr>;</expr_stmt>
+	<return>return <expr>(<name>PyObject</name> *)<name>it</name></expr>;</return>
+}</block></function>
+
+<function><type><name>int</name></type> <name>ResObj_Convert</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>v</name></decl></param>, <param><decl><type><name>Handle</name> *</type><name>p_itself</name></decl></param>)</parameter_list>
+<block>{
+	<if>if <condition>(<expr>!<call><name>ResObj_Check</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+	<block>{
+		<decl_stmt><decl><type><name>PyObject</name> *</type><name>tmp</name></decl>;</decl_stmt>
+		<if>if <condition>( <expr>(<name>tmp</name>=<call><name>PyObject_CallMethod</name><argument_list>(<argument><expr><name>v</name></expr></argument>, <argument><expr>"as_Resource"</expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call>)</expr> )</condition><then>
+		<block>{
+			<expr_stmt><expr>*<name>p_itself</name> = ((<name>ResourceObject</name> *)<name>tmp</name>)-&gt;<name>ob_itself</name></expr>;</expr_stmt>
+			<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>tmp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr>1</expr>;</return>
+		}</block></then></if>
+		<expr_stmt><expr><call><name>PyErr_Clear</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+	}</block></then></if>
+	<if>if <condition>(<expr>!<call><name>ResObj_Check</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+	<block>{
+		<expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_TypeError</name></expr></argument>, <argument><expr>"Resource required"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<return>return <expr>0</expr>;</return>
+	}</block></then></if>
+	<expr_stmt><expr>*<name>p_itself</name> = ((<name>ResourceObject</name> *)<name>v</name>)-&gt;<name>ob_itself</name></expr>;</expr_stmt>
+	<return>return <expr>1</expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>void</name></type> <name>ResObj_dealloc</name><parameter_list>(<param><decl><type><name>ResourceObject</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+	<if>if <condition>(<expr><name><name>self</name>-&gt;<name>ob_freeit</name></name> &amp;&amp; <name><name>self</name>-&gt;<name>ob_itself</name></name></expr>)</condition><then>
+	<block>{
+		<expr_stmt><expr><call><name><name>self</name>-&gt;<name>ob_freeit</name></name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>ob_itself</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	}</block></then></if>
+	<expr_stmt><expr><name><name>self</name>-&gt;<name>ob_itself</name></name> = <name>NULL</name></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name><name>self</name>-&gt;<name>ob_type</name>-&gt;<name>tp_free</name></name><argument_list>(<argument><expr>(<name>PyObject</name> *)<name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>ResObj_HomeResFile</name><parameter_list>(<param><decl><type><name>ResourceObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>short</name></type> <name>_rv</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>HomeResFile</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>HomeResFile</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>_rv</name> = <call><name>HomeResFile</name><argument_list>(<argument><expr><name><name>_self</name>-&gt;<name>ob_itself</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"h"</expr></argument>,
+	                     <argument><expr><name>_rv</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>ResObj_MacLoadResource</name><parameter_list>(<param><decl><type><name>ResourceObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>MacLoadResource</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>MacLoadResource</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><call><name>MacLoadResource</name><argument_list>(<argument><expr><name><name>_self</name>-&gt;<name>ob_itself</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>_res</name> = <name>Py_None</name></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>ResObj_ReleaseResource</name><parameter_list>(<param><decl><type><name>ResourceObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>ReleaseResource</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>ReleaseResource</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><call><name>ReleaseResource</name><argument_list>(<argument><expr><name><name>_self</name>-&gt;<name>ob_itself</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>_res</name> = <name>Py_None</name></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>ResObj_DetachResource</name><parameter_list>(<param><decl><type><name>ResourceObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>DetachResource</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>DetachResource</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><call><name>DetachResource</name><argument_list>(<argument><expr><name><name>_self</name>-&gt;<name>ob_itself</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>_res</name> = <name>Py_None</name></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>ResObj_GetResAttrs</name><parameter_list>(<param><decl><type><name>ResourceObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>short</name></type> <name>_rv</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>GetResAttrs</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>GetResAttrs</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>_rv</name> = <call><name>GetResAttrs</name><argument_list>(<argument><expr><name><name>_self</name>-&gt;<name>ob_itself</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"h"</expr></argument>,
+	                     <argument><expr><name>_rv</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>ResObj_GetResInfo</name><parameter_list>(<param><decl><type><name>ResourceObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>short</name></type> <name>theID</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>ResType</name></type> <name>theType</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Str255</name></type> <name>name</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>GetResInfo</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>GetResInfo</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><call><name>GetResInfo</name><argument_list>(<argument><expr><name><name>_self</name>-&gt;<name>ob_itself</name></name></expr></argument>,
+	           <argument><expr>&amp;<name>theID</name></expr></argument>,
+	           <argument><expr>&amp;<name>theType</name></expr></argument>,
+	           <argument><expr><name>name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"hO&amp;O&amp;"</expr></argument>,
+	                     <argument><expr><name>theID</name></expr></argument>,
+	                     <argument><expr><name>PyMac_BuildOSType</name></expr></argument>, <argument><expr><name>theType</name></expr></argument>,
+	                     <argument><expr><name>PyMac_BuildStr255</name></expr></argument>, <argument><expr><name>name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>ResObj_SetResInfo</name><parameter_list>(<param><decl><type><name>ResourceObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>short</name></type> <name>theID</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Str255</name></type> <name>name</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>SetResInfo</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>SetResInfo</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"hO&amp;"</expr></argument>,
+	                      <argument><expr>&amp;<name>theID</name></expr></argument>,
+	                      <argument><expr><name>PyMac_GetStr255</name></expr></argument>, <argument><expr><name>name</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><call><name>SetResInfo</name><argument_list>(<argument><expr><name><name>_self</name>-&gt;<name>ob_itself</name></name></expr></argument>,
+	           <argument><expr><name>theID</name></expr></argument>,
+	           <argument><expr><name>name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>_res</name> = <name>Py_None</name></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>ResObj_AddResource</name><parameter_list>(<param><decl><type><name>ResourceObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>ResType</name></type> <name>theType</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>short</name></type> <name>theID</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Str255</name></type> <name>name</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>AddResource</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>AddResource</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"O&amp;hO&amp;"</expr></argument>,
+	                      <argument><expr><name>PyMac_GetOSType</name></expr></argument>, <argument><expr>&amp;<name>theType</name></expr></argument>,
+	                      <argument><expr>&amp;<name>theID</name></expr></argument>,
+	                      <argument><expr><name>PyMac_GetStr255</name></expr></argument>, <argument><expr><name>name</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><call><name>AddResource</name><argument_list>(<argument><expr><name><name>_self</name>-&gt;<name>ob_itself</name></name></expr></argument>,
+	            <argument><expr><name>theType</name></expr></argument>,
+	            <argument><expr><name>theID</name></expr></argument>,
+	            <argument><expr><name>name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>_res</name> = <name>Py_None</name></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>ResObj_GetResourceSizeOnDisk</name><parameter_list>(<param><decl><type><name>ResourceObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>long</name></type> <name>_rv</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>GetResourceSizeOnDisk</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>GetResourceSizeOnDisk</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>_rv</name> = <call><name>GetResourceSizeOnDisk</name><argument_list>(<argument><expr><name><name>_self</name>-&gt;<name>ob_itself</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"l"</expr></argument>,
+	                     <argument><expr><name>_rv</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>ResObj_GetMaxResourceSize</name><parameter_list>(<param><decl><type><name>ResourceObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>long</name></type> <name>_rv</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>GetMaxResourceSize</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>GetMaxResourceSize</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>_rv</name> = <call><name>GetMaxResourceSize</name><argument_list>(<argument><expr><name><name>_self</name>-&gt;<name>ob_itself</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"l"</expr></argument>,
+	                     <argument><expr><name>_rv</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>ResObj_SetResAttrs</name><parameter_list>(<param><decl><type><name>ResourceObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>short</name></type> <name>attrs</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>SetResAttrs</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>SetResAttrs</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"h"</expr></argument>,
+	                      <argument><expr>&amp;<name>attrs</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><call><name>SetResAttrs</name><argument_list>(<argument><expr><name><name>_self</name>-&gt;<name>ob_itself</name></name></expr></argument>,
+	            <argument><expr><name>attrs</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>_res</name> = <name>Py_None</name></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>ResObj_ChangedResource</name><parameter_list>(<param><decl><type><name>ResourceObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>ChangedResource</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>ChangedResource</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><call><name>ChangedResource</name><argument_list>(<argument><expr><name><name>_self</name>-&gt;<name>ob_itself</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>_res</name> = <name>Py_None</name></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>ResObj_RemoveResource</name><parameter_list>(<param><decl><type><name>ResourceObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>RemoveResource</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>RemoveResource</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><call><name>RemoveResource</name><argument_list>(<argument><expr><name><name>_self</name>-&gt;<name>ob_itself</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>_res</name> = <name>Py_None</name></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>ResObj_WriteResource</name><parameter_list>(<param><decl><type><name>ResourceObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>WriteResource</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>WriteResource</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><call><name>WriteResource</name><argument_list>(<argument><expr><name><name>_self</name>-&gt;<name>ob_itself</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>_res</name> = <name>Py_None</name></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>ResObj_SetResourceSize</name><parameter_list>(<param><decl><type><name>ResourceObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>long</name></type> <name>newSize</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>SetResourceSize</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>SetResourceSize</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"l"</expr></argument>,
+	                      <argument><expr>&amp;<name>newSize</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><call><name>SetResourceSize</name><argument_list>(<argument><expr><name><name>_self</name>-&gt;<name>ob_itself</name></name></expr></argument>,
+	                <argument><expr><name>newSize</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>_res</name> = <name>Py_None</name></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>ResObj_GetNextFOND</name><parameter_list>(<param><decl><type><name>ResourceObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Handle</name></type> <name>_rv</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>GetNextFOND</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>GetNextFOND</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>_rv</name> = <call><name>GetNextFOND</name><argument_list>(<argument><expr><name><name>_self</name>-&gt;<name>ob_itself</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"O&amp;"</expr></argument>,
+	                     <argument><expr><name>ResObj_New</name></expr></argument>, <argument><expr><name>_rv</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>__LP64__</name></cpp:ifndef>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>ResObj_as_Control</name><parameter_list>(<param><decl><type><name>ResourceObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+
+	<expr_stmt><expr><name>_res</name> = <call><name>CtlObj_New</name><argument_list>(<argument><expr>(<name>ControlHandle</name>)<name><name>_self</name>-&gt;<name>ob_itself</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>ResObj_as_Menu</name><parameter_list>(<param><decl><type><name>ResourceObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+
+	<expr_stmt><expr><name>_res</name> = <call><name>MenuObj_New</name><argument_list>(<argument><expr>(<name>MenuHandle</name>)<name><name>_self</name>-&gt;<name>ob_itself</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+
+}</block></function>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* !__LP64__ */</comment>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>ResObj_LoadResource</name><parameter_list>(<param><decl><type><name>ResourceObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>LoadResource</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>LoadResource</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><call><name>LoadResource</name><argument_list>(<argument><expr><name><name>_self</name>-&gt;<name>ob_itself</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>_res</name> = <name>Py_None</name></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>ResObj_AutoDispose</name><parameter_list>(<param><decl><type><name>ResourceObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+
+	<decl_stmt><decl><type><name>int</name></type> <name>onoff</name></decl>, <decl><type ref="prev"/><name>old</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"i"</expr></argument>, <argument><expr>&amp;<name>onoff</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+	        <return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<if>if <condition>( <expr><name><name>_self</name>-&gt;<name>ob_freeit</name></name></expr> )</condition><then>
+	        <expr_stmt><expr><name>old</name> = 1</expr>;</expr_stmt></then></if>
+	<if>if <condition>( <expr><name>onoff</name></expr> )</condition><then>
+	        <expr_stmt><expr><name><name>_self</name>-&gt;<name>ob_freeit</name></name> = <name>PyMac_AutoDisposeHandle</name></expr>;</expr_stmt></then>
+	<else>else
+	        <expr_stmt><expr><name><name>_self</name>-&gt;<name>ob_freeit</name></name> = <name>NULL</name></expr>;</expr_stmt></else></if>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"i"</expr></argument>, <argument><expr><name>old</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+
+}</block></function>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyMethodDef</name></type> <name><name>ResObj_methods</name><index>[]</index></name> <init>= <expr><block>{
+	<expr><block>{<expr>"HomeResFile"</expr>, <expr>(<name>PyCFunction</name>)<name>ResObj_HomeResFile</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"() -&gt; (short _rv)"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"MacLoadResource"</expr>, <expr>(<name>PyCFunction</name>)<name>ResObj_MacLoadResource</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"() -&gt; None"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"ReleaseResource"</expr>, <expr>(<name>PyCFunction</name>)<name>ResObj_ReleaseResource</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"() -&gt; None"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"DetachResource"</expr>, <expr>(<name>PyCFunction</name>)<name>ResObj_DetachResource</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"() -&gt; None"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"GetResAttrs"</expr>, <expr>(<name>PyCFunction</name>)<name>ResObj_GetResAttrs</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"() -&gt; (short _rv)"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"GetResInfo"</expr>, <expr>(<name>PyCFunction</name>)<name>ResObj_GetResInfo</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"() -&gt; (short theID, ResType theType, Str255 name)"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"SetResInfo"</expr>, <expr>(<name>PyCFunction</name>)<name>ResObj_SetResInfo</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(short theID, Str255 name) -&gt; None"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"AddResource"</expr>, <expr>(<name>PyCFunction</name>)<name>ResObj_AddResource</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(ResType theType, short theID, Str255 name) -&gt; None"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"GetResourceSizeOnDisk"</expr>, <expr>(<name>PyCFunction</name>)<name>ResObj_GetResourceSizeOnDisk</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"() -&gt; (long _rv)"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"GetMaxResourceSize"</expr>, <expr>(<name>PyCFunction</name>)<name>ResObj_GetMaxResourceSize</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"() -&gt; (long _rv)"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"SetResAttrs"</expr>, <expr>(<name>PyCFunction</name>)<name>ResObj_SetResAttrs</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(short attrs) -&gt; None"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"ChangedResource"</expr>, <expr>(<name>PyCFunction</name>)<name>ResObj_ChangedResource</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"() -&gt; None"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"RemoveResource"</expr>, <expr>(<name>PyCFunction</name>)<name>ResObj_RemoveResource</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"() -&gt; None"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"WriteResource"</expr>, <expr>(<name>PyCFunction</name>)<name>ResObj_WriteResource</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"() -&gt; None"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"SetResourceSize"</expr>, <expr>(<name>PyCFunction</name>)<name>ResObj_SetResourceSize</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(long newSize) -&gt; None"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"GetNextFOND"</expr>, <expr>(<name>PyCFunction</name>)<name>ResObj_GetNextFOND</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"() -&gt; (Handle _rv)"</argument>)</argument_list></macro>}</block></expr>,
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>__LP64__</name></cpp:ifndef>
+	<expr><block>{<expr>"as_Control"</expr>, <expr>(<name>PyCFunction</name>)<name>ResObj_as_Control</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"Return this resource/handle as a Control"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"as_Menu"</expr>, <expr>(<name>PyCFunction</name>)<name>ResObj_as_Menu</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"Return this resource/handle as a Menu"</argument>)</argument_list></macro>}</block></expr>,
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* !__LP64__ */</comment>
+	<expr><block>{<expr>"LoadResource"</expr>, <expr>(<name>PyCFunction</name>)<name>ResObj_LoadResource</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"() -&gt; None"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"AutoDispose"</expr>, <expr>(<name>PyCFunction</name>)<name>ResObj_AutoDispose</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(int)-&gt;int. Automatically DisposeHandle the object on Python object cleanup"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr><name>NULL</name></expr>, <expr><name>NULL</name></expr>, <expr>0</expr>}</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>ResObj_get_data</name><parameter_list>(<param><decl><type><name>ResourceObject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>void</name> *</type><name>closure</name></decl></param>)</parameter_list>
+<block>{
+
+	            <decl_stmt><decl><type><name>PyObject</name> *</type><name>res</name></decl>;</decl_stmt>
+	            <decl_stmt><decl><type><name>char</name></type> <name>state</name></decl>;</decl_stmt>
+
+	            <expr_stmt><expr><name>state</name> = <call><name>HGetState</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>ob_itself</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	            <expr_stmt><expr><call><name>HLock</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>ob_itself</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	            <expr_stmt><expr><name>res</name> = <call><name>PyString_FromStringAndSize</name><argument_list>(
+	                    <argument><expr>*<name><name>self</name>-&gt;<name>ob_itself</name></name></expr></argument>,
+	                    <argument><expr><call><name>GetHandleSize</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>ob_itself</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	            <expr_stmt><expr><call><name>HUnlock</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>ob_itself</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	            <expr_stmt><expr><call><name>HSetState</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>ob_itself</name></name></expr></argument>, <argument><expr><name>state</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	            <return>return <expr><name>res</name></expr>;</return>
+	            
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type> <name>ResObj_set_data</name><parameter_list>(<param><decl><type><name>ResourceObject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>v</name></decl></param>, <param><decl><type><name>void</name> *</type><name>closure</name></decl></param>)</parameter_list>
+<block>{
+
+	            <decl_stmt><decl><type><name>char</name> *</type><name>data</name></decl>;</decl_stmt>
+	            <decl_stmt><decl><type><name>long</name></type> <name>size</name></decl>;</decl_stmt>
+
+	            <if>if <condition>( <expr><name>v</name> == <name>NULL</name></expr> )</condition><then>
+	                    <return>return <expr>-1</expr>;</return></then></if>
+	            <if>if <condition>( <expr>!<call><name>PyString_Check</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr> )</condition><then>
+	                    <return>return <expr>-1</expr>;</return></then></if>
+	            <expr_stmt><expr><name>size</name> = <call><name>PyString_Size</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	            <expr_stmt><expr><name>data</name> = <call><name>PyString_AsString</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	            <comment type="block">/* XXXX Do I need the GetState/SetState calls? */</comment>
+	            <expr_stmt><expr><call><name>SetHandleSize</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>ob_itself</name></name></expr></argument>, <argument><expr><name>size</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	            <if>if <condition>( <expr><call><name>MemError</name><argument_list>()</argument_list></call></expr>)</condition><then>
+	                    <return>return <expr>-1</expr>;</return></then></if>
+	            <expr_stmt><expr><call><name>HLock</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>ob_itself</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	            <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr>(<name>char</name> *)*<name><name>self</name>-&gt;<name>ob_itself</name></name></expr></argument>, <argument><expr><name>data</name></expr></argument>, <argument><expr><name>size</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	            <expr_stmt><expr><call><name>HUnlock</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>ob_itself</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	            <comment type="block">/* XXXX Should I do the Changed call immedeately? */</comment>
+	            <return>return <expr>0</expr>;</return>
+	            
+	<return>return <expr>0</expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>ResObj_get_size</name><parameter_list>(<param><decl><type><name>ResourceObject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>void</name> *</type><name>closure</name></decl></param>)</parameter_list>
+<block>{
+	<return>return <expr><call><name>PyInt_FromLong</name><argument_list>(<argument><expr><call><name>GetHandleSize</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>ob_itself</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>ResObj_set_size</name></cpp:macro> <cpp:value>NULL</cpp:value></cpp:define>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyGetSetDef</name></type> <name><name>ResObj_getsetlist</name><index>[]</index></name> <init>= <expr><block>{
+	<expr><block>{<expr>"data"</expr>, <expr>(<name>getter</name>)<name>ResObj_get_data</name></expr>, <expr>(<name>setter</name>)<name>ResObj_set_data</name></expr>, <expr>"The resource data"</expr>}</block></expr>,
+	<expr><block>{<expr>"size"</expr>, <expr>(<name>getter</name>)<name>ResObj_get_size</name></expr>, <expr>(<name>setter</name>)<name>ResObj_set_size</name></expr>, <expr>"The length of the resource data"</expr>}</block></expr>,
+	<expr><block>{<expr><name>NULL</name></expr>, <expr><name>NULL</name></expr>, <expr><name>NULL</name></expr>, <expr><name>NULL</name></expr>}</block></expr>,
+}</block></expr></init></decl>;</decl_stmt>
+
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>ResObj_compare</name></cpp:macro> <cpp:value>NULL</cpp:value></cpp:define>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>ResObj_repr</name></cpp:macro> <cpp:value>NULL</cpp:value></cpp:define>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>ResObj_hash</name></cpp:macro> <cpp:value>NULL</cpp:value></cpp:define>
+<function><type><specifier>static</specifier> <name>int</name></type> <name>ResObj_tp_init</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_kwds</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>char</name> *</type><name>srcdata</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>srclen</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Handle</name></type> <name>itself</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>char</name> *</type><name><name>kw</name><index>[]</index></name> <init>= <expr><block>{<expr>"itself"</expr>, <expr>0</expr>}</block></expr></init></decl>;</decl_stmt>
+
+	<if>if <condition>(<expr><call><name>PyArg_ParseTupleAndKeywords</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr><name>_kwds</name></expr></argument>, <argument><expr>"O&amp;"</expr></argument>, <argument><expr><name>kw</name></expr></argument>, <argument><expr><name>ResObj_Convert</name></expr></argument>, <argument><expr>&amp;<name>itself</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+	<block>{
+		<expr_stmt><expr>((<name>ResourceObject</name> *)<name>_self</name>)-&gt;<name>ob_itself</name> = <name>itself</name></expr>;</expr_stmt>
+		<return>return <expr>0</expr>;</return>
+	}</block></then></if>
+	<expr_stmt><expr><call><name>PyErr_Clear</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTupleAndKeywords</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr><name>_kwds</name></expr></argument>, <argument><expr>"|s#"</expr></argument>, <argument><expr><name>kw</name></expr></argument>, <argument><expr>&amp;<name>srcdata</name></expr></argument>, <argument><expr>&amp;<name>srclen</name></expr></argument>)</argument_list></call></expr>)</condition><then> <return>return <expr>-1</expr>;</return></then></if>
+	<if>if <condition>(<expr>(<name>itself</name> = <call><name>NewHandle</name><argument_list>(<argument><expr><name>srclen</name></expr></argument>)</argument_list></call>) == <name>NULL</name></expr>)</condition><then>
+	<block>{
+		<expr_stmt><expr><call><name>PyErr_NoMemory</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+		<return>return <expr>0</expr>;</return>
+	}</block></then></if>
+	<expr_stmt><expr>((<name>ResourceObject</name> *)<name>_self</name>)-&gt;<name>ob_itself</name> = <name>itself</name></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>srclen</name> &amp;&amp; <name>srcdata</name></expr>)</condition><then>
+	<block>{
+		<expr_stmt><expr><call><name>HLock</name><argument_list>(<argument><expr><name>itself</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr>*<name>itself</name></expr></argument>, <argument><expr><name>srcdata</name></expr></argument>, <argument><expr><name>srclen</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><call><name>HUnlock</name><argument_list>(<argument><expr><name>itself</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	}</block></then></if>
+	<return>return <expr>0</expr>;</return>
+}</block></function>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>ResObj_tp_alloc</name></cpp:macro> <cpp:value>PyType_GenericAlloc</cpp:value></cpp:define>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>ResObj_tp_new</name><parameter_list>(<param><decl><type><name>PyTypeObject</name> *</type><name>type</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_kwds</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>self</name></decl>;</decl_stmt>
+	<if>if <condition>(<expr>(<name>self</name> = <call><name><name>type</name>-&gt;<name>tp_alloc</name></name><argument_list>(<argument><expr><name>type</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call>) == <name>NULL</name></expr>)</condition><then> <return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr>((<name>ResourceObject</name> *)<name>self</name>)-&gt;<name>ob_itself</name> = <name>NULL</name></expr>;</expr_stmt>
+	<expr_stmt><expr>((<name>ResourceObject</name> *)<name>self</name>)-&gt;<name>ob_freeit</name> = <name>NULL</name></expr>;</expr_stmt>
+	<return>return <expr><name>self</name></expr>;</return>
+}</block></function>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>ResObj_tp_free</name></cpp:macro> <cpp:value>PyObject_Del</cpp:value></cpp:define>
+
+
+<decl_stmt><decl><type><name>PyTypeObject</name></type> <name>Resource_Type</name> <init>= <expr><block>{
+	<expr><call><name>PyObject_HEAD_INIT</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>)</argument_list></call>
+	0</expr>, <comment type="block">/*ob_size*/</comment>
+	<expr>"_Res.Resource"</expr>, <comment type="block">/*tp_name*/</comment>
+	<expr><sizeof>sizeof<argument_list>(<argument><expr><name>ResourceObject</name></expr></argument>)</argument_list></sizeof></expr>, <comment type="block">/*tp_basicsize*/</comment>
+	<expr>0</expr>, <comment type="block">/*tp_itemsize*/</comment>
+	<comment type="block">/* methods */</comment>
+	<expr>(<name>destructor</name>) <name>ResObj_dealloc</name></expr>, <comment type="block">/*tp_dealloc*/</comment>
+	<expr>0</expr>, <comment type="block">/*tp_print*/</comment>
+	<expr>(<name>getattrfunc</name>)0</expr>, <comment type="block">/*tp_getattr*/</comment>
+	<expr>(<name>setattrfunc</name>)0</expr>, <comment type="block">/*tp_setattr*/</comment>
+	<expr>(<name>cmpfunc</name>) <name>ResObj_compare</name></expr>, <comment type="block">/*tp_compare*/</comment>
+	<expr>(<name>reprfunc</name>) <name>ResObj_repr</name></expr>, <comment type="block">/*tp_repr*/</comment>
+	<expr>(<name>PyNumberMethods</name> *)0</expr>, <comment type="block">/* tp_as_number */</comment>
+	<expr>(<name>PySequenceMethods</name> *)0</expr>, <comment type="block">/* tp_as_sequence */</comment>
+	<expr>(<name>PyMappingMethods</name> *)0</expr>, <comment type="block">/* tp_as_mapping */</comment>
+	<expr>(<name>hashfunc</name>) <name>ResObj_hash</name></expr>, <comment type="block">/*tp_hash*/</comment>
+	<expr>0</expr>, <comment type="block">/*tp_call*/</comment>
+	<expr>0</expr>, <comment type="block">/*tp_str*/</comment>
+	<expr><name>PyObject_GenericGetAttr</name></expr>, <comment type="block">/*tp_getattro*/</comment>
+	<expr><name>PyObject_GenericSetAttr</name></expr>, <comment type="block">/*tp_setattro */</comment>
+	<expr>0</expr>, <comment type="block">/*tp_as_buffer*/</comment>
+	<expr><name>Py_TPFLAGS_DEFAULT</name>|<name>Py_TPFLAGS_BASETYPE</name></expr>, <comment type="block">/* tp_flags */</comment>
+	<expr>0</expr>, <comment type="block">/*tp_doc*/</comment>
+	<expr>0</expr>, <comment type="block">/*tp_traverse*/</comment>
+	<expr>0</expr>, <comment type="block">/*tp_clear*/</comment>
+	<expr>0</expr>, <comment type="block">/*tp_richcompare*/</comment>
+	<expr>0</expr>, <comment type="block">/*tp_weaklistoffset*/</comment>
+	<expr>0</expr>, <comment type="block">/*tp_iter*/</comment>
+	<expr>0</expr>, <comment type="block">/*tp_iternext*/</comment>
+	<expr><name>ResObj_methods</name></expr>, <comment type="block">/* tp_methods */</comment>
+	<expr>0</expr>, <comment type="block">/*tp_members*/</comment>
+	<expr><name>ResObj_getsetlist</name></expr>, <comment type="block">/*tp_getset*/</comment>
+	<expr>0</expr>, <comment type="block">/*tp_base*/</comment>
+	<expr>0</expr>, <comment type="block">/*tp_dict*/</comment>
+	<expr>0</expr>, <comment type="block">/*tp_descr_get*/</comment>
+	<expr>0</expr>, <comment type="block">/*tp_descr_set*/</comment>
+	<expr>0</expr>, <comment type="block">/*tp_dictoffset*/</comment>
+	<expr><name>ResObj_tp_init</name></expr>, <comment type="block">/* tp_init */</comment>
+	<expr><name>ResObj_tp_alloc</name></expr>, <comment type="block">/* tp_alloc */</comment>
+	<expr><name>ResObj_tp_new</name></expr>, <comment type="block">/* tp_new */</comment>
+	<expr><name>ResObj_tp_free</name></expr>, <comment type="block">/* tp_free */</comment>
+}</block></expr></init></decl>;</decl_stmt>
+
+<comment type="block">/* -------------------- End object type Resource -------------------- */</comment>
+
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_CloseResFile</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>short</name></type> <name>refNum</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>CloseResFile</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>CloseResFile</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"h"</expr></argument>,
+	                      <argument><expr>&amp;<name>refNum</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><call><name>CloseResFile</name><argument_list>(<argument><expr><name>refNum</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>_res</name> = <name>Py_None</name></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_ResError</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>ResError</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>ResError</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>_err</name> = <call><name>ResError</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>_res</name> = <name>Py_None</name></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_CurResFile</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>short</name></type> <name>_rv</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>CurResFile</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>CurResFile</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>_rv</name> = <call><name>CurResFile</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"h"</expr></argument>,
+	                     <argument><expr><name>_rv</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_UseResFile</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>short</name></type> <name>refNum</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>UseResFile</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>UseResFile</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"h"</expr></argument>,
+	                      <argument><expr>&amp;<name>refNum</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><call><name>UseResFile</name><argument_list>(<argument><expr><name>refNum</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>_res</name> = <name>Py_None</name></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_CountTypes</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>short</name></type> <name>_rv</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>CountTypes</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>CountTypes</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>_rv</name> = <call><name>CountTypes</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"h"</expr></argument>,
+	                     <argument><expr><name>_rv</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_Count1Types</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>short</name></type> <name>_rv</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>Count1Types</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>Count1Types</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>_rv</name> = <call><name>Count1Types</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"h"</expr></argument>,
+	                     <argument><expr><name>_rv</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_GetIndType</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>ResType</name></type> <name>theType</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>short</name></type> <name>index</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>GetIndType</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>GetIndType</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"h"</expr></argument>,
+	                      <argument><expr>&amp;<name>index</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><call><name>GetIndType</name><argument_list>(<argument><expr>&amp;<name>theType</name></expr></argument>,
+	           <argument><expr><name>index</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"O&amp;"</expr></argument>,
+	                     <argument><expr><name>PyMac_BuildOSType</name></expr></argument>, <argument><expr><name>theType</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_Get1IndType</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>ResType</name></type> <name>theType</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>short</name></type> <name>index</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>Get1IndType</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>Get1IndType</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"h"</expr></argument>,
+	                      <argument><expr>&amp;<name>index</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><call><name>Get1IndType</name><argument_list>(<argument><expr>&amp;<name>theType</name></expr></argument>,
+	            <argument><expr><name>index</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"O&amp;"</expr></argument>,
+	                     <argument><expr><name>PyMac_BuildOSType</name></expr></argument>, <argument><expr><name>theType</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_SetResLoad</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Boolean</name></type> <name>load</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>SetResLoad</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>SetResLoad</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"b"</expr></argument>,
+	                      <argument><expr>&amp;<name>load</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><call><name>SetResLoad</name><argument_list>(<argument><expr><name>load</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>_res</name> = <name>Py_None</name></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_CountResources</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>short</name></type> <name>_rv</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>ResType</name></type> <name>theType</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>CountResources</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>CountResources</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"O&amp;"</expr></argument>,
+	                      <argument><expr><name>PyMac_GetOSType</name></expr></argument>, <argument><expr>&amp;<name>theType</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>_rv</name> = <call><name>CountResources</name><argument_list>(<argument><expr><name>theType</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"h"</expr></argument>,
+	                     <argument><expr><name>_rv</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_Count1Resources</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>short</name></type> <name>_rv</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>ResType</name></type> <name>theType</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>Count1Resources</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>Count1Resources</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"O&amp;"</expr></argument>,
+	                      <argument><expr><name>PyMac_GetOSType</name></expr></argument>, <argument><expr>&amp;<name>theType</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>_rv</name> = <call><name>Count1Resources</name><argument_list>(<argument><expr><name>theType</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"h"</expr></argument>,
+	                     <argument><expr><name>_rv</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_GetIndResource</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Handle</name></type> <name>_rv</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>ResType</name></type> <name>theType</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>short</name></type> <name>index</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>GetIndResource</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>GetIndResource</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"O&amp;h"</expr></argument>,
+	                      <argument><expr><name>PyMac_GetOSType</name></expr></argument>, <argument><expr>&amp;<name>theType</name></expr></argument>,
+	                      <argument><expr>&amp;<name>index</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>_rv</name> = <call><name>GetIndResource</name><argument_list>(<argument><expr><name>theType</name></expr></argument>,
+	                     <argument><expr><name>index</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"O&amp;"</expr></argument>,
+	                     <argument><expr><name>ResObj_New</name></expr></argument>, <argument><expr><name>_rv</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_Get1IndResource</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Handle</name></type> <name>_rv</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>ResType</name></type> <name>theType</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>short</name></type> <name>index</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>Get1IndResource</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>Get1IndResource</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"O&amp;h"</expr></argument>,
+	                      <argument><expr><name>PyMac_GetOSType</name></expr></argument>, <argument><expr>&amp;<name>theType</name></expr></argument>,
+	                      <argument><expr>&amp;<name>index</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>_rv</name> = <call><name>Get1IndResource</name><argument_list>(<argument><expr><name>theType</name></expr></argument>,
+	                      <argument><expr><name>index</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"O&amp;"</expr></argument>,
+	                     <argument><expr><name>ResObj_New</name></expr></argument>, <argument><expr><name>_rv</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_GetResource</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Handle</name></type> <name>_rv</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>ResType</name></type> <name>theType</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>short</name></type> <name>theID</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>GetResource</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>GetResource</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"O&amp;h"</expr></argument>,
+	                      <argument><expr><name>PyMac_GetOSType</name></expr></argument>, <argument><expr>&amp;<name>theType</name></expr></argument>,
+	                      <argument><expr>&amp;<name>theID</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>_rv</name> = <call><name>GetResource</name><argument_list>(<argument><expr><name>theType</name></expr></argument>,
+	                  <argument><expr><name>theID</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"O&amp;"</expr></argument>,
+	                     <argument><expr><name>ResObj_New</name></expr></argument>, <argument><expr><name>_rv</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_Get1Resource</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Handle</name></type> <name>_rv</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>ResType</name></type> <name>theType</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>short</name></type> <name>theID</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>Get1Resource</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>Get1Resource</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"O&amp;h"</expr></argument>,
+	                      <argument><expr><name>PyMac_GetOSType</name></expr></argument>, <argument><expr>&amp;<name>theType</name></expr></argument>,
+	                      <argument><expr>&amp;<name>theID</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>_rv</name> = <call><name>Get1Resource</name><argument_list>(<argument><expr><name>theType</name></expr></argument>,
+	                   <argument><expr><name>theID</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"O&amp;"</expr></argument>,
+	                     <argument><expr><name>ResObj_New</name></expr></argument>, <argument><expr><name>_rv</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_GetNamedResource</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Handle</name></type> <name>_rv</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>ResType</name></type> <name>theType</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Str255</name></type> <name>name</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>GetNamedResource</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>GetNamedResource</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"O&amp;O&amp;"</expr></argument>,
+	                      <argument><expr><name>PyMac_GetOSType</name></expr></argument>, <argument><expr>&amp;<name>theType</name></expr></argument>,
+	                      <argument><expr><name>PyMac_GetStr255</name></expr></argument>, <argument><expr><name>name</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>_rv</name> = <call><name>GetNamedResource</name><argument_list>(<argument><expr><name>theType</name></expr></argument>,
+	                       <argument><expr><name>name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"O&amp;"</expr></argument>,
+	                     <argument><expr><name>ResObj_New</name></expr></argument>, <argument><expr><name>_rv</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_Get1NamedResource</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Handle</name></type> <name>_rv</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>ResType</name></type> <name>theType</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Str255</name></type> <name>name</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>Get1NamedResource</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>Get1NamedResource</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"O&amp;O&amp;"</expr></argument>,
+	                      <argument><expr><name>PyMac_GetOSType</name></expr></argument>, <argument><expr>&amp;<name>theType</name></expr></argument>,
+	                      <argument><expr><name>PyMac_GetStr255</name></expr></argument>, <argument><expr><name>name</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>_rv</name> = <call><name>Get1NamedResource</name><argument_list>(<argument><expr><name>theType</name></expr></argument>,
+	                        <argument><expr><name>name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"O&amp;"</expr></argument>,
+	                     <argument><expr><name>ResObj_New</name></expr></argument>, <argument><expr><name>_rv</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_UniqueID</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>short</name></type> <name>_rv</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>ResType</name></type> <name>theType</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>UniqueID</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>UniqueID</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"O&amp;"</expr></argument>,
+	                      <argument><expr><name>PyMac_GetOSType</name></expr></argument>, <argument><expr>&amp;<name>theType</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>_rv</name> = <call><name>UniqueID</name><argument_list>(<argument><expr><name>theType</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"h"</expr></argument>,
+	                     <argument><expr><name>_rv</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_Unique1ID</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>short</name></type> <name>_rv</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>ResType</name></type> <name>theType</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>Unique1ID</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>Unique1ID</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"O&amp;"</expr></argument>,
+	                      <argument><expr><name>PyMac_GetOSType</name></expr></argument>, <argument><expr>&amp;<name>theType</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>_rv</name> = <call><name>Unique1ID</name><argument_list>(<argument><expr><name>theType</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"h"</expr></argument>,
+	                     <argument><expr><name>_rv</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_UpdateResFile</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>short</name></type> <name>refNum</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>UpdateResFile</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>UpdateResFile</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"h"</expr></argument>,
+	                      <argument><expr>&amp;<name>refNum</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><call><name>UpdateResFile</name><argument_list>(<argument><expr><name>refNum</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>_res</name> = <name>Py_None</name></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_SetResPurge</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Boolean</name></type> <name>install</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>SetResPurge</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>SetResPurge</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"b"</expr></argument>,
+	                      <argument><expr>&amp;<name>install</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><call><name>SetResPurge</name><argument_list>(<argument><expr><name>install</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>_res</name> = <name>Py_None</name></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_GetResFileAttrs</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>short</name></type> <name>_rv</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>short</name></type> <name>refNum</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>GetResFileAttrs</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>GetResFileAttrs</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"h"</expr></argument>,
+	                      <argument><expr>&amp;<name>refNum</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>_rv</name> = <call><name>GetResFileAttrs</name><argument_list>(<argument><expr><name>refNum</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"h"</expr></argument>,
+	                     <argument><expr><name>_rv</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_SetResFileAttrs</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>short</name></type> <name>refNum</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>short</name></type> <name>attrs</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>SetResFileAttrs</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>SetResFileAttrs</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"hh"</expr></argument>,
+	                      <argument><expr>&amp;<name>refNum</name></expr></argument>,
+	                      <argument><expr>&amp;<name>attrs</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><call><name>SetResFileAttrs</name><argument_list>(<argument><expr><name>refNum</name></expr></argument>,
+	                <argument><expr><name>attrs</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>_res</name> = <name>Py_None</name></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>__LP64__</name></cpp:ifndef>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_OpenRFPerm</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>short</name></type> <name>_rv</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Str255</name></type> <name>fileName</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>short</name></type> <name>vRefNum</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>SignedByte</name></type> <name>permission</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>OpenRFPerm</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>OpenRFPerm</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"O&amp;hb"</expr></argument>,
+	                      <argument><expr><name>PyMac_GetStr255</name></expr></argument>, <argument><expr><name>fileName</name></expr></argument>,
+	                      <argument><expr>&amp;<name>vRefNum</name></expr></argument>,
+	                      <argument><expr>&amp;<name>permission</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>_rv</name> = <call><name>OpenRFPerm</name><argument_list>(<argument><expr><name>fileName</name></expr></argument>,
+	                 <argument><expr><name>vRefNum</name></expr></argument>,
+	                 <argument><expr><name>permission</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"h"</expr></argument>,
+	                     <argument><expr><name>_rv</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_HOpenResFile</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>short</name></type> <name>_rv</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>short</name></type> <name>vRefNum</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>long</name></type> <name>dirID</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Str255</name></type> <name>fileName</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>SignedByte</name></type> <name>permission</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>HOpenResFile</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>HOpenResFile</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"hlO&amp;b"</expr></argument>,
+	                      <argument><expr>&amp;<name>vRefNum</name></expr></argument>,
+	                      <argument><expr>&amp;<name>dirID</name></expr></argument>,
+	                      <argument><expr><name>PyMac_GetStr255</name></expr></argument>, <argument><expr><name>fileName</name></expr></argument>,
+	                      <argument><expr>&amp;<name>permission</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>_rv</name> = <call><name>HOpenResFile</name><argument_list>(<argument><expr><name>vRefNum</name></expr></argument>,
+	                   <argument><expr><name>dirID</name></expr></argument>,
+	                   <argument><expr><name>fileName</name></expr></argument>,
+	                   <argument><expr><name>permission</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"h"</expr></argument>,
+	                     <argument><expr><name>_rv</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_HCreateResFile</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>short</name></type> <name>vRefNum</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>long</name></type> <name>dirID</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Str255</name></type> <name>fileName</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>HCreateResFile</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>HCreateResFile</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"hlO&amp;"</expr></argument>,
+	                      <argument><expr>&amp;<name>vRefNum</name></expr></argument>,
+	                      <argument><expr>&amp;<name>dirID</name></expr></argument>,
+	                      <argument><expr><name>PyMac_GetStr255</name></expr></argument>, <argument><expr><name>fileName</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><call><name>HCreateResFile</name><argument_list>(<argument><expr><name>vRefNum</name></expr></argument>,
+	               <argument><expr><name>dirID</name></expr></argument>,
+	               <argument><expr><name>fileName</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>_res</name> = <name>Py_None</name></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_FSpOpenResFile</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>short</name></type> <name>_rv</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>FSSpec</name></type> <name>spec</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>SignedByte</name></type> <name>permission</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>FSpOpenResFile</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>FSpOpenResFile</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"O&amp;b"</expr></argument>,
+	                      <argument><expr><name>PyMac_GetFSSpec</name></expr></argument>, <argument><expr>&amp;<name>spec</name></expr></argument>,
+	                      <argument><expr>&amp;<name>permission</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>_rv</name> = <call><name>FSpOpenResFile</name><argument_list>(<argument><expr>&amp;<name>spec</name></expr></argument>,
+	                     <argument><expr><name>permission</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"h"</expr></argument>,
+	                     <argument><expr><name>_rv</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_FSpCreateResFile</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>FSSpec</name></type> <name>spec</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>OSType</name></type> <name>creator</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>OSType</name></type> <name>fileType</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>ScriptCode</name></type> <name>scriptTag</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>FSpCreateResFile</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>FSpCreateResFile</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"O&amp;O&amp;O&amp;h"</expr></argument>,
+	                      <argument><expr><name>PyMac_GetFSSpec</name></expr></argument>, <argument><expr>&amp;<name>spec</name></expr></argument>,
+	                      <argument><expr><name>PyMac_GetOSType</name></expr></argument>, <argument><expr>&amp;<name>creator</name></expr></argument>,
+	                      <argument><expr><name>PyMac_GetOSType</name></expr></argument>, <argument><expr>&amp;<name>fileType</name></expr></argument>,
+	                      <argument><expr>&amp;<name>scriptTag</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><call><name>FSpCreateResFile</name><argument_list>(<argument><expr>&amp;<name>spec</name></expr></argument>,
+	                 <argument><expr><name>creator</name></expr></argument>,
+	                 <argument><expr><name>fileType</name></expr></argument>,
+	                 <argument><expr><name>scriptTag</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>_res</name> = <name>Py_None</name></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* !__LP64__ */</comment>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_InsertResourceFile</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>SInt16</name></type> <name>refNum</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>RsrcChainLocation</name></type> <name>where</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>InsertResourceFile</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>InsertResourceFile</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"hh"</expr></argument>,
+	                      <argument><expr>&amp;<name>refNum</name></expr></argument>,
+	                      <argument><expr>&amp;<name>where</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>_err</name> = <call><name>InsertResourceFile</name><argument_list>(<argument><expr><name>refNum</name></expr></argument>,
+	                          <argument><expr><name>where</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>_res</name> = <name>Py_None</name></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_DetachResourceFile</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>SInt16</name></type> <name>refNum</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>DetachResourceFile</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>DetachResourceFile</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"h"</expr></argument>,
+	                      <argument><expr>&amp;<name>refNum</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>_err</name> = <call><name>DetachResourceFile</name><argument_list>(<argument><expr><name>refNum</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>_res</name> = <name>Py_None</name></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>__LP64__</name></cpp:ifndef>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_FSpResourceFileAlreadyOpen</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Boolean</name></type> <name>_rv</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>FSSpec</name></type> <name>resourceFile</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Boolean</name></type> <name>inChain</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>SInt16</name></type> <name>refNum</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>FSpResourceFileAlreadyOpen</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>FSpResourceFileAlreadyOpen</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"O&amp;"</expr></argument>,
+	                      <argument><expr><name>PyMac_GetFSSpec</name></expr></argument>, <argument><expr>&amp;<name>resourceFile</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>_rv</name> = <call><name>FSpResourceFileAlreadyOpen</name><argument_list>(<argument><expr>&amp;<name>resourceFile</name></expr></argument>,
+	                                 <argument><expr>&amp;<name>inChain</name></expr></argument>,
+	                                 <argument><expr>&amp;<name>refNum</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"bbh"</expr></argument>,
+	                     <argument><expr><name>_rv</name></expr></argument>,
+	                     <argument><expr><name>inChain</name></expr></argument>,
+	                     <argument><expr><name>refNum</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_FSpOpenOrphanResFile</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>FSSpec</name></type> <name>spec</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>SignedByte</name></type> <name>permission</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>SInt16</name></type> <name>refNum</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>FSpOpenOrphanResFile</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>FSpOpenOrphanResFile</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"O&amp;b"</expr></argument>,
+	                      <argument><expr><name>PyMac_GetFSSpec</name></expr></argument>, <argument><expr>&amp;<name>spec</name></expr></argument>,
+	                      <argument><expr>&amp;<name>permission</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>_err</name> = <call><name>FSpOpenOrphanResFile</name><argument_list>(<argument><expr>&amp;<name>spec</name></expr></argument>,
+	                            <argument><expr><name>permission</name></expr></argument>,
+	                            <argument><expr>&amp;<name>refNum</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"h"</expr></argument>,
+	                     <argument><expr><name>refNum</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_GetTopResourceFile</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>SInt16</name></type> <name>refNum</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>GetTopResourceFile</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>GetTopResourceFile</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>_err</name> = <call><name>GetTopResourceFile</name><argument_list>(<argument><expr>&amp;<name>refNum</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"h"</expr></argument>,
+	                     <argument><expr><name>refNum</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_GetNextResourceFile</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>SInt16</name></type> <name>curRefNum</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>SInt16</name></type> <name>nextRefNum</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>GetNextResourceFile</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>GetNextResourceFile</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"h"</expr></argument>,
+	                      <argument><expr>&amp;<name>curRefNum</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>_err</name> = <call><name>GetNextResourceFile</name><argument_list>(<argument><expr><name>curRefNum</name></expr></argument>,
+	                           <argument><expr>&amp;<name>nextRefNum</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"h"</expr></argument>,
+	                     <argument><expr><name>nextRefNum</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* !__LP64__ */</comment>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_FSOpenResFile</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>short</name></type> <name>_rv</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>FSRef</name></type> <name>ref</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>SignedByte</name></type> <name>permission</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>FSOpenResFile</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>FSOpenResFile</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"O&amp;b"</expr></argument>,
+	                      <argument><expr><name>PyMac_GetFSRef</name></expr></argument>, <argument><expr>&amp;<name>ref</name></expr></argument>,
+	                      <argument><expr>&amp;<name>permission</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>_rv</name> = <call><name>FSOpenResFile</name><argument_list>(<argument><expr>&amp;<name>ref</name></expr></argument>,
+	                    <argument><expr><name>permission</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"h"</expr></argument>,
+	                     <argument><expr><name>_rv</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>__LP64__</name></cpp:ifndef>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_FSCreateResFile</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>FSRef</name></type> <name>parentRef</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>UniChar</name> *</type><name>nameLength__in__</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>UniCharCount</name></type> <name>nameLength__len__</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>nameLength__in_len__</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>FSRef</name></type> <name>newRef</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>FSSpec</name></type> <name>newSpec</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>FSCreateResFile</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>FSCreateResFile</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"O&amp;u#"</expr></argument>,
+	                      <argument><expr><name>PyMac_GetFSRef</name></expr></argument>, <argument><expr>&amp;<name>parentRef</name></expr></argument>,
+	                      <argument><expr>&amp;<name>nameLength__in__</name></expr></argument>, <argument><expr>&amp;<name>nameLength__in_len__</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>nameLength__len__</name> = <name>nameLength__in_len__</name></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>FSCreateResFile</name><argument_list>(<argument><expr>&amp;<name>parentRef</name></expr></argument>,
+	                <argument><expr><name>nameLength__len__</name></expr></argument>, <argument><expr><name>nameLength__in__</name></expr></argument>,
+	                <argument><expr>0</expr></argument>,
+	                <argument><expr>(<name>FSCatalogInfo</name> *)0</expr></argument>,
+	                <argument><expr>&amp;<name>newRef</name></expr></argument>,
+	                <argument><expr>&amp;<name>newSpec</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"O&amp;O&amp;"</expr></argument>,
+	                     <argument><expr><name>PyMac_BuildFSRef</name></expr></argument>, <argument><expr>&amp;<name>newRef</name></expr></argument>,
+	                     <argument><expr><name>PyMac_BuildFSSpec</name></expr></argument>, <argument><expr>&amp;<name>newSpec</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_FSResourceFileAlreadyOpen</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Boolean</name></type> <name>_rv</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>FSRef</name></type> <name>resourceFileRef</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Boolean</name></type> <name>inChain</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>SInt16</name></type> <name>refNum</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>FSResourceFileAlreadyOpen</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>FSResourceFileAlreadyOpen</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"O&amp;"</expr></argument>,
+	                      <argument><expr><name>PyMac_GetFSRef</name></expr></argument>, <argument><expr>&amp;<name>resourceFileRef</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>_rv</name> = <call><name>FSResourceFileAlreadyOpen</name><argument_list>(<argument><expr>&amp;<name>resourceFileRef</name></expr></argument>,
+	                                <argument><expr>&amp;<name>inChain</name></expr></argument>,
+	                                <argument><expr>&amp;<name>refNum</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<block>{
+		<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name> <init>= <expr><call><name>ResError</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	}</block>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"bbh"</expr></argument>,
+	                     <argument><expr><name>_rv</name></expr></argument>,
+	                     <argument><expr><name>inChain</name></expr></argument>,
+	                     <argument><expr><name>refNum</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_FSCreateResourceFile</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>FSRef</name></type> <name>parentRef</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>UniChar</name> *</type><name>nameLength__in__</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>UniCharCount</name></type> <name>nameLength__len__</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>nameLength__in_len__</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>UniChar</name> *</type><name>forkNameLength__in__</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>UniCharCount</name></type> <name>forkNameLength__len__</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>forkNameLength__in_len__</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>FSRef</name></type> <name>newRef</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>FSSpec</name></type> <name>newSpec</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>FSCreateResourceFile</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>FSCreateResourceFile</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"O&amp;u#u#"</expr></argument>,
+	                      <argument><expr><name>PyMac_GetFSRef</name></expr></argument>, <argument><expr>&amp;<name>parentRef</name></expr></argument>,
+	                      <argument><expr>&amp;<name>nameLength__in__</name></expr></argument>, <argument><expr>&amp;<name>nameLength__in_len__</name></expr></argument>,
+	                      <argument><expr>&amp;<name>forkNameLength__in__</name></expr></argument>, <argument><expr>&amp;<name>forkNameLength__in_len__</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>nameLength__len__</name> = <name>nameLength__in_len__</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name>forkNameLength__len__</name> = <name>forkNameLength__in_len__</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name>_err</name> = <call><name>FSCreateResourceFile</name><argument_list>(<argument><expr>&amp;<name>parentRef</name></expr></argument>,
+	                            <argument><expr><name>nameLength__len__</name></expr></argument>, <argument><expr><name>nameLength__in__</name></expr></argument>,
+	                            <argument><expr>0</expr></argument>,
+	                            <argument><expr>(<name>FSCatalogInfo</name> *)0</expr></argument>,
+	                            <argument><expr><name>forkNameLength__len__</name></expr></argument>, <argument><expr><name>forkNameLength__in__</name></expr></argument>,
+	                            <argument><expr>&amp;<name>newRef</name></expr></argument>,
+	                            <argument><expr>&amp;<name>newSpec</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"O&amp;O&amp;"</expr></argument>,
+	                     <argument><expr><name>PyMac_BuildFSRef</name></expr></argument>, <argument><expr>&amp;<name>newRef</name></expr></argument>,
+	                     <argument><expr><name>PyMac_BuildFSSpec</name></expr></argument>, <argument><expr>&amp;<name>newSpec</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* __LP64__ */</comment>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_FSOpenResourceFile</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>OSErr</name></type> <name>_err</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>FSRef</name></type> <name>ref</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>UniChar</name> *</type><name>forkNameLength__in__</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>UniCharCount</name></type> <name>forkNameLength__len__</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>forkNameLength__in_len__</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>SignedByte</name></type> <name>permissions</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>ResFileRefNum</name></type> <name>refNum</name></decl>;</decl_stmt>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>FSOpenResourceFile</name></cpp:ifndef>
+	<expr_stmt><expr><call><name>PyMac_PRECHECK</name><argument_list>(<argument><expr><name>FSOpenResourceFile</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"O&amp;u#b"</expr></argument>,
+	                      <argument><expr><name>PyMac_GetFSRef</name></expr></argument>, <argument><expr>&amp;<name>ref</name></expr></argument>,
+	                      <argument><expr>&amp;<name>forkNameLength__in__</name></expr></argument>, <argument><expr>&amp;<name>forkNameLength__in_len__</name></expr></argument>,
+	                      <argument><expr>&amp;<name>permissions</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>forkNameLength__len__</name> = <name>forkNameLength__in_len__</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name>_err</name> = <call><name>FSOpenResourceFile</name><argument_list>(<argument><expr>&amp;<name>ref</name></expr></argument>,
+	                          <argument><expr><name>forkNameLength__len__</name></expr></argument>, <argument><expr><name>forkNameLength__in__</name></expr></argument>,
+	                          <argument><expr><name>permissions</name></expr></argument>,
+	                          <argument><expr>&amp;<name>refNum</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>_err</name> != <name>noErr</name></expr>)</condition><then> <return>return <expr><call><name>PyMac_Error</name><argument_list>(<argument><expr><name>_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+	<expr_stmt><expr><name>_res</name> = <call><name>Py_BuildValue</name><argument_list>(<argument><expr>"h"</expr></argument>,
+	                     <argument><expr><name>refNum</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>Res_Handle</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>_self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>_args</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>_res</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+
+	<decl_stmt><decl><type><name>char</name> *</type><name>buf</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>len</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>Handle</name></type> <name>h</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>ResourceObject</name> *</type><name>rv</name></decl>;</decl_stmt>
+
+	<if>if <condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>_args</name></expr></argument>, <argument><expr>"s#"</expr></argument>, <argument><expr>&amp;<name>buf</name></expr></argument>, <argument><expr>&amp;<name>len</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+	        <return>return <expr><name>NULL</name></expr>;</return></then></if>
+	<expr_stmt><expr><name>h</name> = <call><name>NewHandle</name><argument_list>(<argument><expr><name>len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>( <expr><name>h</name> == <name>NULL</name></expr> )</condition><then> <block>{
+	        <expr_stmt><expr><call><name>PyErr_NoMemory</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+	        <return>return <expr><name>NULL</name></expr>;</return>
+	}</block></then></if>
+	<expr_stmt><expr><call><name>HLock</name><argument_list>(<argument><expr><name>h</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr>*<name>h</name></expr></argument>, <argument><expr><name>buf</name></expr></argument>, <argument><expr><name>len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>HUnlock</name><argument_list>(<argument><expr><name>h</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>rv</name> = (<name>ResourceObject</name> *)<call><name>ResObj_New</name><argument_list>(<argument><expr><name>h</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>rv</name>-&gt;<name>ob_freeit</name></name> = <name>PyMac_AutoDisposeHandle</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name>_res</name> = (<name>PyObject</name> *)<name>rv</name></expr>;</expr_stmt>
+	<return>return <expr><name>_res</name></expr>;</return>
+
+}</block></function>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyMethodDef</name></type> <name><name>Res_methods</name><index>[]</index></name> <init>= <expr><block>{
+	<expr><block>{<expr>"CloseResFile"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_CloseResFile</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(short refNum) -&gt; None"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"ResError"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_ResError</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"() -&gt; None"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"CurResFile"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_CurResFile</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"() -&gt; (short _rv)"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"UseResFile"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_UseResFile</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(short refNum) -&gt; None"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"CountTypes"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_CountTypes</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"() -&gt; (short _rv)"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"Count1Types"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_Count1Types</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"() -&gt; (short _rv)"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"GetIndType"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_GetIndType</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(short index) -&gt; (ResType theType)"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"Get1IndType"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_Get1IndType</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(short index) -&gt; (ResType theType)"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"SetResLoad"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_SetResLoad</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(Boolean load) -&gt; None"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"CountResources"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_CountResources</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(ResType theType) -&gt; (short _rv)"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"Count1Resources"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_Count1Resources</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(ResType theType) -&gt; (short _rv)"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"GetIndResource"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_GetIndResource</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(ResType theType, short index) -&gt; (Handle _rv)"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"Get1IndResource"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_Get1IndResource</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(ResType theType, short index) -&gt; (Handle _rv)"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"GetResource"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_GetResource</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(ResType theType, short theID) -&gt; (Handle _rv)"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"Get1Resource"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_Get1Resource</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(ResType theType, short theID) -&gt; (Handle _rv)"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"GetNamedResource"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_GetNamedResource</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(ResType theType, Str255 name) -&gt; (Handle _rv)"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"Get1NamedResource"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_Get1NamedResource</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(ResType theType, Str255 name) -&gt; (Handle _rv)"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"UniqueID"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_UniqueID</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(ResType theType) -&gt; (short _rv)"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"Unique1ID"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_Unique1ID</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(ResType theType) -&gt; (short _rv)"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"UpdateResFile"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_UpdateResFile</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(short refNum) -&gt; None"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"SetResPurge"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_SetResPurge</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(Boolean install) -&gt; None"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"GetResFileAttrs"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_GetResFileAttrs</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(short refNum) -&gt; (short _rv)"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"SetResFileAttrs"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_SetResFileAttrs</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(short refNum, short attrs) -&gt; None"</argument>)</argument_list></macro>}</block></expr>,
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>__LP64__</name></cpp:ifndef>
+	<expr><block>{<expr>"OpenRFPerm"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_OpenRFPerm</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(Str255 fileName, short vRefNum, SignedByte permission) -&gt; (short _rv)"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"HOpenResFile"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_HOpenResFile</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(short vRefNum, long dirID, Str255 fileName, SignedByte permission) -&gt; (short _rv)"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"HCreateResFile"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_HCreateResFile</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(short vRefNum, long dirID, Str255 fileName) -&gt; None"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"FSpOpenResFile"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_FSpOpenResFile</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(FSSpec spec, SignedByte permission) -&gt; (short _rv)"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"FSpCreateResFile"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_FSpCreateResFile</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(FSSpec spec, OSType creator, OSType fileType, ScriptCode scriptTag) -&gt; None"</argument>)</argument_list></macro>}</block></expr>,
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* !__LP64__ */</comment>
+	<expr><block>{<expr>"InsertResourceFile"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_InsertResourceFile</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(SInt16 refNum, RsrcChainLocation where) -&gt; None"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"DetachResourceFile"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_DetachResourceFile</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(SInt16 refNum) -&gt; None"</argument>)</argument_list></macro>}</block></expr>,
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>__LP64__</name></cpp:ifndef>
+	<expr><block>{<expr>"FSpResourceFileAlreadyOpen"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_FSpResourceFileAlreadyOpen</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(FSSpec resourceFile) -&gt; (Boolean _rv, Boolean inChain, SInt16 refNum)"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"FSpOpenOrphanResFile"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_FSpOpenOrphanResFile</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(FSSpec spec, SignedByte permission) -&gt; (SInt16 refNum)"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"GetTopResourceFile"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_GetTopResourceFile</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"() -&gt; (SInt16 refNum)"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"GetNextResourceFile"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_GetNextResourceFile</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(SInt16 curRefNum) -&gt; (SInt16 nextRefNum)"</argument>)</argument_list></macro>}</block></expr>,
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* __LP64__ */</comment>
+	<expr><block>{<expr>"FSOpenResFile"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_FSOpenResFile</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(FSRef ref, SignedByte permission) -&gt; (short _rv)"</argument>)</argument_list></macro>}</block></expr>,
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>__LP64__</name></cpp:ifndef>
+	<expr><block>{<expr>"FSCreateResFile"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_FSCreateResFile</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(FSRef parentRef, Buffer nameLength) -&gt; (FSRef newRef, FSSpec newSpec)"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"FSResourceFileAlreadyOpen"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_FSResourceFileAlreadyOpen</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(FSRef resourceFileRef) -&gt; (Boolean _rv, Boolean inChain, SInt16 refNum)"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"FSCreateResourceFile"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_FSCreateResourceFile</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(FSRef parentRef, Buffer nameLength, Buffer forkNameLength) -&gt; (FSRef newRef, FSSpec newSpec)"</argument>)</argument_list></macro>}</block></expr>,
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* __LP64__ */</comment>
+	<expr><block>{<expr>"FSOpenResourceFile"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_FSOpenResourceFile</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"(FSRef ref, Buffer forkNameLength, SignedByte permissions) -&gt; (SInt16 refNum)"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr>"Handle"</expr>, <expr>(<name>PyCFunction</name>)<name>Res_Handle</name></expr>, <expr>1</expr>,
+	 <macro><name>PyDoc_STR</name><argument_list>(<argument>"Convert a string to a Handle object.\n\nResource() and Handle() are very similar, but objects created with Handle() are\nby default automatically DisposeHandle()d upon object cleanup. Use AutoDispose()\nto change this.\n"</argument>)</argument_list></macro>}</block></expr>,
+	<expr><block>{<expr><name>NULL</name></expr>, <expr><name>NULL</name></expr>, <expr>0</expr>}</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+
+
+
+<comment type="block">/* Alternative version of ResObj_New, which returns None for null argument */</comment>
+<function><type><name>PyObject</name> *</type><name>OptResObj_New</name><parameter_list>(<param><decl><type><name>Handle</name></type> <name>itself</name></decl></param>)</parameter_list>
+<block>{
+        <if>if <condition>(<expr><name>itself</name> == <name>NULL</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <return>return <expr><name>Py_None</name></expr>;</return>
+        }</block></then></if>
+        <return>return <expr><call><name>ResObj_New</name><argument_list>(<argument><expr><name>itself</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><name>int</name></type> <name>OptResObj_Convert</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>v</name></decl></param>, <param><decl><type><name>Handle</name> *</type><name>p_itself</name></decl></param>)</parameter_list>
+<block>{
+        <decl_stmt><decl><type><name>PyObject</name> *</type><name>tmp</name></decl>;</decl_stmt>
+
+        <if>if <condition>( <expr><name>v</name> == <name>Py_None</name></expr> )</condition><then> <block>{
+                <expr_stmt><expr>*<name>p_itself</name> = <name>NULL</name></expr>;</expr_stmt>
+                <return>return <expr>1</expr>;</return>
+        }</block></then></if>
+        <if>if <condition>(<expr><call><name>ResObj_Check</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+        <block>{
+                <expr_stmt><expr>*<name>p_itself</name> = ((<name>ResourceObject</name> *)<name>v</name>)-&gt;<name>ob_itself</name></expr>;</expr_stmt>
+                <return>return <expr>1</expr>;</return>
+        }</block></then></if>
+        <comment type="block">/* If it isn't a resource yet see whether it is convertible */</comment>
+        <if>if <condition>( <expr>(<name>tmp</name>=<call><name>PyObject_CallMethod</name><argument_list>(<argument><expr><name>v</name></expr></argument>, <argument><expr>"as_Resource"</expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call>)</expr> )</condition><then> <block>{
+                <expr_stmt><expr>*<name>p_itself</name> = ((<name>ResourceObject</name> *)<name>tmp</name>)-&gt;<name>ob_itself</name></expr>;</expr_stmt>
+                <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>tmp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <return>return <expr>1</expr>;</return>
+        }</block></then></if>
+        <expr_stmt><expr><call><name>PyErr_Clear</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_TypeError</name></expr></argument>, <argument><expr>"Resource required"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr>0</expr>;</return>
+}</block></function>
+
+
+<function><type><name>void</name></type> <name>init_Res</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>m</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>d</name></decl>;</decl_stmt>
+
+
+
+	        <expr_stmt><expr><call><name>PyMac_INIT_TOOLBOX_OBJECT_NEW</name><argument_list>(<argument><expr><name>Handle</name></expr></argument>, <argument><expr><name>ResObj_New</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	        <expr_stmt><expr><call><name>PyMac_INIT_TOOLBOX_OBJECT_CONVERT</name><argument_list>(<argument><expr><name>Handle</name></expr></argument>, <argument><expr><name>ResObj_Convert</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	        <expr_stmt><expr><call><name>PyMac_INIT_TOOLBOX_OBJECT_NEW</name><argument_list>(<argument><expr><name>Handle</name></expr></argument>, <argument><expr><name>OptResObj_New</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	        <expr_stmt><expr><call><name>PyMac_INIT_TOOLBOX_OBJECT_CONVERT</name><argument_list>(<argument><expr><name>Handle</name></expr></argument>, <argument><expr><name>OptResObj_Convert</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+
+	<expr_stmt><expr><name>m</name> = <call><name>Py_InitModule</name><argument_list>(<argument><expr>"_Res"</expr></argument>, <argument><expr><name>Res_methods</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>d</name> = <call><name>PyModule_GetDict</name><argument_list>(<argument><expr><name>m</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>Res_Error</name> = <call><name>PyMac_GetOSErrException</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>Res_Error</name> == <name>NULL</name> ||
+	    <call><name>PyDict_SetItemString</name><argument_list>(<argument><expr><name>d</name></expr></argument>, <argument><expr>"Error"</expr></argument>, <argument><expr><name>Res_Error</name></expr></argument>)</argument_list></call> != 0</expr>)</condition><then>
+		<return>return;</return></then></if>
+	<expr_stmt><expr><name><name>Resource_Type</name>.<name>ob_type</name></name> = &amp;<name>PyType_Type</name></expr>;</expr_stmt>
+	<if>if <condition>(<expr><call><name>PyType_Ready</name><argument_list>(<argument><expr>&amp;<name>Resource_Type</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then> <return>return;</return></then></if>
+	<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr>&amp;<name>Resource_Type</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>PyModule_AddObject</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"Resource"</expr></argument>, <argument><expr>(<name>PyObject</name> *)&amp;<name>Resource_Type</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<comment type="block">/* Backward-compatible name */</comment>
+	<expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr>&amp;<name>Resource_Type</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><call><name>PyModule_AddObject</name><argument_list>(<argument><expr><name>m</name></expr></argument>, <argument><expr>"ResourceType"</expr></argument>, <argument><expr>(<name>PyObject</name> *)&amp;<name>Resource_Type</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<comment type="block">/* ======================== End module _Res ========================= */</comment>
+
+</unit>

@@ -1,0 +1,1276 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/cpython-2.6.1/source/Objects/stringlib/string_format.h"><comment type="block">/*
+    string_format.h -- implementation of string.format().
+
+    It uses the Objects/stringlib conventions, so that it can be
+    compiled for both unicode and string objects.
+*/</comment>
+
+
+<comment type="block">/* Defines for Python 2.6 compatability */</comment>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>PY_VERSION_HEX</name> &lt; 0x03000000</expr></cpp:if>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyLong_FromSsize_t</name></cpp:macro> <cpp:value>_PyLong_FromSsize_t</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<comment type="block">/* Defines for more efficiently reallocating the string buffer */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>INITIAL_SIZE_INCREMENT</name></cpp:macro> <cpp:value>100</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SIZE_MULTIPLIER</name></cpp:macro> <cpp:value>2</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>MAX_SIZE_INCREMENT</name></cpp:macro>  <cpp:value>3200</cpp:value></cpp:define>
+
+
+<comment type="block">/************************************************************************/</comment>
+<comment type="block">/***********   Global data structures and forward declarations  *********/</comment>
+<comment type="block">/************************************************************************/</comment>
+
+<comment type="block">/*
+   A SubString consists of the characters between two string or
+   unicode pointers.
+*/</comment>
+<typedef>typedef <type><struct>struct <block>{
+    <decl_stmt><decl><type><name>STRINGLIB_CHAR</name> *</type><name>ptr</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>STRINGLIB_CHAR</name> *</type><name>end</name></decl>;</decl_stmt>
+}</block></struct></type> <name>SubString</name>;</typedef>
+
+
+<comment type="block">/* forward declaration for recursion */</comment>
+<function_decl><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>build_string</name><parameter_list>(<param><decl><type><name>SubString</name> *</type><name>input</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>kwargs</name></decl></param>,
+             <param><decl><type><name>int</name></type> <name>recursion_depth</name></decl></param>)</parameter_list>;</function_decl>
+
+
+
+<comment type="block">/************************************************************************/</comment>
+<comment type="block">/**************************  Utility  functions  ************************/</comment>
+<comment type="block">/************************************************************************/</comment>
+
+<comment type="block">/* fill in a SubString from a pointer and length */</comment>
+<macro><name>Py_LOCAL_INLINE</name><argument_list>(<argument>void</argument>)</argument_list></macro>
+<macro><name>SubString_init</name><argument_list>(<argument>SubString *str</argument>, <argument>STRINGLIB_CHAR *p</argument>, <argument>Py_ssize_t len</argument>)</argument_list></macro>
+<block>{
+    <expr_stmt><expr><name><name>str</name>-&gt;<name>ptr</name></name> = <name>p</name></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>p</name> == <name>NULL</name></expr>)</condition><then>
+        <expr_stmt><expr><name><name>str</name>-&gt;<name>end</name></name> = <name>NULL</name></expr>;</expr_stmt></then>
+    <else>else
+        <expr_stmt><expr><name><name>str</name>-&gt;<name>end</name></name> = <name><name>str</name>-&gt;<name>ptr</name></name> + <name>len</name></expr>;</expr_stmt></else></if>
+}</block>
+
+<comment type="block">/* return a new string.  if str-&gt;ptr is NULL, return None */</comment>
+<macro><name>Py_LOCAL_INLINE</name><argument_list>(<argument>PyObject *</argument>)</argument_list></macro>
+<macro><name>SubString_new_object</name><argument_list>(<argument>SubString *str</argument>)</argument_list></macro>
+<block>{
+    <if>if <condition>(<expr><name><name>str</name>-&gt;<name>ptr</name></name> == <name>NULL</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>Py_None</name></expr>;</return>
+    }</block></then></if>
+    <return>return <expr><call><name>STRINGLIB_NEW</name><argument_list>(<argument><expr><name><name>str</name>-&gt;<name>ptr</name></name></expr></argument>, <argument><expr><name><name>str</name>-&gt;<name>end</name></name> - <name><name>str</name>-&gt;<name>ptr</name></name></expr></argument>)</argument_list></call></expr>;</return>
+}</block>
+
+<comment type="block">/* return a new string.  if str-&gt;ptr is NULL, return None */</comment>
+<macro><name>Py_LOCAL_INLINE</name><argument_list>(<argument>PyObject *</argument>)</argument_list></macro>
+<macro><name>SubString_new_object_or_empty</name><argument_list>(<argument>SubString *str</argument>)</argument_list></macro>
+<block>{
+    <if>if <condition>(<expr><name><name>str</name>-&gt;<name>ptr</name></name> == <name>NULL</name></expr>)</condition><then> <block>{
+        <return>return <expr><call><name>STRINGLIB_NEW</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>;</return>
+    }</block></then></if>
+    <return>return <expr><call><name>STRINGLIB_NEW</name><argument_list>(<argument><expr><name><name>str</name>-&gt;<name>ptr</name></name></expr></argument>, <argument><expr><name><name>str</name>-&gt;<name>end</name></name> - <name><name>str</name>-&gt;<name>ptr</name></name></expr></argument>)</argument_list></call></expr>;</return>
+}</block>
+
+<comment type="block">/************************************************************************/</comment>
+<comment type="block">/***********    Output string management functions       ****************/</comment>
+<comment type="block">/************************************************************************/</comment>
+
+<typedef>typedef <type><struct>struct <block>{
+    <decl_stmt><decl><type><name>STRINGLIB_CHAR</name> *</type><name>ptr</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>STRINGLIB_CHAR</name> *</type><name>end</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name> *</type><name>obj</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>size_increment</name></decl>;</decl_stmt>
+}</block></struct></type> <name>OutputString</name>;</typedef>
+
+<comment type="block">/* initialize an OutputString object, reserving size characters */</comment>
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>output_initialize</name><parameter_list>(<param><decl><type><name>OutputString</name> *</type><name>output</name></decl></param>, <param><decl><type><name>Py_ssize_t</name></type> <name>size</name></decl></param>)</parameter_list>
+<block>{
+    <expr_stmt><expr><name><name>output</name>-&gt;<name>obj</name></name> = <call><name>STRINGLIB_NEW</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>size</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name><name>output</name>-&gt;<name>obj</name></name> == <name>NULL</name></expr>)</condition><then>
+        <return>return <expr>0</expr>;</return></then></if>
+
+    <expr_stmt><expr><name><name>output</name>-&gt;<name>ptr</name></name> = <call><name>STRINGLIB_STR</name><argument_list>(<argument><expr><name><name>output</name>-&gt;<name>obj</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>output</name>-&gt;<name>end</name></name> = <call><name>STRINGLIB_LEN</name><argument_list>(<argument><expr><name><name>output</name>-&gt;<name>obj</name></name></expr></argument>)</argument_list></call> + <name><name>output</name>-&gt;<name>ptr</name></name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>output</name>-&gt;<name>size_increment</name></name> = <name>INITIAL_SIZE_INCREMENT</name></expr>;</expr_stmt>
+
+    <return>return <expr>1</expr>;</return>
+}</block></function>
+
+<comment type="block">/*
+    output_extend reallocates the output string buffer.
+    It returns a status:  0 for a failed reallocation,
+    1 for success.
+*/</comment>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>output_extend</name><parameter_list>(<param><decl><type><name>OutputString</name> *</type><name>output</name></decl></param>, <param><decl><type><name>Py_ssize_t</name></type> <name>count</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>STRINGLIB_CHAR</name> *</type><name>startptr</name> <init>= <expr><call><name>STRINGLIB_STR</name><argument_list>(<argument><expr><name><name>output</name>-&gt;<name>obj</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>curlen</name> <init>= <expr><name><name>output</name>-&gt;<name>ptr</name></name> - <name>startptr</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>maxlen</name> <init>= <expr><name>curlen</name> + <name>count</name> + <name><name>output</name>-&gt;<name>size_increment</name></name></expr></init></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr><call><name>STRINGLIB_RESIZE</name><argument_list>(<argument><expr>&amp;<name><name>output</name>-&gt;<name>obj</name></name></expr></argument>, <argument><expr><name>maxlen</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then>
+        <return>return <expr>0</expr>;</return></then></if>
+    <expr_stmt><expr><name>startptr</name> = <call><name>STRINGLIB_STR</name><argument_list>(<argument><expr><name><name>output</name>-&gt;<name>obj</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>output</name>-&gt;<name>ptr</name></name> = <name>startptr</name> + <name>curlen</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>output</name>-&gt;<name>end</name></name> = <name>startptr</name> + <name>maxlen</name></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name><name>output</name>-&gt;<name>size_increment</name></name> &lt; <name>MAX_SIZE_INCREMENT</name></expr>)</condition><then>
+        <expr_stmt><expr><name><name>output</name>-&gt;<name>size_increment</name></name> *= <name>SIZE_MULTIPLIER</name></expr>;</expr_stmt></then></if>
+    <return>return <expr>1</expr>;</return>
+}</block></function>
+
+<comment type="block">/*
+    output_data dumps characters into our output string
+    buffer.
+
+    In some cases, it has to reallocate the string.
+
+    It returns a status:  0 for a failed reallocation,
+    1 for success.
+*/</comment>
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>output_data</name><parameter_list>(<param><decl><type><name>OutputString</name> *</type><name>output</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>STRINGLIB_CHAR</name> *</type><name>s</name></decl></param>, <param><decl><type><name>Py_ssize_t</name></type> <name>count</name></decl></param>)</parameter_list>
+<block>{
+    <if>if <condition>(<expr>(<name>count</name> &gt; <name><name>output</name>-&gt;<name>end</name></name> - <name><name>output</name>-&gt;<name>ptr</name></name>) &amp;&amp; !<call><name>output_extend</name><argument_list>(<argument><expr><name>output</name></expr></argument>, <argument><expr><name>count</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+        <return>return <expr>0</expr>;</return></then></if>
+    <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name><name>output</name>-&gt;<name>ptr</name></name></expr></argument>, <argument><expr><name>s</name></expr></argument>, <argument><expr><name>count</name> * <sizeof>sizeof<argument_list>(<argument><expr><name>STRINGLIB_CHAR</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>output</name>-&gt;<name>ptr</name></name> += <name>count</name></expr>;</expr_stmt>
+    <return>return <expr>1</expr>;</return>
+}</block></function>
+
+<comment type="block">/************************************************************************/</comment>
+<comment type="block">/***********  Format string parsing -- integers and identifiers *********/</comment>
+<comment type="block">/************************************************************************/</comment>
+
+<function><type><specifier>static</specifier> <name>Py_ssize_t</name></type>
+<name>get_integer</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>SubString</name> *</type><name>str</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>accumulator</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>digitval</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>oldaccumulator</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>STRINGLIB_CHAR</name> *</type><name>p</name></decl>;</decl_stmt>
+
+    <comment type="block">/* empty string is an error */</comment>
+    <if>if <condition>(<expr><name><name>str</name>-&gt;<name>ptr</name></name> &gt;= <name><name>str</name>-&gt;<name>end</name></name></expr>)</condition><then>
+        <return>return <expr>-1</expr>;</return></then></if>
+
+    <for>for (<init><expr><name>p</name> = <name><name>str</name>-&gt;<name>ptr</name></name></expr>;</init> <condition><expr><name>p</name> &lt; <name><name>str</name>-&gt;<name>end</name></name></expr>;</condition> <incr><expr><name>p</name>++</expr></incr>) <block>{
+        <expr_stmt><expr><name>digitval</name> = <call><name>STRINGLIB_TODECIMAL</name><argument_list>(<argument><expr>*<name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>digitval</name> &lt; 0</expr>)</condition><then>
+            <return>return <expr>-1</expr>;</return></then></if>
+        <comment type="block">/*
+           This trick was copied from old Unicode format code.  It's cute,
+           but would really suck on an old machine with a slow divide
+           implementation.  Fortunately, in the normal case we do not
+           expect too many digits.
+        */</comment>
+        <expr_stmt><expr><name>oldaccumulator</name> = <name>accumulator</name></expr>;</expr_stmt>
+        <expr_stmt><expr><name>accumulator</name> *= 10</expr>;</expr_stmt>
+        <if>if <condition>(<expr>(<name>accumulator</name>+10)/10 != <name>oldaccumulator</name>+1</expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>PyErr_Format</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>,
+                         <argument><expr>"Too many decimal digits in format string"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <return>return <expr>-1</expr>;</return>
+        }</block></then></if>
+        <expr_stmt><expr><name>accumulator</name> += <name>digitval</name></expr>;</expr_stmt>
+    }</block></for>
+    <return>return <expr><name>accumulator</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/************************************************************************/</comment>
+<comment type="block">/******** Functions to get field objects and specification strings ******/</comment>
+<comment type="block">/************************************************************************/</comment>
+
+<comment type="block">/* do the equivalent of obj.name */</comment>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>getattr</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>obj</name></decl></param>, <param><decl><type><name>SubString</name> *</type><name>name</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>PyObject</name> *</type><name>newobj</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name> *</type><name>str</name> <init>= <expr><call><name>SubString_new_object</name><argument_list>(<argument><expr><name>name</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <if>if <condition>(<expr><name>str</name> == <name>NULL</name></expr>)</condition><then>
+        <return>return <expr><name>NULL</name></expr>;</return></then></if>
+    <expr_stmt><expr><name>newobj</name> = <call><name>PyObject_GetAttr</name><argument_list>(<argument><expr><name>obj</name></expr></argument>, <argument><expr><name>str</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>str</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>newobj</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* do the equivalent of obj[idx], where obj is a sequence */</comment>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>getitem_sequence</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>obj</name></decl></param>, <param><decl><type><name>Py_ssize_t</name></type> <name>idx</name></decl></param>)</parameter_list>
+<block>{
+    <return>return <expr><call><name>PySequence_GetItem</name><argument_list>(<argument><expr><name>obj</name></expr></argument>, <argument><expr><name>idx</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<comment type="block">/* do the equivalent of obj[idx], where obj is not a sequence */</comment>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>getitem_idx</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>obj</name></decl></param>, <param><decl><type><name>Py_ssize_t</name></type> <name>idx</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>PyObject</name> *</type><name>newobj</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name> *</type><name>idx_obj</name> <init>= <expr><call><name>PyLong_FromSsize_t</name><argument_list>(<argument><expr><name>idx</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <if>if <condition>(<expr><name>idx_obj</name> == <name>NULL</name></expr>)</condition><then>
+        <return>return <expr><name>NULL</name></expr>;</return></then></if>
+    <expr_stmt><expr><name>newobj</name> = <call><name>PyObject_GetItem</name><argument_list>(<argument><expr><name>obj</name></expr></argument>, <argument><expr><name>idx_obj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>idx_obj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>newobj</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* do the equivalent of obj[name] */</comment>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>getitem_str</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>obj</name></decl></param>, <param><decl><type><name>SubString</name> *</type><name>name</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>PyObject</name> *</type><name>newobj</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name> *</type><name>str</name> <init>= <expr><call><name>SubString_new_object</name><argument_list>(<argument><expr><name>name</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <if>if <condition>(<expr><name>str</name> == <name>NULL</name></expr>)</condition><then>
+        <return>return <expr><name>NULL</name></expr>;</return></then></if>
+    <expr_stmt><expr><name>newobj</name> = <call><name>PyObject_GetItem</name><argument_list>(<argument><expr><name>obj</name></expr></argument>, <argument><expr><name>str</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>str</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>newobj</name></expr>;</return>
+}</block></function>
+
+<typedef>typedef <type><struct>struct <block>{
+    <comment type="block">/* the entire string we're parsing.  we assume that someone else
+       is managing its lifetime, and that it will exist for the
+       lifetime of the iterator.  can be empty */</comment>
+    <decl_stmt><decl><type><name>SubString</name></type> <name>str</name></decl>;</decl_stmt>
+
+    <comment type="block">/* pointer to where we are inside field_name */</comment>
+    <decl_stmt><decl><type><name>STRINGLIB_CHAR</name> *</type><name>ptr</name></decl>;</decl_stmt>
+}</block></struct></type> <name>FieldNameIterator</name>;</typedef>
+
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>FieldNameIterator_init</name><parameter_list>(<param><decl><type><name>FieldNameIterator</name> *</type><name>self</name></decl></param>, <param><decl><type><name>STRINGLIB_CHAR</name> *</type><name>ptr</name></decl></param>,
+                       <param><decl><type><name>Py_ssize_t</name></type> <name>len</name></decl></param>)</parameter_list>
+<block>{
+    <expr_stmt><expr><call><name>SubString_init</name><argument_list>(<argument><expr>&amp;<name><name>self</name>-&gt;<name>str</name></name></expr></argument>, <argument><expr><name>ptr</name></expr></argument>, <argument><expr><name>len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>self</name>-&gt;<name>ptr</name></name> = <name><name>self</name>-&gt;<name>str</name>.<name>ptr</name></name></expr>;</expr_stmt>
+    <return>return <expr>1</expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>_FieldNameIterator_attr</name><parameter_list>(<param><decl><type><name>FieldNameIterator</name> *</type><name>self</name></decl></param>, <param><decl><type><name>SubString</name> *</type><name>name</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>STRINGLIB_CHAR</name></type> <name>c</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name><name>name</name>-&gt;<name>ptr</name></name> = <name><name>self</name>-&gt;<name>ptr</name></name></expr>;</expr_stmt>
+
+    <comment type="block">/* return everything until '.' or '[' */</comment>
+    <while>while <condition>(<expr><name><name>self</name>-&gt;<name>ptr</name></name> &lt; <name><name>self</name>-&gt;<name>str</name>.<name>end</name></name></expr>)</condition> <block>{
+        <switch>switch <condition>(<expr><name>c</name> = *<name><name>self</name>-&gt;<name>ptr</name></name>++</expr>)</condition> <block>{
+        <case>case <expr>'['</expr>:
+        </case><case>case <expr>'.'</expr>:
+            <comment type="block">/* backup so that we this character will be seen next time */</comment>
+            <expr_stmt><expr><name><name>self</name>-&gt;<name>ptr</name></name>--</expr>;</expr_stmt>
+            <break>break;</break>
+        </case><default>default:
+            <continue>continue;</continue>
+        </default>}</block></switch>
+        <break>break;</break>
+    }</block></while>
+    <comment type="block">/* end of string is okay */</comment>
+    <expr_stmt><expr><name><name>name</name>-&gt;<name>end</name></name> = <name><name>self</name>-&gt;<name>ptr</name></name></expr>;</expr_stmt>
+    <return>return <expr>1</expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>_FieldNameIterator_item</name><parameter_list>(<param><decl><type><name>FieldNameIterator</name> *</type><name>self</name></decl></param>, <param><decl><type><name>SubString</name> *</type><name>name</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>bracket_seen</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>STRINGLIB_CHAR</name></type> <name>c</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name><name>name</name>-&gt;<name>ptr</name></name> = <name><name>self</name>-&gt;<name>ptr</name></name></expr>;</expr_stmt>
+
+    <comment type="block">/* return everything until ']' */</comment>
+    <while>while <condition>(<expr><name><name>self</name>-&gt;<name>ptr</name></name> &lt; <name><name>self</name>-&gt;<name>str</name>.<name>end</name></name></expr>)</condition> <block>{
+        <switch>switch <condition>(<expr><name>c</name> = *<name><name>self</name>-&gt;<name>ptr</name></name>++</expr>)</condition> <block>{
+        <case>case <expr>']'</expr>:
+            <expr_stmt><expr><name>bracket_seen</name> = 1</expr>;</expr_stmt>
+            <break>break;</break>
+        </case><default>default:
+            <continue>continue;</continue>
+        </default>}</block></switch>
+        <break>break;</break>
+    }</block></while>
+    <comment type="block">/* make sure we ended with a ']' */</comment>
+    <if>if <condition>(<expr>!<name>bracket_seen</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>, <argument><expr>"Missing ']' in format string"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr>0</expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/* end of string is okay */</comment>
+    <comment type="block">/* don't include the ']' */</comment>
+    <expr_stmt><expr><name><name>name</name>-&gt;<name>end</name></name> = <name><name>self</name>-&gt;<name>ptr</name></name>-1</expr>;</expr_stmt>
+    <return>return <expr>1</expr>;</return>
+}</block></function>
+
+<comment type="block">/* returns 0 on error, 1 on non-error termination, and 2 if it returns a value */</comment>
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>FieldNameIterator_next</name><parameter_list>(<param><decl><type><name>FieldNameIterator</name> *</type><name>self</name></decl></param>, <param><decl><type><name>int</name> *</type><name>is_attribute</name></decl></param>,
+                       <param><decl><type><name>Py_ssize_t</name> *</type><name>name_idx</name></decl></param>, <param><decl><type><name>SubString</name> *</type><name>name</name></decl></param>)</parameter_list>
+<block>{
+    <comment type="block">/* check at end of input */</comment>
+    <if>if <condition>(<expr><name><name>self</name>-&gt;<name>ptr</name></name> &gt;= <name><name>self</name>-&gt;<name>str</name>.<name>end</name></name></expr>)</condition><then>
+        <return>return <expr>1</expr>;</return></then></if>
+
+    <switch>switch <condition>(<expr>*<name><name>self</name>-&gt;<name>ptr</name></name>++</expr>)</condition> <block>{
+    <case>case <expr>'.'</expr>:
+        <expr_stmt><expr>*<name>is_attribute</name> = 1</expr>;</expr_stmt>
+        <if>if <condition>(<expr><call><name>_FieldNameIterator_attr</name><argument_list>(<argument><expr><name>self</name></expr></argument>, <argument><expr><name>name</name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+            <return>return <expr>0</expr>;</return></then></if>
+        <expr_stmt><expr>*<name>name_idx</name> = -1</expr>;</expr_stmt>
+        <break>break;</break>
+    </case><case>case <expr>'['</expr>:
+        <expr_stmt><expr>*<name>is_attribute</name> = 0</expr>;</expr_stmt>
+        <if>if <condition>(<expr><call><name>_FieldNameIterator_item</name><argument_list>(<argument><expr><name>self</name></expr></argument>, <argument><expr><name>name</name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+            <return>return <expr>0</expr>;</return></then></if>
+        <expr_stmt><expr>*<name>name_idx</name> = <call><name>get_integer</name><argument_list>(<argument><expr><name>name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <break>break;</break>
+    </case><default>default:
+        <comment type="block">/* interal error, can't get here */</comment>
+        <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr>0</expr>;</return>
+    </default>}</block></switch>
+
+    <comment type="block">/* empty string is an error */</comment>
+    <if>if <condition>(<expr><name><name>name</name>-&gt;<name>ptr</name></name> == <name><name>name</name>-&gt;<name>end</name></name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>, <argument><expr>"Empty attribute in format string"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr>0</expr>;</return>
+    }</block></then></if>
+
+    <return>return <expr>2</expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* input: field_name
+   output: 'first' points to the part before the first '[' or '.'
+           'first_idx' is -1 if 'first' is not an integer, otherwise
+                       it's the value of first converted to an integer
+           'rest' is an iterator to return the rest
+*/</comment>
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>field_name_split</name><parameter_list>(<param><decl><type><name>STRINGLIB_CHAR</name> *</type><name>ptr</name></decl></param>, <param><decl><type><name>Py_ssize_t</name></type> <name>len</name></decl></param>, <param><decl><type><name>SubString</name> *</type><name>first</name></decl></param>,
+                 <param><decl><type><name>Py_ssize_t</name> *</type><name>first_idx</name></decl></param>, <param><decl><type><name>FieldNameIterator</name> *</type><name>rest</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>STRINGLIB_CHAR</name></type> <name>c</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>STRINGLIB_CHAR</name> *</type><name>p</name> <init>= <expr><name>ptr</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>STRINGLIB_CHAR</name> *</type><name>end</name> <init>= <expr><name>ptr</name> + <name>len</name></expr></init></decl>;</decl_stmt>
+
+    <comment type="block">/* find the part up until the first '.' or '[' */</comment>
+    <while>while <condition>(<expr><name>p</name> &lt; <name>end</name></expr>)</condition> <block>{
+        <switch>switch <condition>(<expr><name>c</name> = *<name>p</name>++</expr>)</condition> <block>{
+        <case>case <expr>'['</expr>:
+        </case><case>case <expr>'.'</expr>:
+            <comment type="block">/* backup so that we this character is available to the
+               "rest" iterator */</comment>
+            <expr_stmt><expr><name>p</name>--</expr>;</expr_stmt>
+            <break>break;</break>
+        </case><default>default:
+            <continue>continue;</continue>
+        </default>}</block></switch>
+        <break>break;</break>
+    }</block></while>
+
+    <comment type="block">/* set up the return values */</comment>
+    <expr_stmt><expr><call><name>SubString_init</name><argument_list>(<argument><expr><name>first</name></expr></argument>, <argument><expr><name>ptr</name></expr></argument>, <argument><expr><name>p</name> - <name>ptr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>FieldNameIterator_init</name><argument_list>(<argument><expr><name>rest</name></expr></argument>, <argument><expr><name>p</name></expr></argument>, <argument><expr><name>end</name> - <name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* see if "first" is an integer, in which case it's used as an index */</comment>
+    <expr_stmt><expr>*<name>first_idx</name> = <call><name>get_integer</name><argument_list>(<argument><expr><name>first</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* zero length string is an error */</comment>
+    <if>if <condition>(<expr><name><name>first</name>-&gt;<name>ptr</name></name> &gt;= <name><name>first</name>-&gt;<name>end</name></name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>, <argument><expr>"empty field name"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <goto>goto <name>error</name>;</goto>
+    }</block></then></if>
+
+    <return>return <expr>1</expr>;</return>
+<label><name>error</name>:</label>
+    <return>return <expr>0</expr>;</return>
+}</block></function>
+
+
+<comment type="block">/*
+    get_field_object returns the object inside {}, before the
+    format_spec.  It handles getindex and getattr lookups and consumes
+    the entire input string.
+*/</comment>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>get_field_object</name><parameter_list>(<param><decl><type><name>SubString</name> *</type><name>input</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>kwargs</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>PyObject</name> *</type><name>obj</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>ok</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>is_attribute</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>SubString</name></type> <name>name</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>SubString</name></type> <name>first</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>index</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>FieldNameIterator</name></type> <name>rest</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>!<call><name>field_name_split</name><argument_list>(<argument><expr><name><name>input</name>-&gt;<name>ptr</name></name></expr></argument>, <argument><expr><name><name>input</name>-&gt;<name>end</name></name> - <name><name>input</name>-&gt;<name>ptr</name></name></expr></argument>, <argument><expr>&amp;<name>first</name></expr></argument>,
+                          <argument><expr>&amp;<name>index</name></expr></argument>, <argument><expr>&amp;<name>rest</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <goto>goto <name>error</name>;</goto>
+    }</block></then></if>
+
+    <if>if <condition>(<expr><name>index</name> == -1</expr>)</condition><then> <block>{
+        <comment type="block">/* look up in kwargs */</comment>
+        <decl_stmt><decl><type><name>PyObject</name> *</type><name>key</name> <init>= <expr><call><name>SubString_new_object</name><argument_list>(<argument><expr>&amp;<name>first</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+        <if>if <condition>(<expr><name>key</name> == <name>NULL</name></expr>)</condition><then>
+            <goto>goto <name>error</name>;</goto></then></if>
+        <if>if <condition>(<expr>(<name>kwargs</name> == <name>NULL</name>) || (<name>obj</name> = <call><name>PyDict_GetItem</name><argument_list>(<argument><expr><name>kwargs</name></expr></argument>, <argument><expr><name>key</name></expr></argument>)</argument_list></call>) == <name>NULL</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>PyErr_SetObject</name><argument_list>(<argument><expr><name>PyExc_KeyError</name></expr></argument>, <argument><expr><name>key</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>key</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <goto>goto <name>error</name>;</goto>
+        }</block></then></if>
+        <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>key</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>obj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+    <else>else <block>{
+        <comment type="block">/* look up in args */</comment>
+        <expr_stmt><expr><name>obj</name> = <call><name>PySequence_GetItem</name><argument_list>(<argument><expr><name>args</name></expr></argument>, <argument><expr><name>index</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>obj</name> == <name>NULL</name></expr>)</condition><then>
+            <goto>goto <name>error</name>;</goto></then></if>
+    }</block></else></if>
+
+    <comment type="block">/* iterate over the rest of the field_name */</comment>
+    <while>while <condition>(<expr>(<name>ok</name> = <call><name>FieldNameIterator_next</name><argument_list>(<argument><expr>&amp;<name>rest</name></expr></argument>, <argument><expr>&amp;<name>is_attribute</name></expr></argument>, <argument><expr>&amp;<name>index</name></expr></argument>,
+                                        <argument><expr>&amp;<name>name</name></expr></argument>)</argument_list></call>) == 2</expr>)</condition> <block>{
+        <decl_stmt><decl><type><name>PyObject</name> *</type><name>tmp</name></decl>;</decl_stmt>
+
+        <if>if <condition>(<expr><name>is_attribute</name></expr>)</condition><then>
+            <comment type="block">/* getattr lookup "." */</comment>
+            <expr_stmt><expr><name>tmp</name> = <call><name>getattr</name><argument_list>(<argument><expr><name>obj</name></expr></argument>, <argument><expr>&amp;<name>name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+        <else>else
+            <comment type="block">/* getitem lookup "[]" */</comment>
+            <if>if <condition>(<expr><name>index</name> == -1</expr>)</condition><then>
+                <expr_stmt><expr><name>tmp</name> = <call><name>getitem_str</name><argument_list>(<argument><expr><name>obj</name></expr></argument>, <argument><expr>&amp;<name>name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+            <else>else
+                <if>if <condition>(<expr><call><name>PySequence_Check</name><argument_list>(<argument><expr><name>obj</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+                    <expr_stmt><expr><name>tmp</name> = <call><name>getitem_sequence</name><argument_list>(<argument><expr><name>obj</name></expr></argument>, <argument><expr><name>index</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+                <else>else
+                    <comment type="block">/* not a sequence */</comment>
+                    <expr_stmt><expr><name>tmp</name> = <call><name>getitem_idx</name><argument_list>(<argument><expr><name>obj</name></expr></argument>, <argument><expr><name>index</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if></else></if></else></if>
+        <if>if <condition>(<expr><name>tmp</name> == <name>NULL</name></expr>)</condition><then>
+            <goto>goto <name>error</name>;</goto></then></if>
+
+        <comment type="block">/* assign to obj */</comment>
+        <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>obj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><name>obj</name> = <name>tmp</name></expr>;</expr_stmt>
+    }</block></while>
+    <comment type="block">/* end of iterator, this is the non-error case */</comment>
+    <if>if <condition>(<expr><name>ok</name> == 1</expr>)</condition><then>
+        <return>return <expr><name>obj</name></expr>;</return></then></if>
+<label><name>error</name>:</label>
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>obj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/************************************************************************/</comment>
+<comment type="block">/*****************  Field rendering functions  **************************/</comment>
+<comment type="block">/************************************************************************/</comment>
+
+<comment type="block">/*
+    render_field() is the main function in this section.  It takes the
+    field object and field specification string generated by
+    get_field_and_spec, and renders the field into the output string.
+
+    render_field calls fieldobj.__format__(format_spec) method, and
+    appends to the output.
+*/</comment>
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>render_field</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>fieldobj</name></decl></param>, <param><decl><type><name>SubString</name> *</type><name>format_spec</name></decl></param>, <param><decl><type><name>OutputString</name> *</type><name>output</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>ok</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name> *</type><name>result</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name> *</type><name>format_spec_object</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <expr_stmt><expr><call><call><name>PyObject</name> *<argument_list>(<argument><expr>*<name>formatter</name></expr></argument>)</argument_list></call><argument_list>(<argument><expr><name>PyObject</name> *</expr></argument>, <argument><expr><name>STRINGLIB_CHAR</name> *</expr></argument>, <argument><expr><name>Py_ssize_t</name></expr></argument>)</argument_list></call> = <name>NULL</name></expr>;</expr_stmt>
+    <decl_stmt><decl><type><name>STRINGLIB_CHAR</name>*</type> <name>format_spec_start</name> <init>= <expr><name><name>format_spec</name>-&gt;<name>ptr</name></name> ?
+	    <name><name>format_spec</name>-&gt;<name>ptr</name></name> : <name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>format_spec_len</name> <init>= <expr><name><name>format_spec</name>-&gt;<name>ptr</name></name> ?
+	    <name><name>format_spec</name>-&gt;<name>end</name></name> - <name><name>format_spec</name>-&gt;<name>ptr</name></name> : 0</expr></init></decl>;</decl_stmt>
+
+    <comment type="block">/* If we know the type exactly, skip the lookup of __format__ and just
+       call the formatter directly. */</comment>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>STRINGLIB_IS_UNICODE</name></expr></cpp:if>
+    <if>if <condition>(<expr><call><name>PyUnicode_CheckExact</name><argument_list>(<argument><expr><name>fieldobj</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+	<expr_stmt><expr><name>formatter</name> = <name>_PyUnicode_FormatAdvanced</name></expr>;</expr_stmt></then></if>
+    <comment type="block">/* Unfortunately, there's a problem with checking for int, long,
+       and float here.  If we're being included as unicode, their
+       formatters expect string format_spec args.  For now, just skip
+       this optimization for unicode.  This could be fixed, but it's a
+       hassle. */</comment>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+    <if>if <condition>(<expr><call><name>PyString_CheckExact</name><argument_list>(<argument><expr><name>fieldobj</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+	<expr_stmt><expr><name>formatter</name> = <name>_PyBytes_FormatAdvanced</name></expr>;</expr_stmt></then>
+    <else>else <if>if <condition>(<expr><call><name>PyInt_CheckExact</name><argument_list>(<argument><expr><name>fieldobj</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+	<expr_stmt><expr><name>formatter</name> =<name>_PyInt_FormatAdvanced</name></expr>;</expr_stmt></then>
+    <else>else <if>if <condition>(<expr><call><name>PyLong_CheckExact</name><argument_list>(<argument><expr><name>fieldobj</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+	<expr_stmt><expr><name>formatter</name> =<name>_PyLong_FormatAdvanced</name></expr>;</expr_stmt></then>
+    <else>else <if>if <condition>(<expr><call><name>PyFloat_CheckExact</name><argument_list>(<argument><expr><name>fieldobj</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+	<expr_stmt><expr><name>formatter</name> = <name>_PyFloat_FormatAdvanced</name></expr>;</expr_stmt></then></if></else></if></else></if></else></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+    <if>if <condition>(<expr><name>formatter</name></expr>)</condition><then> <block>{
+	<comment type="block">/* we know exactly which formatter will be called when __format__ is
+	   looked up, so call it directly, instead. */</comment>
+	<expr_stmt><expr><name>result</name> = <call><name>formatter</name><argument_list>(<argument><expr><name>fieldobj</name></expr></argument>, <argument><expr><name>format_spec_start</name></expr></argument>, <argument><expr><name>format_spec_len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+    <else>else <block>{
+	<comment type="block">/* We need to create an object out of the pointers we have, because
+	   __format__ takes a string/unicode object for format_spec. */</comment>
+	<expr_stmt><expr><name>format_spec_object</name> = <call><name>STRINGLIB_NEW</name><argument_list>(<argument><expr><name>format_spec_start</name></expr></argument>,
+					   <argument><expr><name>format_spec_len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>format_spec_object</name> == <name>NULL</name></expr>)</condition><then>
+	    <goto>goto <name>done</name>;</goto></then></if>
+
+	<expr_stmt><expr><name>result</name> = <call><name>PyObject_Format</name><argument_list>(<argument><expr><name>fieldobj</name></expr></argument>, <argument><expr><name>format_spec_object</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if>
+    <if>if <condition>(<expr><name>result</name> == <name>NULL</name></expr>)</condition><then>
+        <goto>goto <name>done</name>;</goto></then></if>
+
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>PY_VERSION_HEX</name> &gt;= 0x03000000</expr></cpp:if>
+    <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><call><name>PyUnicode_Check</name><argument_list>(<argument><expr><name>result</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+    <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><call><name>PyString_Check</name><argument_list>(<argument><expr><name>result</name></expr></argument>)</argument_list></call> || <call><name>PyUnicode_Check</name><argument_list>(<argument><expr><name>result</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* Convert result to our type.  We could be str, and result could
+       be unicode */</comment>
+    <block>{
+	<decl_stmt><decl><type><name>PyObject</name> *</type><name>tmp</name> <init>= <expr><call><name>STRINGLIB_TOSTR</name><argument_list>(<argument><expr><name>result</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+	<if>if <condition>(<expr><name>tmp</name> == <name>NULL</name></expr>)</condition><then>
+	    <goto>goto <name>done</name>;</goto></then></if>
+	<expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>result</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>result</name> = <name>tmp</name></expr>;</expr_stmt>
+    }</block>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+    <expr_stmt><expr><name>ok</name> = <call><name>output_data</name><argument_list>(<argument><expr><name>output</name></expr></argument>,
+                     <argument><expr><call><name>STRINGLIB_STR</name><argument_list>(<argument><expr><name>result</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><call><name>STRINGLIB_LEN</name><argument_list>(<argument><expr><name>result</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<label><name>done</name>:</label>
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>format_spec_object</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>result</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>ok</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>parse_field</name><parameter_list>(<param><decl><type><name>SubString</name> *</type><name>str</name></decl></param>, <param><decl><type><name>SubString</name> *</type><name>field_name</name></decl></param>, <param><decl><type><name>SubString</name> *</type><name>format_spec</name></decl></param>,
+            <param><decl><type><name>STRINGLIB_CHAR</name> *</type><name>conversion</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>STRINGLIB_CHAR</name></type> <name>c</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+
+    <comment type="block">/* initialize these, as they may be empty */</comment>
+    <expr_stmt><expr>*<name>conversion</name> = '\0'</expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>SubString_init</name><argument_list>(<argument><expr><name>format_spec</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* search for the field name.  it's terminated by the end of the
+       string, or a ':' or '!' */</comment>
+    <expr_stmt><expr><name><name>field_name</name>-&gt;<name>ptr</name></name> = <name><name>str</name>-&gt;<name>ptr</name></name></expr>;</expr_stmt>
+    <while>while <condition>(<expr><name><name>str</name>-&gt;<name>ptr</name></name> &lt; <name><name>str</name>-&gt;<name>end</name></name></expr>)</condition> <block>{
+        <switch>switch <condition>(<expr><name>c</name> = *(<name><name>str</name>-&gt;<name>ptr</name></name>++)</expr>)</condition> <block>{
+        <case>case <expr>':'</expr>:
+        </case><case>case <expr>'!'</expr>:
+            <break>break;</break>
+        </case><default>default:
+            <continue>continue;</continue>
+        </default>}</block></switch>
+        <break>break;</break>
+    }</block></while>
+
+    <if>if <condition>(<expr><name>c</name> == '!' || <name>c</name> == ':'</expr>)</condition><then> <block>{
+        <comment type="block">/* we have a format specifier and/or a conversion */</comment>
+        <comment type="block">/* don't include the last character */</comment>
+        <expr_stmt><expr><name><name>field_name</name>-&gt;<name>end</name></name> = <name><name>str</name>-&gt;<name>ptr</name></name>-1</expr>;</expr_stmt>
+
+        <comment type="block">/* the format specifier is the rest of the string */</comment>
+        <expr_stmt><expr><name><name>format_spec</name>-&gt;<name>ptr</name></name> = <name><name>str</name>-&gt;<name>ptr</name></name></expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>format_spec</name>-&gt;<name>end</name></name> = <name><name>str</name>-&gt;<name>end</name></name></expr>;</expr_stmt>
+
+        <comment type="block">/* see if there's a conversion specifier */</comment>
+        <if>if <condition>(<expr><name>c</name> == '!'</expr>)</condition><then> <block>{
+            <comment type="block">/* there must be another character present */</comment>
+            <if>if <condition>(<expr><name><name>format_spec</name>-&gt;<name>ptr</name></name> &gt;= <name><name>format_spec</name>-&gt;<name>end</name></name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>,
+                                <argument><expr>"end of format while looking for conversion "
+                                "specifier"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <return>return <expr>0</expr>;</return>
+            }</block></then></if>
+            <expr_stmt><expr>*<name>conversion</name> = *(<name><name>format_spec</name>-&gt;<name>ptr</name></name>++)</expr>;</expr_stmt>
+
+            <comment type="block">/* if there is another character, it must be a colon */</comment>
+            <if>if <condition>(<expr><name><name>format_spec</name>-&gt;<name>ptr</name></name> &lt; <name><name>format_spec</name>-&gt;<name>end</name></name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><name>c</name> = *(<name><name>format_spec</name>-&gt;<name>ptr</name></name>++)</expr>;</expr_stmt>
+                <if>if <condition>(<expr><name>c</name> != ':'</expr>)</condition><then> <block>{
+                    <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>,
+                                    <argument><expr>"expected ':' after format specifier"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                    <return>return <expr>0</expr>;</return>
+                }</block></then></if>
+            }</block></then></if>
+        }</block></then></if>
+
+        <return>return <expr>1</expr>;</return>
+
+    }</block></then>
+    <else>else <block>{
+        <comment type="block">/* end of string, there's no format_spec or conversion */</comment>
+        <expr_stmt><expr><name><name>field_name</name>-&gt;<name>end</name></name> = <name><name>str</name>-&gt;<name>ptr</name></name></expr>;</expr_stmt>
+        <return>return <expr>1</expr>;</return>
+    }</block></else></if>
+}</block></function>
+
+<comment type="block">/************************************************************************/</comment>
+<comment type="block">/******* Output string allocation and escape-to-markup processing  ******/</comment>
+<comment type="block">/************************************************************************/</comment>
+
+<comment type="block">/* MarkupIterator breaks the string into pieces of either literal
+   text, or things inside {} that need to be marked up.  it is
+   designed to make it easy to wrap a Python iterator around it, for
+   use with the Formatter class */</comment>
+
+<typedef>typedef <type><struct>struct <block>{
+    <decl_stmt><decl><type><name>SubString</name></type> <name>str</name></decl>;</decl_stmt>
+}</block></struct></type> <name>MarkupIterator</name>;</typedef>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>MarkupIterator_init</name><parameter_list>(<param><decl><type><name>MarkupIterator</name> *</type><name>self</name></decl></param>, <param><decl><type><name>STRINGLIB_CHAR</name> *</type><name>ptr</name></decl></param>, <param><decl><type><name>Py_ssize_t</name></type> <name>len</name></decl></param>)</parameter_list>
+<block>{
+    <expr_stmt><expr><call><name>SubString_init</name><argument_list>(<argument><expr>&amp;<name><name>self</name>-&gt;<name>str</name></name></expr></argument>, <argument><expr><name>ptr</name></expr></argument>, <argument><expr><name>len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr>1</expr>;</return>
+}</block></function>
+
+<comment type="block">/* returns 0 on error, 1 on non-error termination, and 2 if it got a
+   string (or something to be expanded) */</comment>
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>MarkupIterator_next</name><parameter_list>(<param><decl><type><name>MarkupIterator</name> *</type><name>self</name></decl></param>, <param><decl><type><name>SubString</name> *</type><name>literal</name></decl></param>,
+                    <param><decl><type><name>SubString</name> *</type><name>field_name</name></decl></param>, <param><decl><type><name>SubString</name> *</type><name>format_spec</name></decl></param>,
+                    <param><decl><type><name>STRINGLIB_CHAR</name> *</type><name>conversion</name></decl></param>,
+                    <param><decl><type><name>int</name> *</type><name>format_spec_needs_expanding</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>at_end</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>STRINGLIB_CHAR</name></type> <name>c</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>STRINGLIB_CHAR</name> *</type><name>start</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>count</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>len</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>markup_follows</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+
+    <comment type="block">/* initialize all of the output variables */</comment>
+    <expr_stmt><expr><call><name>SubString_init</name><argument_list>(<argument><expr><name>literal</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>SubString_init</name><argument_list>(<argument><expr><name>field_name</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>SubString_init</name><argument_list>(<argument><expr><name>format_spec</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr>*<name>conversion</name> = '\0'</expr>;</expr_stmt>
+    <expr_stmt><expr>*<name>format_spec_needs_expanding</name> = 0</expr>;</expr_stmt>
+
+    <comment type="block">/* No more input, end of iterator.  This is the normal exit
+       path. */</comment>
+    <if>if <condition>(<expr><name><name>self</name>-&gt;<name>str</name>.<name>ptr</name></name> &gt;= <name><name>self</name>-&gt;<name>str</name>.<name>end</name></name></expr>)</condition><then>
+        <return>return <expr>1</expr>;</return></then></if>
+
+    <expr_stmt><expr><name>start</name> = <name><name>self</name>-&gt;<name>str</name>.<name>ptr</name></name></expr>;</expr_stmt>
+
+    <comment type="block">/* First read any literal text. Read until the end of string, an
+       escaped '{' or '}', or an unescaped '{'.  In order to never
+       allocate memory and so I can just pass pointers around, if
+       there's an escaped '{' or '}' then we'll return the literal
+       including the brace, but no format object.  The next time
+       through, we'll return the rest of the literal, skipping past
+       the second consecutive brace. */</comment>
+    <while>while <condition>(<expr><name><name>self</name>-&gt;<name>str</name>.<name>ptr</name></name> &lt; <name><name>self</name>-&gt;<name>str</name>.<name>end</name></name></expr>)</condition> <block>{
+        <switch>switch <condition>(<expr><name>c</name> = *(<name><name>self</name>-&gt;<name>str</name>.<name>ptr</name></name>++)</expr>)</condition> <block>{
+        <case>case <expr>'{'</expr>:
+        </case><case>case <expr>'}'</expr>:
+            <expr_stmt><expr><name>markup_follows</name> = 1</expr>;</expr_stmt>
+            <break>break;</break>
+        </case><default>default:
+            <continue>continue;</continue>
+        </default>}</block></switch>
+        <break>break;</break>
+    }</block></while>
+
+    <expr_stmt><expr><name>at_end</name> = <name><name>self</name>-&gt;<name>str</name>.<name>ptr</name></name> &gt;= <name><name>self</name>-&gt;<name>str</name>.<name>end</name></name></expr>;</expr_stmt>
+    <expr_stmt><expr><name>len</name> = <name><name>self</name>-&gt;<name>str</name>.<name>ptr</name></name> - <name>start</name></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr>(<name>c</name> == '}') &amp;&amp; (<name>at_end</name> || (<name>c</name> != *<name><name>self</name>-&gt;<name>str</name>.<name>ptr</name></name>))</expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>, <argument><expr>"Single '}' encountered "
+                        "in format string"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr>0</expr>;</return>
+    }</block></then></if>
+    <if>if <condition>(<expr><name>at_end</name> &amp;&amp; <name>c</name> == '{'</expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>, <argument><expr>"Single '{' encountered "
+                        "in format string"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr>0</expr>;</return>
+    }</block></then></if>
+    <if>if <condition>(<expr>!<name>at_end</name></expr>)</condition><then> <block>{
+        <if>if <condition>(<expr><name>c</name> == *<name><name>self</name>-&gt;<name>str</name>.<name>ptr</name></name></expr>)</condition><then> <block>{
+            <comment type="block">/* escaped } or {, skip it in the input.  there is no
+               markup object following us, just this literal text */</comment>
+            <expr_stmt><expr><name><name>self</name>-&gt;<name>str</name>.<name>ptr</name></name>++</expr>;</expr_stmt>
+            <expr_stmt><expr><name>markup_follows</name> = 0</expr>;</expr_stmt>
+        }</block></then>
+        <else>else
+            <expr_stmt><expr><name>len</name>--</expr>;</expr_stmt></else></if>
+    }</block></then></if>
+
+    <comment type="block">/* record the literal text */</comment>
+    <expr_stmt><expr><name><name>literal</name>-&gt;<name>ptr</name></name> = <name>start</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>literal</name>-&gt;<name>end</name></name> = <name>start</name> + <name>len</name></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr>!<name>markup_follows</name></expr>)</condition><then>
+        <return>return <expr>2</expr>;</return></then></if>
+
+    <comment type="block">/* this is markup, find the end of the string by counting nested
+       braces.  note that this prohibits escaped braces, so that
+       format_specs cannot have braces in them. */</comment>
+    <expr_stmt><expr><name>count</name> = 1</expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>start</name> = <name><name>self</name>-&gt;<name>str</name>.<name>ptr</name></name></expr>;</expr_stmt>
+
+    <comment type="block">/* we know we can't have a zero length string, so don't worry
+       about that case */</comment>
+    <while>while <condition>(<expr><name><name>self</name>-&gt;<name>str</name>.<name>ptr</name></name> &lt; <name><name>self</name>-&gt;<name>str</name>.<name>end</name></name></expr>)</condition> <block>{
+        <switch>switch <condition>(<expr><name>c</name> = *(<name><name>self</name>-&gt;<name>str</name>.<name>ptr</name></name>++)</expr>)</condition> <block>{
+        <case>case <expr>'{'</expr>:
+            <comment type="block">/* the format spec needs to be recursively expanded.
+               this is an optimization, and not strictly needed */</comment>
+            <expr_stmt><expr>*<name>format_spec_needs_expanding</name> = 1</expr>;</expr_stmt>
+            <expr_stmt><expr><name>count</name>++</expr>;</expr_stmt>
+            <break>break;</break>
+        </case><case>case <expr>'}'</expr>:
+            <expr_stmt><expr><name>count</name>--</expr>;</expr_stmt>
+            <if>if <condition>(<expr><name>count</name> &lt;= 0</expr>)</condition><then> <block>{
+                <comment type="block">/* we're done.  parse and get out */</comment>
+                <decl_stmt><decl><type><name>SubString</name></type> <name>s</name></decl>;</decl_stmt>
+
+                <expr_stmt><expr><call><name>SubString_init</name><argument_list>(<argument><expr>&amp;<name>s</name></expr></argument>, <argument><expr><name>start</name></expr></argument>, <argument><expr><name><name>self</name>-&gt;<name>str</name>.<name>ptr</name></name> - 1 - <name>start</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <if>if <condition>(<expr><call><name>parse_field</name><argument_list>(<argument><expr>&amp;<name>s</name></expr></argument>, <argument><expr><name>field_name</name></expr></argument>, <argument><expr><name>format_spec</name></expr></argument>, <argument><expr><name>conversion</name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+                    <return>return <expr>0</expr>;</return></then></if>
+
+                <comment type="block">/* a zero length field_name is an error */</comment>
+                <if>if <condition>(<expr><name><name>field_name</name>-&gt;<name>ptr</name></name> == <name><name>field_name</name>-&gt;<name>end</name></name></expr>)</condition><then> <block>{
+                    <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>, <argument><expr>"zero length field name "
+                                    "in format"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                    <return>return <expr>0</expr>;</return>
+                }</block></then></if>
+
+                <comment type="block">/* success */</comment>
+                <return>return <expr>2</expr>;</return>
+            }</block></then></if>
+            <break>break;</break>
+        </case>}</block></switch>
+    }</block></while>
+
+    <comment type="block">/* end of string while searching for matching '}' */</comment>
+    <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>, <argument><expr>"unmatched '{' in format"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr>0</expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* do the !r or !s conversion on obj */</comment>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>do_conversion</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>obj</name></decl></param>, <param><decl><type><name>STRINGLIB_CHAR</name></type> <name>conversion</name></decl></param>)</parameter_list>
+<block>{
+    <comment type="block">/* XXX in pre-3.0, do we need to convert this to unicode, since it
+       might have returned a string? */</comment>
+    <switch>switch <condition>(<expr><name>conversion</name></expr>)</condition> <block>{
+    <case>case <expr>'r'</expr>:
+        <return>return <expr><call><name>PyObject_Repr</name><argument_list>(<argument><expr><name>obj</name></expr></argument>)</argument_list></call></expr>;</return>
+    </case><case>case <expr>'s'</expr>:
+        <return>return <expr><call><name>STRINGLIB_TOSTR</name><argument_list>(<argument><expr><name>obj</name></expr></argument>)</argument_list></call></expr>;</return>
+    </case><default>default:
+	<if>if <condition>(<expr><name>conversion</name> &gt; 32 &amp;&amp; <name>conversion</name> &lt; 127</expr>)</condition><then> <block>{
+		<comment type="block">/* It's the ASCII subrange; casting to char is safe
+		   (assuming the execution character set is an ASCII
+		   superset). */</comment>
+        	<expr_stmt><expr><call><name>PyErr_Format</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>,
+                     <argument><expr>"Unknown conversion specifier %c"</expr></argument>,
+                     <argument><expr>(<name>char</name>)<name>conversion</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	}</block></then> <else>else
+		<expr_stmt><expr><call><name>PyErr_Format</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>,
+		     <argument><expr>"Unknown conversion specifier \\x%x"</expr></argument>,
+		     <argument><expr>(<name>unsigned</name> <name>int</name>)<name>conversion</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+        <return>return <expr><name>NULL</name></expr>;</return>
+    </default>}</block></switch>
+}</block></function>
+
+<comment type="block">/* given:
+
+   {field_name!conversion:format_spec}
+
+   compute the result and write it to output.
+   format_spec_needs_expanding is an optimization.  if it's false,
+   just output the string directly, otherwise recursively expand the
+   format_spec string. */</comment>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>output_markup</name><parameter_list>(<param><decl><type><name>SubString</name> *</type><name>field_name</name></decl></param>, <param><decl><type><name>SubString</name> *</type><name>format_spec</name></decl></param>,
+              <param><decl><type><name>int</name></type> <name>format_spec_needs_expanding</name></decl></param>, <param><decl><type><name>STRINGLIB_CHAR</name></type> <name>conversion</name></decl></param>,
+              <param><decl><type><name>OutputString</name> *</type><name>output</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>kwargs</name></decl></param>,
+              <param><decl><type><name>int</name></type> <name>recursion_depth</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>PyObject</name> *</type><name>tmp</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name> *</type><name>fieldobj</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>SubString</name></type> <name>expanded_format_spec</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>SubString</name> *</type><name>actual_format_spec</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>result</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+
+    <comment type="block">/* convert field_name to an object */</comment>
+    <expr_stmt><expr><name>fieldobj</name> = <call><name>get_field_object</name><argument_list>(<argument><expr><name>field_name</name></expr></argument>, <argument><expr><name>args</name></expr></argument>, <argument><expr><name>kwargs</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>fieldobj</name> == <name>NULL</name></expr>)</condition><then>
+        <goto>goto <name>done</name>;</goto></then></if>
+
+    <if>if <condition>(<expr><name>conversion</name> != '\0'</expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>tmp</name> = <call><name>do_conversion</name><argument_list>(<argument><expr><name>fieldobj</name></expr></argument>, <argument><expr><name>conversion</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>tmp</name> == <name>NULL</name></expr>)</condition><then>
+            <goto>goto <name>done</name>;</goto></then></if>
+
+        <comment type="block">/* do the assignment, transferring ownership: fieldobj = tmp */</comment>
+        <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>fieldobj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><name>fieldobj</name> = <name>tmp</name></expr>;</expr_stmt>
+        <expr_stmt><expr><name>tmp</name> = <name>NULL</name></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <comment type="block">/* if needed, recurively compute the format_spec */</comment>
+    <if>if <condition>(<expr><name>format_spec_needs_expanding</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>tmp</name> = <call><name>build_string</name><argument_list>(<argument><expr><name>format_spec</name></expr></argument>, <argument><expr><name>args</name></expr></argument>, <argument><expr><name>kwargs</name></expr></argument>, <argument><expr><name>recursion_depth</name>-1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>tmp</name> == <name>NULL</name></expr>)</condition><then>
+            <goto>goto <name>done</name>;</goto></then></if>
+
+        <comment type="block">/* note that in the case we're expanding the format string,
+           tmp must be kept around until after the call to
+           render_field. */</comment>
+        <expr_stmt><expr><call><name>SubString_init</name><argument_list>(<argument><expr>&amp;<name>expanded_format_spec</name></expr></argument>,
+                       <argument><expr><call><name>STRINGLIB_STR</name><argument_list>(<argument><expr><name>tmp</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><call><name>STRINGLIB_LEN</name><argument_list>(<argument><expr><name>tmp</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><name>actual_format_spec</name> = &amp;<name>expanded_format_spec</name></expr>;</expr_stmt>
+    }</block></then>
+    <else>else
+        <expr_stmt><expr><name>actual_format_spec</name> = <name>format_spec</name></expr>;</expr_stmt></else></if>
+
+    <if>if <condition>(<expr><call><name>render_field</name><argument_list>(<argument><expr><name>fieldobj</name></expr></argument>, <argument><expr><name>actual_format_spec</name></expr></argument>, <argument><expr><name>output</name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <goto>goto <name>done</name>;</goto></then></if>
+
+    <expr_stmt><expr><name>result</name> = 1</expr>;</expr_stmt>
+
+<label><name>done</name>:</label>
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>fieldobj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>tmp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <return>return <expr><name>result</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/*
+    do_markup is the top-level loop for the format() method.  It
+    searches through the format string for escapes to markup codes, and
+    calls other functions to move non-markup text to the output,
+    and to perform the markup to the output.
+*/</comment>
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>do_markup</name><parameter_list>(<param><decl><type><name>SubString</name> *</type><name>input</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>kwargs</name></decl></param>,
+          <param><decl><type><name>OutputString</name> *</type><name>output</name></decl></param>, <param><decl><type><name>int</name></type> <name>recursion_depth</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>MarkupIterator</name></type> <name>iter</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>format_spec_needs_expanding</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>result</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>SubString</name></type> <name>literal</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>SubString</name></type> <name>field_name</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>SubString</name></type> <name>format_spec</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>STRINGLIB_CHAR</name></type> <name>conversion</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><call><name>MarkupIterator_init</name><argument_list>(<argument><expr>&amp;<name>iter</name></expr></argument>, <argument><expr><name><name>input</name>-&gt;<name>ptr</name></name></expr></argument>, <argument><expr><name><name>input</name>-&gt;<name>end</name></name> - <name><name>input</name>-&gt;<name>ptr</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <while>while <condition>(<expr>(<name>result</name> = <call><name>MarkupIterator_next</name><argument_list>(<argument><expr>&amp;<name>iter</name></expr></argument>, <argument><expr>&amp;<name>literal</name></expr></argument>, <argument><expr>&amp;<name>field_name</name></expr></argument>,
+                                         <argument><expr>&amp;<name>format_spec</name></expr></argument>, <argument><expr>&amp;<name>conversion</name></expr></argument>,
+                                         <argument><expr>&amp;<name>format_spec_needs_expanding</name></expr></argument>)</argument_list></call>) == 2</expr>)</condition> <block>{
+        <if>if <condition>(<expr>!<call><name>output_data</name><argument_list>(<argument><expr><name>output</name></expr></argument>, <argument><expr><name><name>literal</name>.<name>ptr</name></name></expr></argument>, <argument><expr><name><name>literal</name>.<name>end</name></name> - <name><name>literal</name>.<name>ptr</name></name></expr></argument>)</argument_list></call></expr>)</condition><then>
+            <return>return <expr>0</expr>;</return></then></if>
+        <if>if <condition>(<expr><name><name>field_name</name>.<name>ptr</name></name> != <name><name>field_name</name>.<name>end</name></name></expr>)</condition><then>
+            <if>if <condition>(<expr>!<call><name>output_markup</name><argument_list>(<argument><expr>&amp;<name>field_name</name></expr></argument>, <argument><expr>&amp;<name>format_spec</name></expr></argument>,
+                               <argument><expr><name>format_spec_needs_expanding</name></expr></argument>, <argument><expr><name>conversion</name></expr></argument>, <argument><expr><name>output</name></expr></argument>,
+                               <argument><expr><name>args</name></expr></argument>, <argument><expr><name>kwargs</name></expr></argument>, <argument><expr><name>recursion_depth</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+                <return>return <expr>0</expr>;</return></then></if></then></if>
+    }</block></while>
+    <return>return <expr><name>result</name></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/*
+    build_string allocates the output string and then
+    calls do_markup to do the heavy lifting.
+*/</comment>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>build_string</name><parameter_list>(<param><decl><type><name>SubString</name> *</type><name>input</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>kwargs</name></decl></param>,
+             <param><decl><type><name>int</name></type> <name>recursion_depth</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>OutputString</name></type> <name>output</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name> *</type><name>result</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>count</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name><name>output</name>.<name>obj</name></name> = <name>NULL</name></expr>;</expr_stmt> <comment type="block">/* needed so cleanup code always works */</comment>
+
+    <comment type="block">/* check the recursion level */</comment>
+    <if>if <condition>(<expr><name>recursion_depth</name> &lt;= 0</expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>,
+                        <argument><expr>"Max string recursion exceeded"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <goto>goto <name>done</name>;</goto>
+    }</block></then></if>
+
+    <comment type="block">/* initial size is the length of the format string, plus the size
+       increment.  seems like a reasonable default */</comment>
+    <if>if <condition>(<expr>!<call><name>output_initialize</name><argument_list>(<argument><expr>&amp;<name>output</name></expr></argument>,
+                           <argument><expr><name><name>input</name>-&gt;<name>end</name></name> - <name><name>input</name>-&gt;<name>ptr</name></name> +
+                           <name>INITIAL_SIZE_INCREMENT</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+        <goto>goto <name>done</name>;</goto></then></if>
+
+    <if>if <condition>(<expr>!<call><name>do_markup</name><argument_list>(<argument><expr><name>input</name></expr></argument>, <argument><expr><name>args</name></expr></argument>, <argument><expr><name>kwargs</name></expr></argument>, <argument><expr>&amp;<name>output</name></expr></argument>, <argument><expr><name>recursion_depth</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <goto>goto <name>done</name>;</goto>
+    }</block></then></if>
+
+    <expr_stmt><expr><name>count</name> = <name><name>output</name>.<name>ptr</name></name> - <call><name>STRINGLIB_STR</name><argument_list>(<argument><expr><name><name>output</name>.<name>obj</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><call><name>STRINGLIB_RESIZE</name><argument_list>(<argument><expr>&amp;<name><name>output</name>.<name>obj</name></name></expr></argument>, <argument><expr><name>count</name></expr></argument>)</argument_list></call> &lt; 0</expr>)</condition><then> <block>{
+        <goto>goto <name>done</name>;</goto>
+    }</block></then></if>
+
+    <comment type="block">/* transfer ownership to result */</comment>
+    <expr_stmt><expr><name>result</name> = <name><name>output</name>.<name>obj</name></name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>output</name>.<name>obj</name></name> = <name>NULL</name></expr>;</expr_stmt>
+
+<label><name>done</name>:</label>
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name><name>output</name>.<name>obj</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>result</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/************************************************************************/</comment>
+<comment type="block">/*********** main routine ***********************************************/</comment>
+<comment type="block">/************************************************************************/</comment>
+
+<comment type="block">/* this is the main entry point */</comment>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>do_string_format</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>self</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>, <param><decl><type><name>PyObject</name> *</type><name>kwargs</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>SubString</name></type> <name>input</name></decl>;</decl_stmt>
+
+    <comment type="block">/* PEP 3101 says only 2 levels, so that
+       "{0:{1}}".format('abc', 's')            # works
+       "{0:{1:{2}}}".format('abc', 's', '')    # fails
+    */</comment>
+    <decl_stmt><decl><type><name>int</name></type> <name>recursion_depth</name> <init>= <expr>2</expr></init></decl>;</decl_stmt>
+
+    <expr_stmt><expr><call><name>SubString_init</name><argument_list>(<argument><expr>&amp;<name>input</name></expr></argument>, <argument><expr><call><name>STRINGLIB_STR</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><call><name>STRINGLIB_LEN</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><call><name>build_string</name><argument_list>(<argument><expr>&amp;<name>input</name></expr></argument>, <argument><expr><name>args</name></expr></argument>, <argument><expr><name>kwargs</name></expr></argument>, <argument><expr><name>recursion_depth</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+
+<comment type="block">/************************************************************************/</comment>
+<comment type="block">/*********** formatteriterator ******************************************/</comment>
+<comment type="block">/************************************************************************/</comment>
+
+<comment type="block">/* This is used to implement string.Formatter.vparse().  It exists so
+   Formatter can share code with the built in unicode.format() method.
+   It's really just a wrapper around MarkupIterator that is callable
+   from Python. */</comment>
+
+<typedef>typedef <type><struct>struct <block>{
+    <decl_stmt><decl><type><name>PyObject_HEAD</name>
+
+    <name>STRINGLIB_OBJECT</name> *</type><name>str</name></decl>;</decl_stmt>
+
+    <decl_stmt><decl><type><name>MarkupIterator</name></type> <name>it_markup</name></decl>;</decl_stmt>
+}</block></struct></type> <name>formatteriterobject</name>;</typedef>
+
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>formatteriter_dealloc</name><parameter_list>(<param><decl><type><name>formatteriterobject</name> *</type><name>it</name></decl></param>)</parameter_list>
+<block>{
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name><name>it</name>-&gt;<name>str</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>PyObject_FREE</name><argument_list>(<argument><expr><name>it</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<comment type="block">/* returns a tuple:
+   (literal, field_name, format_spec, conversion)
+
+   literal is any literal text to output.  might be zero length
+   field_name is the string before the ':'.  might be None
+   format_spec is the string after the ':'.  mibht be None
+   conversion is either None, or the string after the '!'
+*/</comment>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>formatteriter_next</name><parameter_list>(<param><decl><type><name>formatteriterobject</name> *</type><name>it</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>SubString</name></type> <name>literal</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>SubString</name></type> <name>field_name</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>SubString</name></type> <name>format_spec</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>STRINGLIB_CHAR</name></type> <name>conversion</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>format_spec_needs_expanding</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>result</name> <init>= <expr><call><name>MarkupIterator_next</name><argument_list>(<argument><expr>&amp;<name><name>it</name>-&gt;<name>it_markup</name></name></expr></argument>, <argument><expr>&amp;<name>literal</name></expr></argument>, <argument><expr>&amp;<name>field_name</name></expr></argument>,
+                                     <argument><expr>&amp;<name>format_spec</name></expr></argument>, <argument><expr>&amp;<name>conversion</name></expr></argument>,
+                                     <argument><expr>&amp;<name>format_spec_needs_expanding</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+    <comment type="block">/* all of the SubString objects point into it-&gt;str, so no
+       memory management needs to be done on them */</comment>
+    <expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr>0 &lt;= <name>result</name> &amp;&amp; <name>result</name> &lt;= 2</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>result</name> == 0 || <name>result</name> == 1</expr>)</condition><then>
+        <comment type="block">/* if 0, error has already been set, if 1, iterator is empty */</comment>
+        <return>return <expr><name>NULL</name></expr>;</return></then>
+    <else>else <block>{
+        <decl_stmt><decl><type><name>PyObject</name> *</type><name>literal_str</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>PyObject</name> *</type><name>field_name_str</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>PyObject</name> *</type><name>format_spec_str</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>PyObject</name> *</type><name>conversion_str</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>PyObject</name> *</type><name>tuple</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>int</name></type> <name>has_field</name> <init>= <expr><name><name>field_name</name>.<name>ptr</name></name> != <name><name>field_name</name>.<name>end</name></name></expr></init></decl>;</decl_stmt>
+
+        <expr_stmt><expr><name>literal_str</name> = <call><name>SubString_new_object</name><argument_list>(<argument><expr>&amp;<name>literal</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>literal_str</name> == <name>NULL</name></expr>)</condition><then>
+            <goto>goto <name>done</name>;</goto></then></if>
+
+        <expr_stmt><expr><name>field_name_str</name> = <call><name>SubString_new_object</name><argument_list>(<argument><expr>&amp;<name>field_name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>field_name_str</name> == <name>NULL</name></expr>)</condition><then>
+            <goto>goto <name>done</name>;</goto></then></if>
+
+        <comment type="block">/* if field_name is non-zero length, return a string for
+           format_spec (even if zero length), else return None */</comment>
+        <expr_stmt><expr><name>format_spec_str</name> = (<name>has_field</name> ?
+                           <name>SubString_new_object_or_empty</name> :
+                           <name>SubString_new_object</name>)(&amp;<name>format_spec</name>)</expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>format_spec_str</name> == <name>NULL</name></expr>)</condition><then>
+            <goto>goto <name>done</name>;</goto></then></if>
+
+        <comment type="block">/* if the conversion is not specified, return a None,
+           otherwise create a one length string with the conversion
+           character */</comment>
+        <if>if <condition>(<expr><name>conversion</name> == '\0'</expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>conversion_str</name> = <name>Py_None</name></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>conversion_str</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+        <else>else
+	    <expr_stmt><expr><name>conversion_str</name> = <call><name>STRINGLIB_NEW</name><argument_list>(<argument><expr>&amp;<name>conversion</name></expr></argument>, <argument><expr>1</expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+        <if>if <condition>(<expr><name>conversion_str</name> == <name>NULL</name></expr>)</condition><then>
+            <goto>goto <name>done</name>;</goto></then></if>
+
+        <expr_stmt><expr><name>tuple</name> = <call><name>PyTuple_Pack</name><argument_list>(<argument><expr>4</expr></argument>, <argument><expr><name>literal_str</name></expr></argument>, <argument><expr><name>field_name_str</name></expr></argument>, <argument><expr><name>format_spec_str</name></expr></argument>,
+                             <argument><expr><name>conversion_str</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <label><name>done</name>:</label>
+        <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>literal_str</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>field_name_str</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>format_spec_str</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>conversion_str</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>tuple</name></expr>;</return>
+    }</block></else></if>
+}</block></function>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyMethodDef</name></type> <name><name>formatteriter_methods</name><index>[]</index></name> <init>= <expr><block>{
+    <expr><block>{<expr><name>NULL</name></expr>,		<expr><name>NULL</name></expr>}</block></expr>		<comment type="block">/* sentinel */</comment>
+}</block></expr></init></decl>;</decl_stmt>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyTypeObject</name></type> <name>PyFormatterIter_Type</name> <init>= <expr><block>{
+    <expr><call><name>PyVarObject_HEAD_INIT</name><argument_list>(<argument><expr>&amp;<name>PyType_Type</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call>
+    "formatteriterator"</expr>,		<comment type="block">/* tp_name */</comment>
+    <expr><sizeof>sizeof<argument_list>(<argument><expr><name>formatteriterobject</name></expr></argument>)</argument_list></sizeof></expr>,	<comment type="block">/* tp_basicsize */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_itemsize */</comment>
+    <comment type="block">/* methods */</comment>
+    <expr>(<name>destructor</name>)<name>formatteriter_dealloc</name></expr>,	<comment type="block">/* tp_dealloc */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_print */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_getattr */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_setattr */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_compare */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_repr */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_as_number */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_as_sequence */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_as_mapping */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_hash */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_call */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_str */</comment>
+    <expr><name>PyObject_GenericGetAttr</name></expr>,		<comment type="block">/* tp_getattro */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_setattro */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_as_buffer */</comment>
+    <expr><name>Py_TPFLAGS_DEFAULT</name></expr>,			<comment type="block">/* tp_flags */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_doc */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_traverse */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_clear */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_richcompare */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_weaklistoffset */</comment>
+    <expr><name>PyObject_SelfIter</name></expr>,			<comment type="block">/* tp_iter */</comment>
+    <expr>(<name>iternextfunc</name>)<name>formatteriter_next</name></expr>,	<comment type="block">/* tp_iternext */</comment>
+    <expr><name>formatteriter_methods</name></expr>,		<comment type="block">/* tp_methods */</comment>
+    <expr>0</expr>,
+}</block></expr></init></decl>;</decl_stmt>
+
+<comment type="block">/* unicode_formatter_parser is used to implement
+   string.Formatter.vformat.  it parses a string and returns tuples
+   describing the parsed elements.  It's a wrapper around
+   stringlib/string_format.h's MarkupIterator */</comment>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>formatter_parser</name><parameter_list>(<param><decl><type><name>STRINGLIB_OBJECT</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>formatteriterobject</name> *</type><name>it</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>it</name> = <call><name>PyObject_New</name><argument_list>(<argument><expr><name>formatteriterobject</name></expr></argument>, <argument><expr>&amp;<name>PyFormatterIter_Type</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>it</name> == <name>NULL</name></expr>)</condition><then>
+        <return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+    <comment type="block">/* take ownership, give the object to the iterator */</comment>
+    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>it</name>-&gt;<name>str</name></name> = <name>self</name></expr>;</expr_stmt>
+
+    <comment type="block">/* initialize the contained MarkupIterator */</comment>
+    <expr_stmt><expr><call><name>MarkupIterator_init</name><argument_list>(<argument><expr>&amp;<name><name>it</name>-&gt;<name>it_markup</name></name></expr></argument>,
+                        <argument><expr><call><name>STRINGLIB_STR</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr></argument>,
+                        <argument><expr><call><name>STRINGLIB_LEN</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <return>return <expr>(<name>PyObject</name> *)<name>it</name></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/************************************************************************/</comment>
+<comment type="block">/*********** fieldnameiterator ******************************************/</comment>
+<comment type="block">/************************************************************************/</comment>
+
+
+<comment type="block">/* This is used to implement string.Formatter.vparse().  It parses the
+   field name into attribute and item values.  It's a Python-callable
+   wrapper around FieldNameIterator */</comment>
+
+<typedef>typedef <type><struct>struct <block>{
+    <decl_stmt><decl><type><name>PyObject_HEAD</name>
+
+    <name>STRINGLIB_OBJECT</name> *</type><name>str</name></decl>;</decl_stmt>
+
+    <decl_stmt><decl><type><name>FieldNameIterator</name></type> <name>it_field</name></decl>;</decl_stmt>
+}</block></struct></type> <name>fieldnameiterobject</name>;</typedef>
+
+<function><type><specifier>static</specifier> <name>void</name></type>
+<name>fieldnameiter_dealloc</name><parameter_list>(<param><decl><type><name>fieldnameiterobject</name> *</type><name>it</name></decl></param>)</parameter_list>
+<block>{
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name><name>it</name>-&gt;<name>str</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>PyObject_FREE</name><argument_list>(<argument><expr><name>it</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<comment type="block">/* returns a tuple:
+   (is_attr, value)
+   is_attr is true if we used attribute syntax (e.g., '.foo')
+              false if we used index syntax (e.g., '[foo]')
+   value is an integer or string
+*/</comment>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>fieldnameiter_next</name><parameter_list>(<param><decl><type><name>fieldnameiterobject</name> *</type><name>it</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>int</name></type> <name>result</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>is_attr</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>idx</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>SubString</name></type> <name>name</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>result</name> = <call><name>FieldNameIterator_next</name><argument_list>(<argument><expr>&amp;<name><name>it</name>-&gt;<name>it_field</name></name></expr></argument>, <argument><expr>&amp;<name>is_attr</name></expr></argument>,
+                                    <argument><expr>&amp;<name>idx</name></expr></argument>, <argument><expr>&amp;<name>name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>result</name> == 0 || <name>result</name> == 1</expr>)</condition><then>
+        <comment type="block">/* if 0, error has already been set, if 1, iterator is empty */</comment>
+        <return>return <expr><name>NULL</name></expr>;</return></then>
+    <else>else <block>{
+        <decl_stmt><decl><type><name>PyObject</name>*</type> <name>result</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>PyObject</name>*</type> <name>is_attr_obj</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>PyObject</name>*</type> <name>obj</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+
+        <expr_stmt><expr><name>is_attr_obj</name> = <call><name>PyBool_FromLong</name><argument_list>(<argument><expr><name>is_attr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>is_attr_obj</name> == <name>NULL</name></expr>)</condition><then>
+            <goto>goto <name>done</name>;</goto></then></if>
+
+        <comment type="block">/* either an integer or a string */</comment>
+        <if>if <condition>(<expr><name>idx</name> != -1</expr>)</condition><then>
+            <expr_stmt><expr><name>obj</name> = <call><name>PyLong_FromSsize_t</name><argument_list>(<argument><expr><name>idx</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+        <else>else
+            <expr_stmt><expr><name>obj</name> = <call><name>SubString_new_object</name><argument_list>(<argument><expr>&amp;<name>name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+        <if>if <condition>(<expr><name>obj</name> == <name>NULL</name></expr>)</condition><then>
+            <goto>goto <name>done</name>;</goto></then></if>
+
+        <comment type="block">/* return a tuple of values */</comment>
+        <expr_stmt><expr><name>result</name> = <call><name>PyTuple_Pack</name><argument_list>(<argument><expr>2</expr></argument>, <argument><expr><name>is_attr_obj</name></expr></argument>, <argument><expr><name>obj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <label><name>done</name>:</label>
+        <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>is_attr_obj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>obj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>result</name></expr>;</return>
+    }</block></else></if>
+}</block></function>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyMethodDef</name></type> <name><name>fieldnameiter_methods</name><index>[]</index></name> <init>= <expr><block>{
+    <expr><block>{<expr><name>NULL</name></expr>,		<expr><name>NULL</name></expr>}</block></expr>		<comment type="block">/* sentinel */</comment>
+}</block></expr></init></decl>;</decl_stmt>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyTypeObject</name></type> <name>PyFieldNameIter_Type</name> <init>= <expr><block>{
+    <expr><call><name>PyVarObject_HEAD_INIT</name><argument_list>(<argument><expr>&amp;<name>PyType_Type</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call>
+    "fieldnameiterator"</expr>,		<comment type="block">/* tp_name */</comment>
+    <expr><sizeof>sizeof<argument_list>(<argument><expr><name>fieldnameiterobject</name></expr></argument>)</argument_list></sizeof></expr>,	<comment type="block">/* tp_basicsize */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_itemsize */</comment>
+    <comment type="block">/* methods */</comment>
+    <expr>(<name>destructor</name>)<name>fieldnameiter_dealloc</name></expr>,	<comment type="block">/* tp_dealloc */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_print */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_getattr */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_setattr */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_compare */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_repr */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_as_number */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_as_sequence */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_as_mapping */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_hash */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_call */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_str */</comment>
+    <expr><name>PyObject_GenericGetAttr</name></expr>,		<comment type="block">/* tp_getattro */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_setattro */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_as_buffer */</comment>
+    <expr><name>Py_TPFLAGS_DEFAULT</name></expr>,			<comment type="block">/* tp_flags */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_doc */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_traverse */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_clear */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_richcompare */</comment>
+    <expr>0</expr>,					<comment type="block">/* tp_weaklistoffset */</comment>
+    <expr><name>PyObject_SelfIter</name></expr>,			<comment type="block">/* tp_iter */</comment>
+    <expr>(<name>iternextfunc</name>)<name>fieldnameiter_next</name></expr>,	<comment type="block">/* tp_iternext */</comment>
+    <expr><name>fieldnameiter_methods</name></expr>,		<comment type="block">/* tp_methods */</comment>
+    <expr>0</expr>}</block></expr></init></decl>;</decl_stmt>
+
+<comment type="block">/* unicode_formatter_field_name_split is used to implement
+   string.Formatter.vformat.  it takes an PEP 3101 "field name", and
+   returns a tuple of (first, rest): "first", the part before the
+   first '.' or '['; and "rest", an iterator for the rest of the field
+   name.  it's a wrapper around stringlib/string_format.h's
+   field_name_split.  The iterator it returns is a
+   FieldNameIterator */</comment>
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type>
+<name>formatter_field_name_split</name><parameter_list>(<param><decl><type><name>STRINGLIB_OBJECT</name> *</type><name>self</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>SubString</name></type> <name>first</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>first_idx</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>fieldnameiterobject</name> *</type><name>it</name></decl>;</decl_stmt>
+
+    <decl_stmt><decl><type><name>PyObject</name> *</type><name>first_obj</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PyObject</name> *</type><name>result</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>it</name> = <call><name>PyObject_New</name><argument_list>(<argument><expr><name>fieldnameiterobject</name></expr></argument>, <argument><expr>&amp;<name>PyFieldNameIter_Type</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>it</name> == <name>NULL</name></expr>)</condition><then>
+        <return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+    <comment type="block">/* take ownership, give the object to the iterator.  this is
+       just to keep the field_name alive */</comment>
+    <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>it</name>-&gt;<name>str</name></name> = <name>self</name></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr>!<call><name>field_name_split</name><argument_list>(<argument><expr><call><name>STRINGLIB_STR</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr></argument>,
+                          <argument><expr><call><name>STRINGLIB_LEN</name><argument_list>(<argument><expr><name>self</name></expr></argument>)</argument_list></call></expr></argument>,
+                          <argument><expr>&amp;<name>first</name></expr></argument>, <argument><expr>&amp;<name>first_idx</name></expr></argument>, <argument><expr>&amp;<name><name>it</name>-&gt;<name>it_field</name></name></expr></argument>)</argument_list></call></expr>)</condition><then>
+        <goto>goto <name>done</name>;</goto></then></if>
+
+    <comment type="block">/* first becomes an integer, if possible; else a string */</comment>
+    <if>if <condition>(<expr><name>first_idx</name> != -1</expr>)</condition><then>
+        <expr_stmt><expr><name>first_obj</name> = <call><name>PyLong_FromSsize_t</name><argument_list>(<argument><expr><name>first_idx</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+    <else>else
+        <comment type="block">/* convert "first" into a string object */</comment>
+        <expr_stmt><expr><name>first_obj</name> = <call><name>SubString_new_object</name><argument_list>(<argument><expr>&amp;<name>first</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+    <if>if <condition>(<expr><name>first_obj</name> == <name>NULL</name></expr>)</condition><then>
+        <goto>goto <name>done</name>;</goto></then></if>
+
+    <comment type="block">/* return a tuple of values */</comment>
+    <expr_stmt><expr><name>result</name> = <call><name>PyTuple_Pack</name><argument_list>(<argument><expr>2</expr></argument>, <argument><expr><name>first_obj</name></expr></argument>, <argument><expr><name>it</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<label><name>done</name>:</label>
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>it</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>Py_XDECREF</name><argument_list>(<argument><expr><name>first_obj</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>result</name></expr>;</return>
+}</block></function>
+</unit>

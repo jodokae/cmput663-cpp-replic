@@ -1,0 +1,666 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/cpython-2.6.1/source/RISCOS/Modules/drawfmodule.c"><comment type="block">/* drawf  DrawFile functions */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"oslib/os.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"oslib/osfile.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"oslib/drawfile.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"Python.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;limits.h&gt;</cpp:file></cpp:include>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PyDrawF_Check</name><parameter_list>(<param><type><name>op</name></type></param>)</parameter_list></cpp:macro> <cpp:value>((op)-&gt;ob_type == &amp;PyDrawFType)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>HDRSIZE</name></cpp:macro> <cpp:value>40</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>GRPHDRSIZE</name></cpp:macro> <cpp:value>36</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>DRAWTYPE</name></cpp:macro> <cpp:value>0xaff</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>NEXT</name><parameter_list>(<param><type><name>d</name></type></param>)</parameter_list></cpp:macro> <cpp:value>((drawfile_object*)((char*)(d)+(d)-&gt;size))</cpp:value></cpp:define>
+
+<typedef>typedef <type><struct>struct
+<block>{ <decl_stmt><decl><type><name>PyObject_HEAD</name>
+  <name>drawfile_diagram</name> *</type><name>drawf</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>size</name></decl>;</decl_stmt> <comment type="block">/*length in bytes*/</comment>
+  <decl_stmt><decl><type><name>int</name></type> <name>nobjs</name></decl>;</decl_stmt>  <comment type="block">/* no of objects */</comment>
+}</block></struct></type> <name>PyDrawFObject</name>;</typedef>
+
+<typedef>typedef <type><struct>struct <name>dheader</name>
+<block>{  <decl_stmt><decl><type><name>char</name></type> <name><name>tag</name> <index>[<expr>4</expr>]</index></name></decl>;</decl_stmt>
+   <decl_stmt><decl><type><name>int</name></type> <name>major_version</name></decl>;</decl_stmt>
+   <decl_stmt><decl><type><name>int</name></type> <name>minor_version</name></decl>;</decl_stmt>
+   <decl_stmt><decl><type><name>char</name></type> <name><name>source</name> <index>[<expr>12</expr>]</index></name></decl>;</decl_stmt>
+   <decl_stmt><decl><type><name>os_box</name></type> <name>bbox</name></decl>;</decl_stmt>
+}</block></struct></type> <name>dheader</name>;</typedef>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyObject</name> *</type><name>DrawFError</name></decl>;</decl_stmt> <comment type="block">/* Exception drawf.error */</comment>
+<decl_stmt><decl><type><specifier>static</specifier> <name>os_error</name> *</type><name>e</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyTypeObject</name></type> <name>PyDrawFType</name></decl>;</decl_stmt>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>dheader</name></type> <name>header</name><init>=
+<expr><block>{ <expr><block>{<expr>'D'</expr>,<expr>'r'</expr>,<expr>'a'</expr>,<expr>'w'</expr>}</block></expr>,
+  <expr>201</expr>,<expr>0</expr>,
+  <expr><block>{<expr>'P'</expr>,<expr>'y'</expr>,<expr>'t'</expr>,<expr>'h'</expr>,<expr>'o'</expr>,<expr>'n'</expr>,<expr>' '</expr>,<expr>' '</expr>,<expr>' '</expr>,<expr>' '</expr>,<expr>' '</expr>,<expr>' '</expr>}</block></expr>,
+  <expr><block>{<expr><name>INT_MAX</name></expr>,<expr><name>INT_MAX</name></expr>,<expr><name>INT_MIN</name></expr>,<expr><name>INT_MIN</name></expr>}</block></expr>
+}</block></expr></init></decl>;</decl_stmt>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>drawf_oserror</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>
+<block>{ <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>DrawFError</name></expr></argument>,<argument><expr><name><name>e</name>-&gt;<name>errmess</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr>0</expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>drawf_error</name><parameter_list>(<param><decl><type><name>char</name> *</type><name>s</name></decl></param>)</parameter_list>
+<block>{ <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>DrawFError</name></expr></argument>,<argument><expr><name>s</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr>0</expr>;</return>
+}</block></function>
+
+<comment type="block">/* DrawFile commands */</comment>
+
+<function><type><specifier>static</specifier> <name>void</name></type> <name>countobjs</name><parameter_list>(<param><decl><type><name>PyDrawFObject</name> *</type><name>pd</name></decl></param>)</parameter_list>
+<block>{ <decl_stmt><decl><type><name>int</name></type> <name>k</name><init>=<expr>0</expr></init>,<name>q</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>drawfile_diagram</name> *</type><name>dd</name><init>=<expr><name><name>pd</name>-&gt;<name>drawf</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>drawfile_object</name> *</type><name>d</name><init>=<expr><name><name>dd</name>-&gt;<name>objects</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>char</name> *</type><name>end</name><init>=<expr>(<name>char</name>*)<name>dd</name>+<name><name>pd</name>-&gt;<name>size</name></name></expr></init></decl>;</decl_stmt>
+  <expr_stmt><expr><name><name>pd</name>-&gt;<name>nobjs</name></name>=-1</expr>;</expr_stmt>
+  <while>while<condition>(<expr>(<name>char</name>*)<name>d</name>&lt;<name>end</name></expr>)</condition>
+  <block>{ <expr_stmt><expr><name>k</name>++</expr>;</expr_stmt>
+    <expr_stmt><expr><name>q</name>=<name><name>d</name>-&gt;<name>size</name></name></expr>;</expr_stmt>
+    <if>if<condition>(<expr><name>q</name>&lt;=0||<name>q</name>&amp;3</expr>)</condition><then> <return>return ;</return></then></if>
+    <expr_stmt><expr><name>d</name>=<call><name>NEXT</name><argument_list>(<argument><expr><name>d</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  }</block></while>
+  <if>if <condition>(<expr>(<name>char</name>*)<name>d</name>==<name>end</name></expr>)</condition><then> <expr_stmt><expr><name><name>pd</name>-&gt;<name>nobjs</name></name>=<name>k</name></expr>;</expr_stmt></then></if>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>drawfile_object</name> *</type><name>findobj</name><parameter_list>(<param><decl><type><name>PyDrawFObject</name> *</type><name>pd</name></decl></param>,<param><decl><type><name>Py_ssize_t</name></type> <name>n</name></decl></param>)</parameter_list>
+<block>{ <decl_stmt><decl><type><name>drawfile_diagram</name> *</type><name>dd</name><init>=<expr><name><name>pd</name>-&gt;<name>drawf</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>drawfile_object</name> *</type><name>d</name><init>=<expr><name><name>dd</name>-&gt;<name>objects</name></name></expr></init></decl>;</decl_stmt>
+  <for>for(<init>;</init><condition><expr><name>n</name>&gt;0</expr>;</condition><incr><expr><name>n</name>--</expr></incr>) <expr_stmt><expr><name>d</name>=<call><name>NEXT</name><argument_list>(<argument><expr><name>d</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></for>
+  <return>return <expr><name>d</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyDrawFObject</name>*</type> <name>new</name><parameter_list>(<param><decl><type><name>int</name></type> <name>size</name></decl></param>)</parameter_list>
+<block>{ <decl_stmt><decl><type><name>PyDrawFObject</name> *</type><name>b</name><init>=<expr><call><name>PyObject_NEW</name><argument_list>(<argument><expr><name>PyDrawFObject</name></expr></argument>,<argument><expr>&amp;<name>PyDrawFType</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <if>if<condition>(<expr>!<name>b</name></expr>)</condition><then> <return>return <expr><name>NULL</name></expr>;</return></then></if>
+  <expr_stmt><expr><name>size</name>+=<name>HDRSIZE</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>drawf</name></name>=<call><name>malloc</name><argument_list>(<argument><expr><name>size</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if<condition>(<expr>!<name><name>b</name>-&gt;<name>drawf</name></name></expr>)</condition><then>
+  <block>{ <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>b</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr>(<name>PyDrawFObject</name>*)<call><name>PyErr_NoMemory</name><argument_list>()</argument_list></call></expr>;</return>
+  }</block></then></if>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>size</name></name>=<name>size</name></expr>;</expr_stmt>
+  <return>return <expr><name>b</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>void</name></type> <name>extend</name><parameter_list>(<param><decl><type><name>os_box</name> *</type><name>b</name></decl></param>,<param><decl><type><name>os_box</name> *</type><name>c</name></decl></param>)</parameter_list>
+<block>{ <if>if<condition>(<expr><name><name>b</name>-&gt;<name>x0</name></name>&gt;<name><name>c</name>-&gt;<name>x0</name></name></expr>)</condition><then> <expr_stmt><expr><name><name>b</name>-&gt;<name>x0</name></name>=<name><name>c</name>-&gt;<name>x0</name></name></expr>;</expr_stmt></then></if>
+  <if>if<condition>(<expr><name><name>b</name>-&gt;<name>y0</name></name>&gt;<name><name>c</name>-&gt;<name>y0</name></name></expr>)</condition><then> <expr_stmt><expr><name><name>b</name>-&gt;<name>y0</name></name>=<name><name>c</name>-&gt;<name>y0</name></name></expr>;</expr_stmt></then></if>
+  <if>if<condition>(<expr><name><name>b</name>-&gt;<name>x1</name></name>&lt;<name><name>c</name>-&gt;<name>x1</name></name></expr>)</condition><then> <expr_stmt><expr><name><name>b</name>-&gt;<name>x1</name></name>=<name><name>c</name>-&gt;<name>x1</name></name></expr>;</expr_stmt></then></if>
+  <if>if<condition>(<expr><name><name>b</name>-&gt;<name>y1</name></name>&lt;<name><name>c</name>-&gt;<name>y1</name></name></expr>)</condition><then> <expr_stmt><expr><name><name>b</name>-&gt;<name>y1</name></name>=<name><name>c</name>-&gt;<name>y1</name></name></expr>;</expr_stmt></then></if>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>DrawF_New</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>self</name></decl></param>,<param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{ <decl_stmt><decl><type><name>PyDrawFObject</name> *</type><name>b</name></decl>;</decl_stmt>
+  <if>if<condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>,<argument><expr>""</expr></argument>)</argument_list></call></expr>)</condition><then> <return>return <expr><name>NULL</name></expr>;</return></then></if>
+  <expr_stmt><expr><name>b</name>=<call><name>new</name><argument_list>(<argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if<condition>(<expr>!<name>b</name></expr>)</condition><then> <return>return <expr><name>NULL</name></expr>;</return></then></if>
+  <expr_stmt><expr>*((<name>dheader</name>*)<name><name>b</name>-&gt;<name>drawf</name></name>)=<name>header</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>b</name>-&gt;<name>nobjs</name></name>=0</expr>;</expr_stmt>
+  <return>return <expr>(<name>PyObject</name> *)<name>b</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>DrawF_Load</name><parameter_list>(<param><decl><type><name>PyObject</name> *</type><name>self</name></decl></param>,<param><decl><type><name>PyObject</name> *</type><name>args</name></decl></param>)</parameter_list>
+<block>{ <decl_stmt><decl><type><name>int</name></type> <name>size</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>char</name> *</type><name>fname</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>PyDrawFObject</name> *</type><name>b</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>fileswitch_object_type</name></type> <name>ot</name></decl>;</decl_stmt>
+  <if>if<condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>args</name></expr></argument>,<argument><expr>"s"</expr></argument>,<argument><expr>&amp;<name>fname</name></expr></argument>)</argument_list></call></expr>)</condition><then> <return>return <expr><name>NULL</name></expr>;</return></then></if>
+  <expr_stmt><expr><name>e</name>=<call><name>xosfile_read_no_path</name><argument_list>(<argument><expr><name>fname</name></expr></argument>,<argument><expr>&amp;<name>ot</name></expr></argument>,<argument><expr>0</expr></argument>,<argument><expr>0</expr></argument>,<argument><expr>&amp;<name>size</name></expr></argument>,<argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if<condition>(<expr><name>e</name></expr>)</condition><then> <return>return <expr><call><name>drawf_oserror</name><argument_list>()</argument_list></call></expr>;</return></then></if>
+  <expr_stmt><expr><name>size</name>-=<name>HDRSIZE</name></expr>;</expr_stmt>
+  <if>if<condition>(<expr><name>ot</name>!=<name>osfile_IS_FILE</name>||<name>size</name>&lt;0||<name>size</name>&amp;3</expr>)</condition><then> <return>return <expr><call><name>drawf_error</name><argument_list>(<argument><expr>"Bad draw file"</expr></argument>)</argument_list></call></expr>;</return></then></if>
+  <expr_stmt><expr><name>b</name>=<call><name>new</name><argument_list>(<argument><expr><name>size</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if<condition>(<expr>!<name>b</name></expr>)</condition><then> <return>return <expr><name>NULL</name></expr>;</return></then></if>
+  <expr_stmt><expr><name>e</name>=<call><name>xosfile_load_stamped_no_path</name><argument_list>(<argument><expr><name>fname</name></expr></argument>,<argument><expr><call>(<name>byte</name>*)<argument_list>(<argument><expr><name><name>b</name>-&gt;<name>drawf</name></name></expr></argument>)</argument_list></call></expr></argument>,<argument><expr>0</expr></argument>,<argument><expr>0</expr></argument>,<argument><expr>0</expr></argument>,<argument><expr>0</expr></argument>,<argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if<condition>(<expr><name>e</name></expr>)</condition><then>
+  <block>{ <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>b</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><call><name>drawf_oserror</name><argument_list>()</argument_list></call></expr>;</return>
+  }</block></then></if>
+  <expr_stmt><expr><call><name>countobjs</name><argument_list>(<argument><expr><name>b</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if<condition>(<expr><name><name>b</name>-&gt;<name>nobjs</name></name>&gt;=0</expr>)</condition><then> <return>return <expr>(<name>PyObject</name> *)<name>b</name></expr>;</return></then></if>
+  <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>b</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><call><name>drawf_error</name><argument_list>(<argument><expr>"Corrupt draw file"</expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>DrawF_Save</name><parameter_list>(<param><decl><type><name>PyDrawFObject</name> *</type><name>self</name></decl></param>,<param><decl><type><name>PyObject</name> *</type><name>arg</name></decl></param>)</parameter_list>
+<block>{ <decl_stmt><decl><type><name>char</name> *</type><name>fname</name></decl>;</decl_stmt>
+  <if>if<condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>arg</name></expr></argument>,<argument><expr>"s"</expr></argument>,<argument><expr>&amp;<name>fname</name></expr></argument>)</argument_list></call></expr>)</condition><then> <return>return <expr><name>NULL</name></expr>;</return></then></if>
+  <expr_stmt><expr><name>e</name>=<call><name>xosfile_save_stamped</name><argument_list>(<argument><expr><name>fname</name></expr></argument>,<argument><expr><name>DRAWTYPE</name></expr></argument>,
+  <argument><expr><call>(<name>byte</name>*)<argument_list>(<argument><expr><name><name>self</name>-&gt;<name>drawf</name></name></expr></argument>)</argument_list></call></expr></argument>,<argument><expr><call>(<name>byte</name>*)<argument_list>(<argument><expr><name><name>self</name>-&gt;<name>drawf</name></name></expr></argument>)</argument_list></call>+<name><name>self</name>-&gt;<name>size</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>e</name></expr>)</condition><then> <return>return <expr><call><name>drawf_oserror</name><argument_list>()</argument_list></call></expr>;</return></then></if>
+  <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt><return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>DrawF_Render</name><parameter_list>(<param><decl><type><name>PyDrawFObject</name> *</type><name>self</name></decl></param>,<param><decl><type><name>PyObject</name> *</type><name>arg</name></decl></param>)</parameter_list>
+<block>{ <decl_stmt><decl><type><name>int</name></type> <name>flags</name></decl>,<decl><type ref="prev"/><name>trans</name></decl>,<decl><type ref="prev"/><name>clip</name></decl>,<decl><type ref="prev"/><name>flat</name></decl>;</decl_stmt>
+  <if>if<condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>arg</name></expr></argument>,<argument><expr>"iiii"</expr></argument>,<argument><expr>&amp;<name>flags</name></expr></argument>,<argument><expr>&amp;<name>trans</name></expr></argument>,<argument><expr>&amp;<name>clip</name></expr></argument>,<argument><expr>&amp;<name>flat</name></expr></argument>)</argument_list></call></expr>)</condition><then> <return>return <expr><name>NULL</name></expr>;</return></then></if>
+  <expr_stmt><expr><name>e</name>=<call><name>xdrawfile_render</name><argument_list>(<argument><expr>(<name>drawfile_render_flags</name>)<name>flags</name></expr></argument>,<argument><expr><name><name>self</name>-&gt;<name>drawf</name></name></expr></argument>,<argument><expr><name><name>self</name>-&gt;<name>size</name></name></expr></argument>,
+  <argument><expr>(<name>os_trfm</name>*)<name>trans</name></expr></argument>,<argument><expr>(<name>os_box</name>*)<name>clip</name></expr></argument>,<argument><expr><name>flat</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if<condition>(<expr><name>e</name></expr>)</condition><then> <return>return <expr><call><name>drawf_oserror</name><argument_list>()</argument_list></call></expr>;</return></then></if>
+  <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt><return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>DrawF_Path</name><parameter_list>(<param><decl><type><name>PyDrawFObject</name> *</type><name>self</name></decl></param>,<param><decl><type><name>PyObject</name> *</type><name>arg</name></decl></param>)</parameter_list>
+<block>{ <decl_stmt><decl><type><name>PyObject</name> *</type><name>pl</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>PyObject</name> *</type><name>dp</name><init>=<expr>0</expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>os_colour</name></type> <name>fill</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>os_colour</name></type> <name>outline</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>width</name></decl>,<decl><type ref="prev"/><name>start</name><init>=<expr>0</expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>drawfile_path_style</name></type> <name>style</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>size</name><init>=<expr>40</expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>n</name></decl>,<decl><type ref="prev"/><name>i</name></decl>,<decl><type ref="prev"/><name>element_count</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>drawfile_diagram</name> *</type><name>diag</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>drawfile_object</name> *</type><name>dobj</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>drawfile_path</name> *</type><name>dpath</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>draw_path</name> *</type><name>thepath</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>draw_line_style</name></type> <name>line_style</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>draw_dash_pattern</name> *</type><name>dash_pattern</name><init>=<expr>0</expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>os_box</name> *</type><name>box</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>long</name> *</type><name>pe</name></decl>;</decl_stmt>
+  <if>if<condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>arg</name></expr></argument>,<argument><expr>"O!(iiii)|O!i"</expr></argument>,<argument><expr>&amp;<name>PyList_Type</name></expr></argument>,<argument><expr>&amp;<name>pl</name></expr></argument>,<argument><expr>(<name>int</name>*)&amp;<name>fill</name></expr></argument>,
+     <argument><expr>(<name>int</name>*)&amp;<name>outline</name></expr></argument>,<argument><expr>&amp;<name>width</name></expr></argument>,<argument><expr>(<name>int</name>*)&amp;<name>style</name></expr></argument>,<argument><expr>&amp;<name>PyTuple_Type</name></expr></argument>,<argument><expr>&amp;<name>dp</name></expr></argument>,<argument><expr>&amp;<name>start</name></expr></argument>)</argument_list></call></expr>)</condition><then> <return>return <expr><name>NULL</name></expr>;</return></then></if>
+  <if>if<condition>(<expr><name>dp</name></expr>)</condition><then>
+  <block>{ <expr_stmt><expr><name>element_count</name>=<call><name>PyTuple_Size</name><argument_list>(<argument><expr><name>dp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name>size</name>+=4*<name>element_count</name>+8</expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>style</name>.<name>flags</name></name>|=<name>drawfile_PATH_DASHED</name></expr>;</expr_stmt>
+  }</block></then>
+  <else>else <expr_stmt><expr><name><name>style</name>.<name>flags</name></name>&amp;=~<name>drawfile_PATH_DASHED</name></expr>;</expr_stmt></else></if>
+  <expr_stmt><expr><name>n</name>=<call><name>PyList_Size</name><argument_list>(<argument><expr><name>pl</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>size</name>+=4*<name>n</name>+8</expr>;</expr_stmt>
+  <for>for(<init><expr><name>i</name>=0</expr>;</init><condition><expr><name>i</name>&lt;<name>n</name></expr>;</condition><incr><expr><name>i</name>++</expr></incr>) <if>if<condition>(<expr>!<call><name>PyInt_Check</name><argument_list>(<argument><expr><call><name>PyList_GetItem</name><argument_list>(<argument><expr><name>pl</name></expr></argument>,<argument><expr><name>i</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>)</condition><then> <expr_stmt><expr><name>size</name>+=4</expr>;</expr_stmt></then></if></for>
+  <expr_stmt><expr><name>diag</name>=<call><name>realloc</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>drawf</name></name></expr></argument>,<argument><expr><name><name>self</name>-&gt;<name>size</name></name>+<name>size</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if<condition>(<expr>!<name>diag</name></expr>)</condition><then> <return>return <expr><call><name>PyErr_NoMemory</name><argument_list>()</argument_list></call></expr>;</return></then></if>
+  <expr_stmt><expr><name><name>self</name>-&gt;<name>drawf</name></name>=<name>diag</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name>dobj</name>=<call>(<name>drawfile_object</name>*)<argument_list>(<argument><expr>(<name>char</name>*)<name>diag</name>+<name><name>self</name>-&gt;<name>size</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dobj</name>-&gt;<name>type</name></name>=<name>drawfile_TYPE_PATH</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dobj</name>-&gt;<name>size</name></name>=<name>size</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name>dpath</name>=&amp;<name><name>dobj</name>-&gt;<name>data</name>.<name>path</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>self</name>-&gt;<name>size</name></name>+=<name>size</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>self</name>-&gt;<name>nobjs</name></name>++</expr>;</expr_stmt>
+  <expr_stmt><expr><name>box</name>=&amp;<name><name>dpath</name>-&gt;<name>bbox</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dpath</name>-&gt;<name>fill</name></name>=<name>fill</name></expr>;</expr_stmt><expr_stmt><expr><name><name>dpath</name>-&gt;<name>outline</name></name>=<name>outline</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dpath</name>-&gt;<name>width</name></name>=<name>width</name></expr>;</expr_stmt><expr_stmt><expr><name><name>dpath</name>-&gt;<name>style</name></name>=<name>style</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name>pe</name>=(<name>long</name>*)&amp;(<name><name>dpath</name>-&gt;<name>path</name></name>)</expr>;</expr_stmt>
+  <if>if<condition>(<expr><name>dp</name></expr>)</condition><then>
+  <block>{ <expr_stmt><expr><name>dash_pattern</name>=&amp;(((<name>drawfile_path_with_pattern</name>*)<name>dpath</name>)-&gt;<name>pattern</name>)</expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>dash_pattern</name>-&gt;<name>start</name></name>=<name>start</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>dash_pattern</name>-&gt;<name>element_count</name></name>=<name>element_count</name></expr>;</expr_stmt>
+    <for>for(<init><expr><name>i</name>=0</expr>;</init><condition><expr><name>i</name>&lt;<name>element_count</name></expr>;</condition><incr><expr><name>i</name>++</expr></incr>)
+    <block>{ <expr_stmt><expr><name><name>dash_pattern</name>-&gt;<name>elements</name><index>[<expr><name>i</name></expr>]</index></name>=(<name>int</name>)<call><name>PyInt_AsLong</name><argument_list>(<argument><expr><call><name>PyTuple_GetItem</name><argument_list>(<argument><expr><name>dp</name></expr></argument>,<argument><expr><name>i</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></for>
+    <expr_stmt><expr><name>pe</name>+=<name>element_count</name>+2</expr>;</expr_stmt>
+  }</block></then></if>
+  <expr_stmt><expr><name>thepath</name>=(<name>draw_path</name>*)<name>pe</name></expr>;</expr_stmt>
+  <expr_stmt><expr>*<name>pe</name>++=<name>draw_MOVE_TO</name></expr>;</expr_stmt>
+  <for>for(<init><expr><name>i</name>=0</expr>;</init><condition><expr><name>i</name>&lt;<name>n</name></expr>;</condition><incr><expr><name>i</name>++</expr></incr>)
+  <block>{ <decl_stmt><decl><type><name>PyObject</name> *</type><name>p</name><init>=<expr><call><name>PyList_GetItem</name><argument_list>(<argument><expr><name>pl</name></expr></argument>,<argument><expr><name>i</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <if>if<condition>(<expr><call><name>PyInt_Check</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+      <expr_stmt><expr>*<name>pe</name>++=<call><name>PyInt_AsLong</name><argument_list>(<argument><expr><name>p</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+    <else>else
+    <block>{
+      <expr_stmt><expr>*<name>pe</name>++=<call><name>PyInt_AsLong</name><argument_list>(<argument><expr><call><name>PyTuple_GetItem</name><argument_list>(<argument><expr><name>p</name></expr></argument>,<argument><expr>0</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr>*<name>pe</name>++=<call><name>PyInt_AsLong</name><argument_list>(<argument><expr><call><name>PyTuple_GetItem</name><argument_list>(<argument><expr><name>p</name></expr></argument>,<argument><expr>1</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if>
+  }</block></for>
+  <expr_stmt><expr>*<name>pe</name>=<name>draw_END_PATH</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>line_style</name>.<name>join_style</name></name>=<name><name>style</name>.<name>flags</name></name>&amp;3</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>line_style</name>.<name>end_cap_style</name></name>=(<name><name>style</name>.<name>flags</name></name>&amp;3)&gt;&gt;2</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>line_style</name>.<name>start_cap_style</name></name>=(<name><name>style</name>.<name>flags</name></name>&amp;3)&gt;&gt;4</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>line_style</name>.<name>reserved</name></name>=0</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>line_style</name>.<name>mitre_limit</name></name>=10</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>line_style</name>.<name>start_cap_width</name></name>=<name><name>style</name>.<name>cap_width</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>line_style</name>.<name>end_cap_width</name></name>=<name><name>style</name>.<name>cap_width</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>line_style</name>.<name>start_cap_length</name></name>=<name><name>style</name>.<name>cap_length</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>line_style</name>.<name>end_cap_length</name></name>=<name><name>style</name>.<name>cap_length</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name>e</name>=<call><name>xdraw_process_path</name><argument_list>(<argument><expr><name>thepath</name></expr></argument>,<argument><expr>0x70000000</expr></argument>,<argument><expr>0</expr></argument>,<argument><expr>0</expr></argument>,<argument><expr><name>width</name></expr></argument>,<argument><expr>&amp;<name>line_style</name></expr></argument>,<argument><expr><name>dash_pattern</name></expr></argument>,
+  <argument><expr><call>(<name>draw_output_path</name>)<argument_list>(<argument><expr>(<name>char</name>*)<name>box</name>+0x80000000</expr></argument>)</argument_list></call></expr></argument>,<argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if<condition>(<expr><name>e</name></expr>)</condition><then> <return>return <expr><call><name>drawf_oserror</name><argument_list>()</argument_list></call></expr>;</return></then></if>
+
+  <comment type="block">/* draw_process_path seems to have a bug:
+     If the bounding box size is zero, it returns 0x7FFFFFFF, ..., 0x80000000 instead of the
+     correct size. */</comment>
+  <if>if <condition>(<expr><name><name>box</name>-&gt;<name>x0</name></name>==0x7FFFFFFF</expr>)</condition><then>
+  <block>{
+      <comment type="block">/* path has zero extension, so forget it; it would be invisible anyway */</comment>
+      <expr_stmt><expr><name><name>self</name>-&gt;<name>size</name></name>-=<name>size</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>self</name>-&gt;<name>nobjs</name></name>--</expr>;</expr_stmt>
+      <expr_stmt><expr><name>diag</name>=<call><name>realloc</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>drawf</name></name></expr></argument>,<argument><expr><name><name>self</name>-&gt;<name>size</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if<condition>(<expr>!<name>diag</name></expr>)</condition><then> <return>return <expr><call><name>PyErr_NoMemory</name><argument_list>()</argument_list></call></expr>;</return></then></if>
+      <expr_stmt><expr><name><name>self</name>-&gt;<name>drawf</name></name>=<name>diag</name></expr>;</expr_stmt>
+  }</block></then>
+  <else>else
+      <expr_stmt><expr><call><name>extend</name><argument_list>(<argument><expr>&amp;(<name><name>diag</name>-&gt;<name>bbox</name></name>)</expr></argument>,<argument><expr><name>box</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+  <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt><return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>DrawF_Text</name><parameter_list>(<param><decl><type><name>PyDrawFObject</name> *</type><name>self</name></decl></param>,<param><decl><type><name>PyObject</name> *</type><name>arg</name></decl></param>)</parameter_list>
+<block>{ <decl_stmt><decl><type><name>os_colour</name></type> <name>fill</name></decl>,<decl><type ref="prev"/><name>bg_hint</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>drawfile_text_style</name></type> <name>style</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>xsize</name></decl>,<decl><type ref="prev"/><name>ysize</name></decl>,<decl><type ref="prev"/><name>x</name></decl>,<decl><type ref="prev"/><name>y</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>size</name></decl>,<decl><type ref="prev"/><name>len</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>char</name> *</type><name>text</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>drawfile_diagram</name> *</type><name>diag</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>drawfile_object</name> *</type><name>dobj</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>drawfile_text</name> *</type><name>dtext</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>os_box</name> *</type><name>box</name></decl>;</decl_stmt>
+  <if>if<condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>arg</name></expr></argument>,<argument><expr>"(ii)s(iiiii)"</expr></argument>,<argument><expr>&amp;<name>x</name></expr></argument>,<argument><expr>&amp;<name>y</name></expr></argument>,<argument><expr>&amp;<name>text</name></expr></argument>,
+     <argument><expr>(<name>int</name>*)&amp;<name>fill</name></expr></argument>,<argument><expr>(<name>int</name>*)&amp;<name>bg_hint</name></expr></argument>,<argument><expr>(<name>int</name>*)&amp;<name>style</name></expr></argument>,<argument><expr>&amp;<name>xsize</name></expr></argument>,<argument><expr>&amp;<name>ysize</name></expr></argument>)</argument_list></call></expr>)</condition><then> <return>return <expr><name>NULL</name></expr>;</return></then></if>
+  <expr_stmt><expr><name>len</name>=<call><name>strlen</name><argument_list>(<argument><expr><name>text</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>size</name>=((<name>len</name>+4)&amp;(~3))+52</expr>;</expr_stmt>
+  <expr_stmt><expr><name>diag</name>=<call><name>realloc</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>drawf</name></name></expr></argument>,<argument><expr><name><name>self</name>-&gt;<name>size</name></name>+<name>size</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if<condition>(<expr>!<name>diag</name></expr>)</condition><then> <return>return <expr><call><name>PyErr_NoMemory</name><argument_list>()</argument_list></call></expr>;</return></then></if>
+  <expr_stmt><expr><name><name>self</name>-&gt;<name>drawf</name></name>=<name>diag</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name>dobj</name>=<call>(<name>drawfile_object</name>*)<argument_list>(<argument><expr>(<name>char</name>*)<name>diag</name>+<name><name>self</name>-&gt;<name>size</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dobj</name>-&gt;<name>type</name></name>=<name>drawfile_TYPE_TEXT</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dobj</name>-&gt;<name>size</name></name>=<name>size</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name>dtext</name>=&amp;<name><name>dobj</name>-&gt;<name>data</name>.<name>text</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>self</name>-&gt;<name>size</name></name>+=<name>size</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>self</name>-&gt;<name>nobjs</name></name>++</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dtext</name>-&gt;<name>fill</name></name>=<name>fill</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dtext</name>-&gt;<name>bg_hint</name></name>=<name>bg_hint</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dtext</name>-&gt;<name>style</name></name>=<name>style</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dtext</name>-&gt;<name>xsize</name></name>=<name>xsize</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dtext</name>-&gt;<name>ysize</name></name>=<name>ysize</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dtext</name>-&gt;<name>base</name>.<name>x</name></name>=<name>x</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dtext</name>-&gt;<name>base</name>.<name>y</name></name>=<name>y</name></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>memset</name><argument_list>(<argument><expr><name><name>dtext</name>-&gt;<name>text</name></name></expr></argument>,<argument><expr>0</expr></argument>,<argument><expr>(<name>len</name>+4)&amp;(~3)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>sprintf</name><argument_list>(<argument><expr><name><name>dtext</name>-&gt;<name>text</name></name></expr></argument>,<argument><expr>"%s"</expr></argument>,<argument><expr><name>text</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>box</name>=&amp;(<name><name>dtext</name>-&gt;<name>bbox</name></name>)</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>box</name>-&gt;<name>x0</name></name>=<name>x</name></expr>;</expr_stmt><expr_stmt><expr><name><name>box</name>-&gt;<name>y0</name></name>=<name>y</name></expr>;</expr_stmt><expr_stmt><expr><name><name>box</name>-&gt;<name>x1</name></name>=<name>x</name>+<name>len</name>*<name>xsize</name></expr>;</expr_stmt><expr_stmt><expr><name><name>box</name>-&gt;<name>y1</name></name>=<name>y</name>+<name>ysize</name></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>extend</name><argument_list>(<argument><expr>&amp;(<name><name>diag</name>-&gt;<name>bbox</name></name>)</expr></argument>,<argument><expr><name>box</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt><return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>DrawF_TText</name><parameter_list>(<param><decl><type><name>PyDrawFObject</name> *</type><name>self</name></decl></param>,<param><decl><type><name>PyObject</name> *</type><name>arg</name></decl></param>)</parameter_list>
+<block>{ <decl_stmt><decl><type><name>os_colour</name></type> <name>fill</name></decl>,<decl><type ref="prev"/><name>bg_hint</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>drawfile_text_style</name></type> <name>style</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>xsize</name></decl>,<decl><type ref="prev"/><name>ysize</name></decl>,<decl><type ref="prev"/><name>x</name></decl>,<decl><type ref="prev"/><name>y</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>t1</name></decl>,<decl><type ref="prev"/><name>t2</name></decl>,<decl><type ref="prev"/><name>t3</name></decl>,<decl><type ref="prev"/><name>t4</name></decl>,<decl><type ref="prev"/><name>t5</name></decl>,<decl><type ref="prev"/><name>t6</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>size</name></decl>,<decl><type ref="prev"/><name>len</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>char</name> *</type><name>text</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>drawfile_diagram</name> *</type><name>diag</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>drawfile_object</name> *</type><name>dobj</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>drawfile_trfm_text</name> *</type><name>dtext</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>os_box</name> *</type><name>box</name></decl>;</decl_stmt>
+  <expr_stmt><expr><name>t1</name>=1&lt;&lt;16</expr>;</expr_stmt><expr_stmt><expr><name>t2</name>=0</expr>;</expr_stmt>
+  <expr_stmt><expr><name>t3</name>=0</expr>;</expr_stmt><expr_stmt><expr><name>t4</name>=1&lt;&lt;16</expr>;</expr_stmt>
+  <expr_stmt><expr><name>t5</name>=<name>t6</name>=0</expr>;</expr_stmt>
+  <if>if<condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>arg</name></expr></argument>,<argument><expr>"(ii)s(iiiii)|(iiiiii)"</expr></argument>,<argument><expr>&amp;<name>x</name></expr></argument>,<argument><expr>&amp;<name>y</name></expr></argument>,<argument><expr>&amp;<name>text</name></expr></argument>,
+     <argument><expr>(<name>int</name>*)&amp;<name>fill</name></expr></argument>,<argument><expr>(<name>int</name>*)&amp;<name>bg_hint</name></expr></argument>,<argument><expr>(<name>int</name>*)&amp;<name>style</name></expr></argument>,<argument><expr>&amp;<name>xsize</name></expr></argument>,<argument><expr>&amp;<name>ysize</name></expr></argument>,<argument><expr>&amp;<name>t1</name></expr></argument>,<argument><expr>&amp;<name>t2</name></expr></argument>,<argument><expr>&amp;<name>t3</name></expr></argument>,<argument><expr>&amp;<name>t4</name></expr></argument>,<argument><expr>&amp;<name>t5</name></expr></argument>,<argument><expr>&amp;<name>t6</name></expr></argument>)</argument_list></call></expr>)</condition><then> <return>return <expr><name>NULL</name></expr>;</return></then></if>
+  <expr_stmt><expr><name>len</name>=<call><name>strlen</name><argument_list>(<argument><expr><name>text</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>size</name>=((<name>len</name>+4)&amp;(~3))+52+28</expr>;</expr_stmt>
+  <expr_stmt><expr><name>diag</name>=<call><name>realloc</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>drawf</name></name></expr></argument>,<argument><expr><name><name>self</name>-&gt;<name>size</name></name>+<name>size</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if<condition>(<expr>!<name>diag</name></expr>)</condition><then> <return>return <expr><call><name>PyErr_NoMemory</name><argument_list>()</argument_list></call></expr>;</return></then></if>
+  <expr_stmt><expr><name><name>self</name>-&gt;<name>drawf</name></name>=<name>diag</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name>dobj</name>=<call>(<name>drawfile_object</name>*)<argument_list>(<argument><expr>(<name>char</name>*)<name>diag</name>+<name><name>self</name>-&gt;<name>size</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dobj</name>-&gt;<name>type</name></name>=<name>drawfile_TYPE_TRFM_TEXT</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dobj</name>-&gt;<name>size</name></name>=<name>size</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name>dtext</name>=&amp;<name><name>dobj</name>-&gt;<name>data</name>.<name>trfm_text</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>self</name>-&gt;<name>size</name></name>+=<name>size</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>self</name>-&gt;<name>nobjs</name></name>++</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dtext</name>-&gt;<name>trfm</name>.<name>entries</name><index>[<expr>0</expr>]</index><index>[<expr>0</expr>]</index></name>=<name>t1</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dtext</name>-&gt;<name>trfm</name>.<name>entries</name><index>[<expr>0</expr>]</index><index>[<expr>1</expr>]</index></name>=<name>t2</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dtext</name>-&gt;<name>trfm</name>.<name>entries</name><index>[<expr>1</expr>]</index><index>[<expr>0</expr>]</index></name>=<name>t3</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dtext</name>-&gt;<name>trfm</name>.<name>entries</name><index>[<expr>1</expr>]</index><index>[<expr>1</expr>]</index></name>=<name>t4</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dtext</name>-&gt;<name>trfm</name>.<name>entries</name><index>[<expr>2</expr>]</index><index>[<expr>0</expr>]</index></name>=<name>t5</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dtext</name>-&gt;<name>trfm</name>.<name>entries</name><index>[<expr>2</expr>]</index><index>[<expr>1</expr>]</index></name>=<name>t6</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dtext</name>-&gt;<name>flags</name></name>=0</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dtext</name>-&gt;<name>fill</name></name>=<name>fill</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dtext</name>-&gt;<name>bg_hint</name></name>=<name>bg_hint</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dtext</name>-&gt;<name>style</name></name>=<name>style</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dtext</name>-&gt;<name>xsize</name></name>=<name>xsize</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dtext</name>-&gt;<name>ysize</name></name>=<name>ysize</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dtext</name>-&gt;<name>base</name>.<name>x</name></name>=<name>x</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dtext</name>-&gt;<name>base</name>.<name>y</name></name>=<name>y</name></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>memset</name><argument_list>(<argument><expr><name><name>dtext</name>-&gt;<name>text</name></name></expr></argument>,<argument><expr>0</expr></argument>,<argument><expr>(<name>len</name>+4)&amp;(~3)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>sprintf</name><argument_list>(<argument><expr><name><name>dtext</name>-&gt;<name>text</name></name></expr></argument>,<argument><expr>"%s"</expr></argument>,<argument><expr><name>text</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>box</name>=&amp;(<name><name>dtext</name>-&gt;<name>bbox</name></name>)</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>box</name>-&gt;<name>x0</name></name>=<name>x</name></expr>;</expr_stmt><expr_stmt><expr><name><name>box</name>-&gt;<name>y0</name></name>=<name>y</name></expr>;</expr_stmt><expr_stmt><expr><name><name>box</name>-&gt;<name>x1</name></name>=<name>x</name>+<name>len</name>*<name>xsize</name></expr>;</expr_stmt><expr_stmt><expr><name><name>box</name>-&gt;<name>y1</name></name>=<name>y</name>+<name>ysize</name></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>extend</name><argument_list>(<argument><expr>&amp;(<name><name>diag</name>-&gt;<name>bbox</name></name>)</expr></argument>,<argument><expr><name>box</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt><return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>DrawF_FontTable</name><parameter_list>(<param><decl><type><name>PyDrawFObject</name> *</type><name>self</name></decl></param>,<param><decl><type><name>PyObject</name> *</type><name>arg</name></decl></param>)</parameter_list>
+<block>{ <decl_stmt><decl><type><name>int</name></type> <name>size</name><init>=<expr>8</expr></init>,<name>n</name><init>=<expr>0</expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>PyObject</name> *</type><name>d</name></decl>,*<decl><type ref="prev"/><name>key</name></decl>,*<decl><type ref="prev"/><name>value</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>drawfile_diagram</name> *</type><name>diag</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>drawfile_object</name> *</type><name>dobj</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>char</name> *</type><name>dtable</name></decl>;</decl_stmt>
+  <if>if<condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>arg</name></expr></argument>,<argument><expr>"O!"</expr></argument>,<argument><expr>&amp;<name>PyDict_Type</name></expr></argument>,<argument><expr>&amp;<name>d</name></expr></argument>)</argument_list></call></expr>)</condition><then> <return>return <expr><name>NULL</name></expr>;</return></then></if>
+  <while>while<condition>(<expr><call><name>PyDict_Next</name><argument_list>(<argument><expr><name>d</name></expr></argument>,<argument><expr>&amp;<name>n</name></expr></argument>,<argument><expr>&amp;<name>key</name></expr></argument>,<argument><expr>&amp;<name>value</name></expr></argument>)</argument_list></call></expr>)</condition>
+  <block>{ <decl_stmt><decl><type><name>int</name></type> <name>m</name><init>=<expr><call><name>PyString_Size</name><argument_list>(<argument><expr><name>value</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <if>if<condition>(<expr><name>m</name>&lt;0||!<call><name>PyInt_Check</name><argument_list>(<argument><expr><name>key</name></expr></argument>)</argument_list></call></expr>)</condition><then> <return>return <expr><name>NULL</name></expr>;</return></then></if>
+    <expr_stmt><expr><name>size</name>+=<name>m</name>+2</expr>;</expr_stmt>
+  }</block></while>
+  <expr_stmt><expr><name>size</name>=(<name>size</name>+3)&amp;(~3)</expr>;</expr_stmt>
+  <expr_stmt><expr><name>diag</name>=<call><name>realloc</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>drawf</name></name></expr></argument>,<argument><expr><name><name>self</name>-&gt;<name>size</name></name>+<name>size</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if<condition>(<expr>!<name>diag</name></expr>)</condition><then> <return>return <expr><call><name>PyErr_NoMemory</name><argument_list>()</argument_list></call></expr>;</return></then></if>
+  <expr_stmt><expr><name><name>self</name>-&gt;<name>drawf</name></name>=<name>diag</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name>dobj</name>=<call>(<name>drawfile_object</name>*)<argument_list>(<argument><expr>(<name>char</name>*)<name>diag</name>+<name><name>self</name>-&gt;<name>size</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dobj</name>-&gt;<name>type</name></name>=<name>drawfile_TYPE_FONT_TABLE</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dobj</name>-&gt;<name>size</name></name>=<name>size</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name>dtable</name>=<call>(<name>char</name>*)<argument_list>(<argument><expr>&amp;<name><name>dobj</name>-&gt;<name>data</name>.<name>font_table</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>self</name>-&gt;<name>size</name></name>+=<name>size</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>self</name>-&gt;<name>nobjs</name></name>++</expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>memset</name><argument_list>(<argument><expr><name>dtable</name></expr></argument>,<argument><expr>0</expr></argument>,<argument><expr><name>size</name>-8</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>n</name>=0</expr>;</expr_stmt>
+  <while>while<condition>(<expr><call><name>PyDict_Next</name><argument_list>(<argument><expr><name>d</name></expr></argument>,<argument><expr>&amp;<name>n</name></expr></argument>,<argument><expr>&amp;<name>key</name></expr></argument>,<argument><expr>&amp;<name>value</name></expr></argument>)</argument_list></call></expr>)</condition>
+  <block>{ <decl_stmt><decl><type><name>int</name></type> <name>m</name><init>=<expr><call><name>PyString_Size</name><argument_list>(<argument><expr><name>value</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <expr_stmt><expr>*<name>dtable</name>=(<name>char</name>)<call><name>PyInt_AsLong</name><argument_list>(<argument><expr><name>key</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>strcpy</name><argument_list>(<argument><expr><name>dtable</name>+1</expr></argument>,<argument><expr><call><name>PyString_AsString</name><argument_list>(<argument><expr><name>value</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name>dtable</name>+=<name>m</name>+2</expr>;</expr_stmt>
+  }</block></while>
+  <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt><return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>DrawF_Group</name><parameter_list>(<param><decl><type><name>PyDrawFObject</name> *</type><name>self</name></decl></param>,<param><decl><type><name>PyObject</name> *</type><name>arg</name></decl></param>)</parameter_list>
+<block>{ <decl_stmt><decl><type><name>int</name></type> <name>size</name></decl>,<decl><type ref="prev"/><name>n</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>PyDrawFObject</name> *</type><name>g</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>char</name> *</type><name>name</name><init>=<expr>""</expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>drawfile_diagram</name> *</type><name>diag</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>drawfile_object</name> *</type><name>dobj</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>drawfile_group</name> *</type><name>dgroup</name></decl>;</decl_stmt>
+  <if>if<condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>arg</name></expr></argument>,<argument><expr>"O!|s"</expr></argument>,<argument><expr>&amp;<name>PyDrawFType</name></expr></argument>,<argument><expr>(<name>PyObject</name>*)&amp;<name>g</name></expr></argument>,<argument><expr>&amp;<name>name</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+       <return>return <expr><name>NULL</name></expr>;</return></then></if>
+  <expr_stmt><expr><name>size</name>=<name><name>g</name>-&gt;<name>size</name></name>-4</expr>;</expr_stmt>
+  <expr_stmt><expr><name>diag</name>=<call><name>realloc</name><argument_list>(<argument><expr><name><name>self</name>-&gt;<name>drawf</name></name></expr></argument>,<argument><expr><name><name>self</name>-&gt;<name>size</name></name>+<name>size</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if<condition>(<expr>!<name>diag</name></expr>)</condition><then> <return>return <expr><call><name>PyErr_NoMemory</name><argument_list>()</argument_list></call></expr>;</return></then></if>
+  <expr_stmt><expr><name><name>self</name>-&gt;<name>drawf</name></name>=<name>diag</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>self</name>-&gt;<name>nobjs</name></name>++</expr>;</expr_stmt>
+  <expr_stmt><expr><name>dobj</name>=<call>(<name>drawfile_object</name>*)<argument_list>(<argument><expr>(<name>char</name>*)<name>diag</name>+<name><name>self</name>-&gt;<name>size</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>self</name>-&gt;<name>size</name></name>+=<name>size</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dobj</name>-&gt;<name>type</name></name>=<name>drawfile_TYPE_GROUP</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dobj</name>-&gt;<name>size</name></name>=<name><name>g</name>-&gt;<name>size</name></name>-4</expr>;</expr_stmt>
+  <expr_stmt><expr><name>dgroup</name>=&amp;<name><name>dobj</name>-&gt;<name>data</name>.<name>group</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>dgroup</name>-&gt;<name>bbox</name></name>=<name><name>g</name>-&gt;<name>drawf</name>-&gt;<name>bbox</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>memset</name><argument_list>(<argument><expr><name><name>dgroup</name>-&gt;<name>name</name></name></expr></argument>,<argument><expr>' '</expr></argument>,<argument><expr>12</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>n</name>=<call><name>strlen</name><argument_list>(<argument><expr><name>name</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if<condition>(<expr><name>n</name>&gt;12</expr>)</condition><then> <expr_stmt><expr><name>n</name>=12</expr>;</expr_stmt></then></if>
+  <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name><name>dgroup</name>-&gt;<name>name</name></name></expr></argument>,<argument><expr><name>name</name></expr></argument>,<argument><expr><name>n</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr>(<name>char</name>*)<name><name>dgroup</name>-&gt;<name>objects</name></name></expr></argument>,<argument><expr>(<name>char</name>*)<name><name>g</name>-&gt;<name>drawf</name></name>+40</expr></argument>,<argument><expr><name><name>g</name>-&gt;<name>size</name></name>-40</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>extend</name><argument_list>(<argument><expr>&amp;(<name><name>diag</name>-&gt;<name>bbox</name></name>)</expr></argument>,<argument><expr>&amp;(<name><name>dgroup</name>-&gt;<name>bbox</name></name>)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt><return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>DrawF_Find</name><parameter_list>(<param><decl><type><name>PyDrawFObject</name> *</type><name>self</name></decl></param>,<param><decl><type><name>PyObject</name> *</type><name>arg</name></decl></param>)</parameter_list>
+<block>{ <decl_stmt><decl><type><name>int</name></type> <name>x</name></decl>,<decl><type ref="prev"/><name>y</name></decl>,<decl><type ref="prev"/><name>n</name><init>=<expr>0</expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>r</name><init>=<expr>-1</expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>drawfile_object</name> *</type><name>d</name></decl>;</decl_stmt>
+  <if>if<condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>arg</name></expr></argument>,<argument><expr>"ii|i"</expr></argument>,<argument><expr>&amp;<name>x</name></expr></argument>,<argument><expr>&amp;<name>y</name></expr></argument>,<argument><expr>&amp;<name>n</name></expr></argument>)</argument_list></call></expr>)</condition><then> <return>return <expr><name>NULL</name></expr>;</return></then></if>
+  <if>if<condition>(<expr><name>n</name>&lt;<name><name>self</name>-&gt;<name>nobjs</name></name>&amp;&amp;<name>n</name>&gt;=0</expr>)</condition><then>
+  <block>{ <expr_stmt><expr><name>d</name>=<call><name>findobj</name><argument_list>(<argument><expr><name>self</name></expr></argument>,<argument><expr><name>n</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <while>while<condition>(<expr><name>n</name>&lt;<name><name>self</name>-&gt;<name>nobjs</name></name></expr>)</condition>
+    <block>{ <if>if<condition>(<expr><name>x</name>&gt;=<name><name>d</name>-&gt;<name>data</name>.<name>text</name>.<name>bbox</name>.<name>x0</name></name>&amp;&amp;<name>x</name>&lt;=<name><name>d</name>-&gt;<name>data</name>.<name>text</name>.<name>bbox</name>.<name>x1</name></name>&amp;&amp;
+         <name>y</name>&gt;=<name><name>d</name>-&gt;<name>data</name>.<name>text</name>.<name>bbox</name>.<name>y0</name></name>&amp;&amp;<name>y</name>&lt;=<name><name>d</name>-&gt;<name>data</name>.<name>text</name>.<name>bbox</name>.<name>y1</name></name></expr>)</condition><then> <block>{ <expr_stmt><expr><name>r</name>=<name>n</name></expr>;</expr_stmt><break>break;</break>}</block></then></if>
+      <expr_stmt><expr><name>n</name>++</expr>;</expr_stmt>
+      <expr_stmt><expr><name>d</name>=<call><name>NEXT</name><argument_list>(<argument><expr><name>d</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></while>
+  }</block></then></if>
+  <return>return <expr><call><name>PyInt_FromLong</name><argument_list>(<argument><expr><name>r</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>DrawF_Box</name><parameter_list>(<param><decl><type><name>PyDrawFObject</name> *</type><name>self</name></decl></param>,<param><decl><type><name>PyObject</name> *</type><name>arg</name></decl></param>)</parameter_list>
+<block>{ <decl_stmt><decl><type><name>int</name></type> <name>n</name><init>=<expr>-1</expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>os_box</name> *</type><name>box</name></decl>;</decl_stmt>
+  <if>if<condition>(<expr>!<call><name>PyArg_ParseTuple</name><argument_list>(<argument><expr><name>arg</name></expr></argument>,<argument><expr>"|i"</expr></argument>,<argument><expr>&amp;<name>n</name></expr></argument>)</argument_list></call></expr>)</condition><then> <return>return <expr><name>NULL</name></expr>;</return></then></if>
+  <if>if<condition>(<expr><name>n</name>&gt;=<name><name>self</name>-&gt;<name>nobjs</name></name>|<name>n</name>&lt;0</expr>)</condition><then> <expr_stmt><expr><name>box</name>=&amp;(<name><name>self</name>-&gt;<name>drawf</name>-&gt;<name>bbox</name></name>)</expr>;</expr_stmt></then>
+  <else>else <expr_stmt><expr><name>box</name>=&amp;(<call><name>findobj</name><argument_list>(<argument><expr><name>self</name></expr></argument>,<argument><expr><name>n</name></expr></argument>)</argument_list></call>-&gt;<name><name>data</name>.<name>text</name>.<name>bbox</name></name>)</expr>;</expr_stmt></else></if>
+  <return>return <expr><call><name>Py_BuildValue</name><argument_list>(<argument><expr>"iiii"</expr></argument>,<argument><expr><name><name>box</name>-&gt;<name>x0</name></name></expr></argument>,<argument><expr><name><name>box</name>-&gt;<name>y0</name></name></expr></argument>,<argument><expr><name><name>box</name>-&gt;<name>x1</name></name></expr></argument>,<argument><expr><name><name>box</name>-&gt;<name>y1</name></name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>void</name></type> <name>SetBlock</name><parameter_list>(<param><decl><type><name>drawfile_object</name> *</type><name>d</name></decl></param>,<param><decl><type><name>int</name></type> <name>size</name></decl></param>,<param><decl><type><name>int</name></type> <name>type</name></decl></param>,<param><decl><type><name>int</name></type> <name>offset</name></decl></param>,<param><decl><type><name>int</name></type> <name>value</name></decl></param>)</parameter_list>
+<block>{ <decl_stmt><decl><type><name>char</name> *</type><name>end</name><init>=<expr>(<name>char</name>*)<name>d</name>+<name>size</name></expr></init></decl>;</decl_stmt>
+  <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"s%d t%d o%d v%d\n"</expr></argument>,<argument><expr><name>size</name></expr></argument>,<argument><expr><name>type</name></expr></argument>,<argument><expr><name>offset</name></expr></argument>,<argument><expr><name>value</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <for>for(<init>;</init><condition><expr>(<name>char</name>*)<name>d</name>&lt;<name>end</name></expr>;</condition><incr><expr><name>d</name>=<call><name>NEXT</name><argument_list>(<argument><expr><name>d</name></expr></argument>)</argument_list></call></expr></incr>)
+    <if>if<condition>(<expr><name><name>d</name>-&gt;<name>type</name></name>==<name>type</name></expr>)</condition><then> <expr_stmt><expr>(<call>(<name>int</name>*)<argument_list>(<argument><expr><name>d</name></expr></argument>)</argument_list></call>)<index>[<expr><name>offset</name></expr>]</index>=<name>value</name></expr>;</expr_stmt></then>
+    <else>else <if>if<condition>(<expr><name><name>d</name>-&gt;<name>type</name></name>==<name>drawfile_TYPE_GROUP</name></expr>)</condition><then>
+           <expr_stmt><expr><call><name>SetBlock</name><argument_list>(<argument><expr>(<name>drawfile_object</name>*)&amp;<name><name>d</name>-&gt;<name>data</name>.<name>group</name>.<name>objects</name></name></expr></argument>,
+                    <argument><expr><name><name>d</name>-&gt;<name>size</name></name></expr></argument>,<argument><expr><name>type</name></expr></argument>,<argument><expr><name>offset</name></expr></argument>,<argument><expr><name>value</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if></else></if></for>
+  <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"SetBlock Done\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>SetWord</name><parameter_list>(<param><decl><type><name>PyDrawFObject</name> *</type><name>self</name></decl></param>,<param><decl><type><name>PyObject</name> *</type><name>arg</name></decl></param>,<param><decl><type><name>int</name></type> <name>type</name></decl></param>,<param><decl><type><name>int</name></type> <name>offset</name></decl></param>)</parameter_list>
+<block>{ <decl_stmt><decl><type><name>int</name></type> <name>n</name><init>=<expr><call><name>PyTuple_Size</name><argument_list>(<argument><expr><name>arg</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>m</name></decl>,<decl><type ref="prev"/><name>value</name></decl>,<decl><type ref="prev"/><name>q</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>PyObject</name> *</type><name>par</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>drawfile_object</name> *</type><name>e</name></decl>,*<decl><type ref="prev"/><name>d</name><init>=<expr><name><name>self</name>-&gt;<name>drawf</name>-&gt;<name>objects</name></name></expr></init></decl>;</decl_stmt>
+  <if>if<condition>(<expr><name>n</name>==0</expr>)</condition><then> <return>return  <expr><call><name>drawf_error</name><argument_list>(<argument><expr>"Value Required"</expr></argument>)</argument_list></call></expr>;</return></then></if>
+  <expr_stmt><expr><name>par</name>=<call><name>PyTuple_GetItem</name><argument_list>(<argument><expr><name>arg</name></expr></argument>,<argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if<condition>(<expr>!<call><name>PyInt_Check</name><argument_list>(<argument><expr><name>par</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+  <block>{ <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_TypeError</name></expr></argument>,<argument><expr>"Int Required"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr>0</expr>;</return>
+  }</block></then></if>
+  <expr_stmt><expr><name>value</name>=(<name>int</name>)<call><name>PyInt_AsLong</name><argument_list>(<argument><expr><name>par</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if<condition>(<expr><name>n</name>==1</expr>)</condition><then> <expr_stmt><expr><call><name>SetBlock</name><argument_list>(<argument><expr><name>d</name></expr></argument>,<argument><expr><name><name>self</name>-&gt;<name>size</name></name>-<name>HDRSIZE</name></expr></argument>,<argument><expr><name>type</name></expr></argument>,<argument><expr><name>offset</name></expr></argument>,<argument><expr><name>value</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+  <else>else
+  <block>{ <for>for(<init><expr><name>m</name>=1</expr>;</init><condition><expr><name>m</name>&lt;<name>n</name></expr>;</condition><incr><expr><name>m</name>++</expr></incr>)
+    <block>{ <expr_stmt><expr><name>par</name>=<call><name>PyTuple_GetItem</name><argument_list>(<argument><expr><name>arg</name></expr></argument>,<argument><expr><name>m</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if<condition>(<expr>!<call><name>PyInt_Check</name><argument_list>(<argument><expr><name>par</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+      <block>{ <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_TypeError</name></expr></argument>,<argument><expr>"Int Required"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr>0</expr>;</return>
+      }</block></then></if>
+      <expr_stmt><expr><name>q</name>=(<name>int</name>)<call><name>PyInt_AsLong</name><argument_list>(<argument><expr><name>par</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if<condition>(<expr><name>q</name>&lt;0||<name>q</name>&gt;=<name><name>self</name>-&gt;<name>nobjs</name></name></expr>)</condition><then>
+      <block>{ <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_ValueError</name></expr></argument>,<argument><expr>"Object out of range"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr>0</expr>;</return>
+      }</block></then></if>
+      <expr_stmt><expr><name>e</name>=<name>d</name></expr>;</expr_stmt>
+      <for>for(<init>;</init><condition><expr><name>q</name>&gt;0</expr>;</condition><incr><expr><name>q</name>--</expr></incr>) <expr_stmt><expr><name>e</name>=<call><name>NEXT</name><argument_list>(<argument><expr><name>e</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></for>
+      <if>if<condition>(<expr><name><name>e</name>-&gt;<name>type</name></name>==<name>type</name></expr>)</condition><then>
+      <block>{ <expr_stmt><expr>(<call>(<name>int</name>*)<argument_list>(<argument><expr><name>e</name></expr></argument>)</argument_list></call>)<index>[<expr><name>offset</name></expr>]</index>=<name>value</name></expr>;</expr_stmt>
+      }</block></then>
+      <else>else <if>if<condition>(<expr><name><name>e</name>-&gt;<name>type</name></name>==<name>drawfile_TYPE_GROUP</name></expr>)</condition><then>
+             <expr_stmt><expr><call><name>SetBlock</name><argument_list>(<argument><expr>(<name>drawfile_object</name>*)&amp;<name><name>e</name>-&gt;<name>data</name>.<name>group</name>.<name>objects</name></name></expr></argument>,
+                      <argument><expr><name><name>e</name>-&gt;<name>size</name></name>-<name>GRPHDRSIZE</name></expr></argument>,<argument><expr><name>type</name></expr></argument>,<argument><expr><name>offset</name></expr></argument>,<argument><expr><name>value</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if></else></if>
+    }</block></for>
+  }</block></else></if>
+  <expr_stmt><expr><call><name>Py_INCREF</name><argument_list>(<argument><expr><name>Py_None</name></expr></argument>)</argument_list></call></expr>;</expr_stmt><return>return <expr><name>Py_None</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>DrawF_PathFill</name><parameter_list>(<param><decl><type><name>PyDrawFObject</name> *</type><name>self</name></decl></param>,<param><decl><type><name>PyObject</name> *</type><name>arg</name></decl></param>)</parameter_list>
+<block>{ <return>return <expr><call><name>SetWord</name><argument_list>(<argument><expr><name>self</name></expr></argument>,<argument><expr><name>arg</name></expr></argument>,<argument><expr><name>drawfile_TYPE_PATH</name></expr></argument>,<argument><expr>6</expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>DrawF_PathColour</name><parameter_list>(<param><decl><type><name>PyDrawFObject</name> *</type><name>self</name></decl></param>,<param><decl><type><name>PyObject</name> *</type><name>arg</name></decl></param>)</parameter_list>
+<block>{ <return>return <expr><call><name>SetWord</name><argument_list>(<argument><expr><name>self</name></expr></argument>,<argument><expr><name>arg</name></expr></argument>,<argument><expr><name>drawfile_TYPE_PATH</name></expr></argument>,<argument><expr>7</expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>DrawF_TextColour</name><parameter_list>(<param><decl><type><name>PyDrawFObject</name> *</type><name>self</name></decl></param>,<param><decl><type><name>PyObject</name> *</type><name>arg</name></decl></param>)</parameter_list>
+<block>{ <return>return <expr><call><name>SetWord</name><argument_list>(<argument><expr><name>self</name></expr></argument>,<argument><expr><name>arg</name></expr></argument>,<argument><expr><name>drawfile_TYPE_TEXT</name></expr></argument>,<argument><expr>6</expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>DrawF_TextBackground</name><parameter_list>(<param><decl><type><name>PyDrawFObject</name> *</type><name>self</name></decl></param>,<param><decl><type><name>PyObject</name> *</type><name>arg</name></decl></param>)</parameter_list>
+<block>{ <return>return <expr><call><name>SetWord</name><argument_list>(<argument><expr><name>self</name></expr></argument>,<argument><expr><name>arg</name></expr></argument>,<argument><expr><name>drawfile_TYPE_TEXT</name></expr></argument>,<argument><expr>7</expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<decl_stmt><decl><type><specifier>static</specifier> struct <name>PyMethodDef</name></type> <name><name>PyDrawF_Methods</name><index>[]</index></name><init>=
+<expr><block>{
+  <expr><block>{ <expr>"render"</expr>,<expr>(<name>PyCFunction</name>)<name>DrawF_Render</name></expr>,<expr>1</expr>}</block></expr>,
+  <expr><block>{ <expr>"save"</expr>,<expr>(<name>PyCFunction</name>)<name>DrawF_Save</name></expr>,<expr>1</expr>}</block></expr>,
+  <expr><block>{ <expr>"path"</expr>,<expr>(<name>PyCFunction</name>)<name>DrawF_Path</name></expr>,<expr>1</expr>}</block></expr>,
+  <expr><block>{ <expr>"text"</expr>,<expr>(<name>PyCFunction</name>)<name>DrawF_Text</name></expr>,<expr>1</expr>}</block></expr>,
+  <expr><block>{ <expr>"ttext"</expr>,<expr>(<name>PyCFunction</name>)<name>DrawF_TText</name></expr>,<expr>1</expr>}</block></expr>,
+  <expr><block>{ <expr>"fonttable"</expr>,<expr>(<name>PyCFunction</name>)<name>DrawF_FontTable</name></expr>,<expr>1</expr>}</block></expr>,
+  <expr><block>{ <expr>"group"</expr>,<expr>(<name>PyCFunction</name>)<name>DrawF_Group</name></expr>,<expr>1</expr>}</block></expr>,
+  <expr><block>{ <expr>"find"</expr>,<expr>(<name>PyCFunction</name>)<name>DrawF_Find</name></expr>,<expr>1</expr>}</block></expr>,
+  <expr><block>{ <expr>"box"</expr>,<expr>(<name>PyCFunction</name>)<name>DrawF_Box</name></expr>,<expr>1</expr>}</block></expr>,
+  <expr><block>{ <expr>"pathfill"</expr>,<expr>(<name>PyCFunction</name>)<name>DrawF_PathFill</name></expr>,<expr>1</expr>}</block></expr>,
+  <expr><block>{ <expr>"pathcolour"</expr>,<expr>(<name>PyCFunction</name>)<name>DrawF_PathColour</name></expr>,<expr>1</expr>}</block></expr>,
+  <expr><block>{ <expr>"textcolour"</expr>,<expr>(<name>PyCFunction</name>)<name>DrawF_TextColour</name></expr>,<expr>1</expr>}</block></expr>,
+  <expr><block>{ <expr>"textbackground"</expr>,<expr>(<name>PyCFunction</name>)<name>DrawF_TextBackground</name></expr>,<expr>1</expr>}</block></expr>,
+  <expr><block>{ <expr><name>NULL</name></expr>,<expr><name>NULL</name></expr>}</block></expr>		<comment type="block">/* sentinel */</comment>
+}</block></expr></init></decl>;</decl_stmt>
+
+<function><type><specifier>static</specifier> <name>int</name></type> <name>drawf_len</name><parameter_list>(<param><decl><type><name>PyDrawFObject</name> *</type><name>b</name></decl></param>)</parameter_list>
+<block>{ <return>return <expr><name><name>b</name>-&gt;<name>nobjs</name></name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>drawf_concat</name><parameter_list>(<param><decl><type><name>PyDrawFObject</name> *</type><name>b</name></decl></param>,<param><decl><type><name>PyDrawFObject</name> *</type><name>c</name></decl></param>)</parameter_list>
+<block>{ <decl_stmt><decl><type><name>int</name></type> <name>size</name><init>=<expr><name><name>b</name>-&gt;<name>size</name></name>+<name><name>c</name>-&gt;<name>size</name></name>-2*<name>HDRSIZE</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>PyDrawFObject</name> *</type><name>p</name><init>=<expr><call><name>new</name><argument_list>(<argument><expr><name>size</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>drawfile_diagram</name> *</type><name>dd</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>drawfile_object</name> *</type><name>d</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>n</name></decl>;</decl_stmt>
+  <if>if<condition>(<expr>!<name>p</name></expr>)</condition><then> <return>return <expr><name>NULL</name></expr>;</return></then></if>
+  <expr_stmt><expr><name>dd</name>=<name><name>p</name>-&gt;<name>drawf</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name>d</name>=<call>(<name>drawfile_object</name>*)<argument_list>(<argument><expr>(<name>char</name>*)<name>dd</name>+<name><name>b</name>-&gt;<name>size</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr>(<name>char</name>*)<name>dd</name></expr></argument>,<argument><expr><call>(<name>char</name>*)<argument_list>(<argument><expr><name><name>b</name>-&gt;<name>drawf</name></name></expr></argument>)</argument_list></call></expr></argument>,<argument><expr><name><name>b</name>-&gt;<name>size</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>d</name></expr></argument>,<argument><expr><call>(<name>char</name>*)<argument_list>(<argument><expr><name><name>c</name>-&gt;<name>drawf</name></name></expr></argument>)</argument_list></call>+<name>HDRSIZE</name></expr></argument>,<argument><expr><name><name>c</name>-&gt;<name>size</name></name>-<name>HDRSIZE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>p</name>-&gt;<name>nobjs</name></name>=<name><name>b</name>-&gt;<name>nobjs</name></name>+<name><name>c</name>-&gt;<name>nobjs</name></name></expr>;</expr_stmt>
+  <for>for(<init><expr><name>n</name>=<name><name>c</name>-&gt;<name>nobjs</name></name></expr>;</init><condition><expr><name>n</name>&gt;0</expr>;</condition><incr><expr><name>n</name>--</expr></incr>)
+  <block>{ <expr_stmt><expr><call><name>extend</name><argument_list>(<argument><expr>&amp;(<name><name>dd</name>-&gt;<name>bbox</name></name>)</expr></argument>,<argument><expr>&amp;(<name><name>d</name>-&gt;<name>data</name>.<name>path</name>.<name>bbox</name></name>)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name>d</name>=<call><name>NEXT</name><argument_list>(<argument><expr><name>d</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  }</block></for>
+  <return>return <expr>(<name>PyObject</name>*)<name>p</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>drawf_repeat</name><parameter_list>(<param><decl><type><name>PyDrawFObject</name> *</type><name>b</name></decl></param>,<param><decl><type><name>Py_ssize_t</name></type> <name>i</name></decl></param>)</parameter_list>
+<block>{ <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_IndexError</name></expr></argument>,<argument><expr>"drawf repetition not implemented"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>drawf_item</name><parameter_list>(<param><decl><type><name>PyDrawFObject</name> *</type><name>b</name></decl></param>,<param><decl><type><name>Py_ssize_t</name></type> <name>i</name></decl></param>)</parameter_list>
+<block>{ <decl_stmt><decl><type><name>PyDrawFObject</name> *</type><name>c</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>size</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>drawfile_diagram</name> *</type><name>dd</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>drawfile_object</name> *</type><name>d</name></decl>;</decl_stmt>
+  <if>if<condition>(<expr><name>i</name>&lt;0||<name>i</name>&gt;=<name><name>b</name>-&gt;<name>nobjs</name></name></expr>)</condition><then>
+  <block>{ <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_IndexError</name></expr></argument>,<argument><expr>"drawf index out of range"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>NULL</name></expr>;</return>
+  }</block></then></if>
+  <expr_stmt><expr><name>d</name>=<call><name>findobj</name><argument_list>(<argument><expr><name>b</name></expr></argument>,<argument><expr><name>i</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>size</name>=(<name>char</name>*)<call><name>findobj</name><argument_list>(<argument><expr><name>b</name></expr></argument>,<argument><expr><name>i</name>+1</expr></argument>)</argument_list></call>-(<name>char</name>*)<name>d</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name>c</name>=<call><name>new</name><argument_list>(<argument><expr><name>size</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if<condition>(<expr>!<name>c</name></expr>)</condition><then> <return>return <expr><name>NULL</name></expr>;</return></then></if>
+  <expr_stmt><expr><name>dd</name>=<name><name>c</name>-&gt;<name>drawf</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr>*((<name>dheader</name>*)<name>dd</name>)=<name>header</name></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name><name>dd</name>-&gt;<name>objects</name></name></expr></argument>,<argument><expr><name>d</name></expr></argument>,<argument><expr><name>size</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>c</name>-&gt;<name>nobjs</name></name>=1</expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>extend</name><argument_list>(<argument><expr>&amp;(<name><name>dd</name>-&gt;<name>bbox</name></name>)</expr></argument>,<argument><expr>&amp;(<name><name>d</name>-&gt;<name>data</name>.<name>path</name>.<name>bbox</name></name>)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr>(<name>PyObject</name>*)<name>c</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>drawf_slice</name><parameter_list>(<param><decl><type><name>PyDrawFObject</name> *</type><name>b</name></decl></param>,<param><decl><type><name>Py_ssize_t</name></type> <name>i</name></decl></param>,<param><decl><type><name>Py_ssize_t</name></type> <name>j</name></decl></param>)</parameter_list>
+<block>{ <decl_stmt><decl><type><name>PyDrawFObject</name> *</type><name>c</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>size</name></decl>,<decl><type ref="prev"/><name>n</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>drawfile_diagram</name> *</type><name>dd</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>drawfile_object</name> *</type><name>d</name></decl>;</decl_stmt>
+  <if>if<condition>(<expr><name>i</name>&lt;0||<name>j</name>&gt;<name><name>b</name>-&gt;<name>nobjs</name></name></expr>)</condition><then>
+  <block>{ <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_IndexError</name></expr></argument>,<argument><expr>"drawf index out of range"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>NULL</name></expr>;</return>
+  }</block></then></if>
+  <expr_stmt><expr><name>d</name>=<call><name>findobj</name><argument_list>(<argument><expr><name>b</name></expr></argument>,<argument><expr><name>i</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>size</name>=(<name>char</name>*)<call><name>findobj</name><argument_list>(<argument><expr><name>b</name></expr></argument>,<argument><expr><name>j</name></expr></argument>)</argument_list></call>-(<name>char</name>*)<name>d</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name>c</name>=<call><name>new</name><argument_list>(<argument><expr><name>size</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if<condition>(<expr>!<name>c</name></expr>)</condition><then> <return>return <expr><name>NULL</name></expr>;</return></then></if>
+  <expr_stmt><expr><name>dd</name>=<name><name>c</name>-&gt;<name>drawf</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr>*((<name>dheader</name>*)<name>dd</name>)=<name>header</name></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name><name>dd</name>-&gt;<name>objects</name></name></expr></argument>,<argument><expr><name>d</name></expr></argument>,<argument><expr><name>size</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>c</name>-&gt;<name>nobjs</name></name>=<name>j</name>-<name>i</name></expr>;</expr_stmt>
+  <for>for(<init><expr><name>n</name>=<name>j</name>-<name>i</name></expr>;</init><condition><expr><name>n</name>&gt;0</expr>;</condition><incr><expr><name>n</name>--</expr></incr>)
+  <block>{ <expr_stmt><expr><call><name>extend</name><argument_list>(<argument><expr>&amp;(<name><name>dd</name>-&gt;<name>bbox</name></name>)</expr></argument>,<argument><expr>&amp;(<name><name>d</name>-&gt;<name>data</name>.<name>path</name>.<name>bbox</name></name>)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name>d</name>=<call><name>NEXT</name><argument_list>(<argument><expr><name>d</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  }</block></for>
+  <return>return <expr>(<name>PyObject</name>*)<name>c</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type> <name>drawf_ass_item</name><parameter_list>(<param><decl><type><name>PyDrawFObject</name> *</type><name>b</name></decl></param>,<param><decl><type><name>Py_ssize_t</name></type> <name>i</name></decl></param>,<param><decl><type><name>PyObject</name> *</type><name>v</name></decl></param>)</parameter_list>
+<block>{ <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_IndexError</name></expr></argument>,<argument><expr>"drawf ass not implemented"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+<comment type="block">/*{ if(i&lt;0||4*i&gt;=b-&gt;length)
+  { PyErr_SetString(PyExc_IndexError,"drawf index out of range");
+    return -1;
+  }
+  if(!PyInt_Check(v))
+  { PyErr_SetString(PyExc_TypeError,"drawf item must be integer");
+    return -1;
+  }
+  ((long*)(b-&gt;drawf))[i]=PyInt_AsLong(v);
+  return 0;
+}
+*/</comment>
+
+<function><type><specifier>static</specifier> <name>int</name></type> <name>drawf_ass_slice</name><parameter_list>(<param><decl><type><name>PyDrawFObject</name> *</type><name>b</name></decl></param>,<param><decl><type><name>Py_ssize_t</name></type> <name>i</name></decl></param>,<param><decl><type><name>Py_ssize_t</name></type> <name>j</name></decl></param>,<param><decl><type><name>PyObject</name> *</type><name>v</name></decl></param>)</parameter_list>
+<block>{ <expr_stmt><expr><call><name>PyErr_SetString</name><argument_list>(<argument><expr><name>PyExc_IndexError</name></expr></argument>,<argument><expr>"drawf ass_slice not implemented"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PySequenceMethods</name></type> <name>drawf_as_sequence</name><init>=
+<expr><block>{ <expr>(<name>inquiry</name>)<name>drawf_len</name></expr>,
+  <expr>(<name>binaryfunc</name>)<name>drawf_concat</name></expr>,
+  <expr>(<name>ssizeargfunc</name>)<name>drawf_repeat</name></expr>,
+  <expr>(<name>ssizeargfunc</name>)<name>drawf_item</name></expr>,
+  <expr>(<name>ssizessizeargfunc</name>)<name>drawf_slice</name></expr>,
+  <expr>(<name>ssizeobjargproc</name>)<name>drawf_ass_item</name></expr>,
+  <expr>(<name>ssizessizeobjargproc</name>)<name>drawf_ass_slice</name></expr>,
+}</block></expr></init></decl>;</decl_stmt>
+
+<function><type><specifier>static</specifier> <name>PyObject</name> *</type><name>PyDrawF_GetAttr</name><parameter_list>(<param><decl><type><name>PyDrawFObject</name> *</type><name>s</name></decl></param>,<param><decl><type><name>char</name> *</type><name>name</name></decl></param>)</parameter_list>
+<block>{
+  <if>if <condition>(<expr>!<call><name>strcmp</name><argument_list>(<argument><expr><name>name</name></expr></argument>, <argument><expr>"size"</expr></argument>)</argument_list></call></expr>)</condition><then> <return>return <expr><call><name>PyInt_FromLong</name><argument_list>(<argument><expr>(<name>long</name>)<name><name>s</name>-&gt;<name>size</name></name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+  <if>if <condition>(<expr>!<call><name>strcmp</name><argument_list>(<argument><expr><name>name</name></expr></argument>, <argument><expr>"start"</expr></argument>)</argument_list></call></expr>)</condition><then> <return>return <expr><call><name>PyInt_FromLong</name><argument_list>(<argument><expr>(<name>long</name>)<name><name>s</name>-&gt;<name>drawf</name></name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+  <if>if <condition>(<expr>!<call><name>strcmp</name><argument_list>(<argument><expr><name>name</name></expr></argument>, <argument><expr>"__members__"</expr></argument>)</argument_list></call></expr>)</condition><then>
+  <block>{ <decl_stmt><decl><type><name>PyObject</name> *</type><name>list</name> <init>= <expr><call><name>PyList_New</name><argument_list>(<argument><expr>2</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <if>if <condition>(<expr><name>list</name></expr>)</condition><then>
+    <block>{ <expr_stmt><expr><call><name>PyList_SetItem</name><argument_list>(<argument><expr><name>list</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><call><name>PyString_FromString</name><argument_list>(<argument><expr>"size"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>PyList_SetItem</name><argument_list>(<argument><expr><name>list</name></expr></argument>, <argument><expr>1</expr></argument>, <argument><expr><call><name>PyString_FromString</name><argument_list>(<argument><expr>"start"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><call><name>PyErr_Occurred</name><argument_list>()</argument_list></call></expr>)</condition><then> <block>{ <expr_stmt><expr><call><name>Py_DECREF</name><argument_list>(<argument><expr><name>list</name></expr></argument>)</argument_list></call></expr>;</expr_stmt><expr_stmt><expr><name>list</name> = <name>NULL</name></expr>;</expr_stmt>}</block></then></if>
+    }</block></then></if>
+    <return>return <expr><name>list</name></expr>;</return>
+  }</block></then></if>
+  <return>return <expr><call><name>Py_FindMethod</name><argument_list>(<argument><expr><name>PyDrawF_Methods</name></expr></argument>, <argument><expr>(<name>PyObject</name>*) <name>s</name></expr></argument>,<argument><expr><name>name</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>void</name></type> <name>PyDrawF_Dealloc</name><parameter_list>(<param><decl><type><name>PyDrawFObject</name> *</type><name>b</name></decl></param>)</parameter_list>
+<block>{
+    <if>if <condition>(<expr><name><name>b</name>-&gt;<name>drawf</name></name></expr>)</condition><then>
+        <empty_stmt>;</empty_stmt></then>
+    <else>else
+        <expr_stmt><expr><call><name>PyMem_DEL</name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>drawf</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+  <expr_stmt><expr><call><name>PyMem_DEL</name><argument_list>(<argument><expr><name>b</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyTypeObject</name></type> <name>PyDrawFType</name><init>=
+<expr><block>{ <expr><call><name>PyObject_HEAD_INIT</name><argument_list>(<argument><expr>&amp;<name>PyType_Type</name></expr></argument>)</argument_list></call>
+  0</expr>,				<comment type="block">/*ob_size*/</comment>
+  <expr>"drawf"</expr>,			<comment type="block">/*tp_name*/</comment>
+  <expr><sizeof>sizeof<argument_list>(<argument><expr><name>PyDrawFObject</name></expr></argument>)</argument_list></sizeof></expr>,	<comment type="block">/*tp_size*/</comment>
+  <expr>0</expr>,				<comment type="block">/*tp_itemsize*/</comment>
+	<comment type="block">/* methods */</comment>
+  <expr>(<name>destructor</name>)<name>PyDrawF_Dealloc</name></expr>,	<comment type="block">/*tp_dealloc*/</comment>
+  <expr>0</expr>,				<comment type="block">/*tp_print*/</comment>
+  <expr>(<name>getattrfunc</name>)<name>PyDrawF_GetAttr</name></expr>,	<comment type="block">/*tp_getattr*/</comment>
+  <expr>0</expr>,				<comment type="block">/*tp_setattr*/</comment>
+  <expr>0</expr>,				<comment type="block">/*tp_compare*/</comment>
+  <expr>0</expr>,				<comment type="block">/*tp_repr*/</comment>
+  <expr>0</expr>,				<comment type="block">/*tp_as_number*/</comment>
+  <expr>&amp;<name>drawf_as_sequence</name></expr>,		<comment type="block">/*tp_as_sequence*/</comment>
+  <expr>0</expr>,				<comment type="block">/*tp_as_mapping*/</comment>
+  <expr>0</expr>,                            <comment type="block">/*tp_hash*/</comment>
+}</block></expr></init></decl>;</decl_stmt>
+
+
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>PyMethodDef</name></type> <name><name>DrawFMethods</name><index>[]</index></name><init>=
+<expr><block>{
+  <expr><block>{ <expr>"load"</expr>,<expr><name>DrawF_Load</name></expr>,<expr>1</expr>}</block></expr>,
+  <expr><block>{ <expr>"new"</expr>,<expr><name>DrawF_New</name></expr>,<expr>1</expr>}</block></expr>,
+  <expr><block>{ <expr><name>NULL</name></expr>,<expr><name>NULL</name></expr>}</block></expr>		 <comment type="block">/* Sentinel */</comment>
+}</block></expr></init></decl>;</decl_stmt>
+
+<function><type><name>void</name></type> <name>initdrawf</name><parameter_list>()</parameter_list>
+<block>{ <decl_stmt><decl><type><name>PyObject</name> *</type><name>m</name></decl>, *<decl><type ref="prev"/><name>d</name></decl>;</decl_stmt>
+  <expr_stmt><expr><name>m</name> = <call><name>Py_InitModule</name><argument_list>(<argument><expr>"drawf"</expr></argument>, <argument><expr><name>DrawFMethods</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>d</name> = <call><name>PyModule_GetDict</name><argument_list>(<argument><expr><name>m</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>DrawFError</name>=<call><name>PyString_FromString</name><argument_list>(<argument><expr>"drawf.error"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>PyDict_SetItemString</name><argument_list>(<argument><expr><name>d</name></expr></argument>,<argument><expr>"error"</expr></argument>,<argument><expr><name>DrawFError</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+</unit>

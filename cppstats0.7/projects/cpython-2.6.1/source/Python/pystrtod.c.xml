@@ -1,0 +1,492 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/cpython-2.6.1/source/Python/pystrtod.c"><comment type="block">/* -*- Mode: C; c-file-style: "python" -*- */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;Python.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;locale.h&gt;</cpp:file></cpp:include>
+
+<comment type="block">/* ascii character tests (as opposed to locale tests) */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>ISSPACE</name><parameter_list>(<param><type><name>c</name></type></param>)</parameter_list></cpp:macro>  <cpp:value>((c) == ' ' || (c) == '\f' || (c) == '\n' || \
+                     (c) == '\r' || (c) == '\t' || (c) == '\v')</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>ISDIGIT</name><parameter_list>(<param><type><name>c</name></type></param>)</parameter_list></cpp:macro>  <cpp:value>((c) &gt;= '0' &amp;&amp; (c) &lt;= '9')</cpp:value></cpp:define>
+
+
+<comment type="block">/**
+ * PyOS_ascii_strtod:
+ * @nptr:    the string to convert to a numeric value.
+ * @endptr:  if non-%NULL, it returns the character after
+ *           the last character used in the conversion.
+ * 
+ * Converts a string to a #gdouble value.
+ * This function behaves like the standard strtod() function
+ * does in the C locale. It does this without actually
+ * changing the current locale, since that would not be
+ * thread-safe.
+ *
+ * This function is typically used when reading configuration
+ * files or other non-user input that should be locale independent.
+ * To handle input from the user you should normally use the
+ * locale-sensitive system strtod() function.
+ *
+ * If the correct value would cause overflow, plus or minus %HUGE_VAL
+ * is returned (according to the sign of the value), and %ERANGE is
+ * stored in %errno. If the correct value would cause underflow,
+ * zero is returned and %ERANGE is stored in %errno.
+ * If memory allocation fails, %ENOMEM is stored in %errno.
+ * 
+ * This function resets %errno before calling strtod() so that
+ * you can reliably detect overflow and underflow.
+ *
+ * Return value: the #gdouble value.
+ **/</comment>
+<function><type><name>double</name></type>
+<name>PyOS_ascii_strtod</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>nptr</name></decl></param>, <param><decl><type><name>char</name> **</type><name>endptr</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>char</name> *</type><name>fail_pos</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>double</name></type> <name>val</name> <init>= <expr>-1.0</expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type>struct <name>lconv</name> *</type><name>locale_data</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>decimal_point</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>size_t</name></type> <name>decimal_point_len</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>p</name></decl>, *<decl><type ref="prev"/><name>decimal_point_pos</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>end</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt> <comment type="block">/* Silence gcc */</comment>
+	<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>digits_pos</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>negate</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+
+	<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>nptr</name> != <name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+	<expr_stmt><expr><name>fail_pos</name> = <name>NULL</name></expr>;</expr_stmt>
+
+	<expr_stmt><expr><name>locale_data</name> = <call><name>localeconv</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>decimal_point</name> = <name><name>locale_data</name>-&gt;<name>decimal_point</name></name></expr>;</expr_stmt>
+	<expr_stmt><expr><name>decimal_point_len</name> = <call><name>strlen</name><argument_list>(<argument><expr><name>decimal_point</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+	<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>decimal_point_len</name> != 0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+	<expr_stmt><expr><name>decimal_point_pos</name> = <name>NULL</name></expr>;</expr_stmt>
+
+	<comment type="block">/* We process any leading whitespace and the optional sign manually,
+	   then pass the remainder to the system strtod.  This ensures that
+	   the result of an underflow has the correct sign. (bug #1725)  */</comment>
+
+	<expr_stmt><expr><name>p</name> = <name>nptr</name></expr>;</expr_stmt>
+	<comment type="block">/* Skip leading space */</comment>
+	<while>while <condition>(<expr><call><name>ISSPACE</name><argument_list>(<argument><expr>*<name>p</name></expr></argument>)</argument_list></call></expr>)</condition>
+		<expr_stmt><expr><name>p</name>++</expr>;</expr_stmt></while>
+
+	<comment type="block">/* Process leading sign, if present */</comment>
+	<if>if <condition>(<expr>*<name>p</name> == '-'</expr>)</condition><then> <block>{
+		<expr_stmt><expr><name>negate</name> = 1</expr>;</expr_stmt>
+		<expr_stmt><expr><name>p</name>++</expr>;</expr_stmt>
+	}</block></then> <else>else <if>if <condition>(<expr>*<name>p</name> == '+'</expr>)</condition><then> <block>{
+		<expr_stmt><expr><name>p</name>++</expr>;</expr_stmt>
+	}</block></then></if></else></if>
+
+	<comment type="block">/* What's left should begin with a digit, a decimal point, or one of
+	   the letters i, I, n, N. It should not begin with 0x or 0X */</comment>
+	<if>if <condition>(<expr>(!<call><name>ISDIGIT</name><argument_list>(<argument><expr>*<name>p</name></expr></argument>)</argument_list></call> &amp;&amp;
+	     *<name>p</name> != '.' &amp;&amp; *<name>p</name> != 'i' &amp;&amp; *<name>p</name> != 'I' &amp;&amp; *<name>p</name> != 'n' &amp;&amp; *<name>p</name> != 'N')
+	    ||
+	    (*<name>p</name> == '0' &amp;&amp; (<name><name>p</name><index>[<expr>1</expr>]</index></name> == 'x' || <name><name>p</name><index>[<expr>1</expr>]</index></name> == 'X'))</expr>)</condition><then>
+	<block>{
+		<if>if <condition>(<expr><name>endptr</name></expr>)</condition><then>
+			<expr_stmt><expr>*<name>endptr</name> = (<name>char</name>*)<name>nptr</name></expr>;</expr_stmt></then></if>
+		<expr_stmt><expr><name>errno</name> = <name>EINVAL</name></expr>;</expr_stmt>
+		<return>return <expr><name>val</name></expr>;</return>
+	}</block></then></if>
+	<expr_stmt><expr><name>digits_pos</name> = <name>p</name></expr>;</expr_stmt>
+
+	<if>if <condition>(<expr><name><name>decimal_point</name><index>[<expr>0</expr>]</index></name> != '.' || 
+	    <name><name>decimal_point</name><index>[<expr>1</expr>]</index></name> != 0</expr>)</condition><then>
+	<block>{
+		<while>while <condition>(<expr><call><name>ISDIGIT</name><argument_list>(<argument><expr>*<name>p</name></expr></argument>)</argument_list></call></expr>)</condition>
+			<expr_stmt><expr><name>p</name>++</expr>;</expr_stmt></while>
+
+		<if>if <condition>(<expr>*<name>p</name> == '.'</expr>)</condition><then>
+		<block>{
+			<expr_stmt><expr><name>decimal_point_pos</name> = <name>p</name>++</expr>;</expr_stmt>
+
+			<while>while <condition>(<expr><call><name>ISDIGIT</name><argument_list>(<argument><expr>*<name>p</name></expr></argument>)</argument_list></call></expr>)</condition>
+				<expr_stmt><expr><name>p</name>++</expr>;</expr_stmt></while>
+
+			<if>if <condition>(<expr>*<name>p</name> == 'e' || *<name>p</name> == 'E'</expr>)</condition><then>
+				<expr_stmt><expr><name>p</name>++</expr>;</expr_stmt></then></if>
+			<if>if <condition>(<expr>*<name>p</name> == '+' || *<name>p</name> == '-'</expr>)</condition><then>
+				<expr_stmt><expr><name>p</name>++</expr>;</expr_stmt></then></if>
+			<while>while <condition>(<expr><call><name>ISDIGIT</name><argument_list>(<argument><expr>*<name>p</name></expr></argument>)</argument_list></call></expr>)</condition>
+				<expr_stmt><expr><name>p</name>++</expr>;</expr_stmt></while>
+			<expr_stmt><expr><name>end</name> = <name>p</name></expr>;</expr_stmt>
+		}</block></then>
+		<else>else <if>if <condition>(<expr><call><name>strncmp</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>decimal_point</name></expr></argument>, <argument><expr><name>decimal_point_len</name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+		<block>{
+			<comment type="block">/* Python bug #1417699 */</comment>
+			<if>if <condition>(<expr><name>endptr</name></expr>)</condition><then>
+				<expr_stmt><expr>*<name>endptr</name> = (<name>char</name>*)<name>nptr</name></expr>;</expr_stmt></then></if>
+			<expr_stmt><expr><name>errno</name> = <name>EINVAL</name></expr>;</expr_stmt>
+			<return>return <expr><name>val</name></expr>;</return>
+		}</block></then></if></else></if>
+		<comment type="block">/* For the other cases, we need not convert the decimal
+		   point */</comment>
+	}</block></then></if>
+
+	<comment type="block">/* Set errno to zero, so that we can distinguish zero results
+	   and underflows */</comment>
+	<expr_stmt><expr><name>errno</name> = 0</expr>;</expr_stmt>
+
+	<if>if <condition>(<expr><name>decimal_point_pos</name></expr>)</condition><then>
+	<block>{
+		<decl_stmt><decl><type><name>char</name> *</type><name>copy</name></decl>, *<decl><type ref="prev"/><name>c</name></decl>;</decl_stmt>
+
+		<comment type="block">/* We need to convert the '.' to the locale specific decimal
+		   point */</comment>
+		<expr_stmt><expr><name>copy</name> = (<name>char</name> *)<call><name>PyMem_MALLOC</name><argument_list>(<argument><expr><name>end</name> - <name>digits_pos</name> +
+					    1 + <name>decimal_point_len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<if>if <condition>(<expr><name>copy</name> == <name>NULL</name></expr>)</condition><then> <block>{
+			<if>if <condition>(<expr><name>endptr</name></expr>)</condition><then>
+				<expr_stmt><expr>*<name>endptr</name> = (<name>char</name> *)<name>nptr</name></expr>;</expr_stmt></then></if>
+			<expr_stmt><expr><name>errno</name> = <name>ENOMEM</name></expr>;</expr_stmt>
+			<return>return <expr><name>val</name></expr>;</return>
+		}</block></then></if>
+
+		<expr_stmt><expr><name>c</name> = <name>copy</name></expr>;</expr_stmt>
+		<expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>c</name></expr></argument>, <argument><expr><name>digits_pos</name></expr></argument>, <argument><expr><name>decimal_point_pos</name> - <name>digits_pos</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><name>c</name> += <name>decimal_point_pos</name> - <name>digits_pos</name></expr>;</expr_stmt>
+		<expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>c</name></expr></argument>, <argument><expr><name>decimal_point</name></expr></argument>, <argument><expr><name>decimal_point_len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><name>c</name> += <name>decimal_point_len</name></expr>;</expr_stmt>
+		<expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>c</name></expr></argument>, <argument><expr><name>decimal_point_pos</name> + 1</expr></argument>,
+		       <argument><expr><name>end</name> - (<name>decimal_point_pos</name> + 1)</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><name>c</name> += <name>end</name> - (<name>decimal_point_pos</name> + 1)</expr>;</expr_stmt>
+		<expr_stmt><expr>*<name>c</name> = 0</expr>;</expr_stmt>
+
+		<expr_stmt><expr><name>val</name> = <call><name>strtod</name><argument_list>(<argument><expr><name>copy</name></expr></argument>, <argument><expr>&amp;<name>fail_pos</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+		<if>if <condition>(<expr><name>fail_pos</name></expr>)</condition><then>
+		<block>{
+			<if>if <condition>(<expr><name>fail_pos</name> &gt; <name>decimal_point_pos</name></expr>)</condition><then>
+				<expr_stmt><expr><name>fail_pos</name> = (<name>char</name> *)<name>digits_pos</name> +
+					(<name>fail_pos</name> - <name>copy</name>) -
+					(<name>decimal_point_len</name> - 1)</expr>;</expr_stmt></then>
+			<else>else
+				<expr_stmt><expr><name>fail_pos</name> = (<name>char</name> *)<name>digits_pos</name> +
+					(<name>fail_pos</name> - <name>copy</name>)</expr>;</expr_stmt></else></if>
+		}</block></then></if>
+
+		<expr_stmt><expr><call><name>PyMem_FREE</name><argument_list>(<argument><expr><name>copy</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+	}</block></then>
+	<else>else <block>{
+		<expr_stmt><expr><name>val</name> = <call><name>strtod</name><argument_list>(<argument><expr><name>digits_pos</name></expr></argument>, <argument><expr>&amp;<name>fail_pos</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	}</block></else></if>
+
+	<if>if <condition>(<expr><name>fail_pos</name> == <name>digits_pos</name></expr>)</condition><then>
+		<expr_stmt><expr><name>fail_pos</name> = (<name>char</name> *)<name>nptr</name></expr>;</expr_stmt></then></if>
+
+	<if>if <condition>(<expr><name>negate</name> &amp;&amp; <name>fail_pos</name> != <name>nptr</name></expr>)</condition><then>
+		<expr_stmt><expr><name>val</name> = -<name>val</name></expr>;</expr_stmt></then></if>
+
+	<if>if <condition>(<expr><name>endptr</name></expr>)</condition><then>
+		<expr_stmt><expr>*<name>endptr</name> = <name>fail_pos</name></expr>;</expr_stmt></then></if>
+
+	<return>return <expr><name>val</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* Given a string that may have a decimal point in the current
+   locale, change it back to a dot.  Since the string cannot get
+   longer, no need for a maximum buffer size parameter. */</comment>
+<macro><name>Py_LOCAL_INLINE</name><argument_list>(<argument>void</argument>)</argument_list></macro>
+<macro><name>change_decimal_from_locale_to_dot</name><argument_list>(<argument>char* buffer</argument>)</argument_list></macro>
+<block>{
+	<decl_stmt><decl><type>struct <name>lconv</name> *</type><name>locale_data</name> <init>= <expr><call><name>localeconv</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>decimal_point</name> <init>= <expr><name><name>locale_data</name>-&gt;<name>decimal_point</name></name></expr></init></decl>;</decl_stmt>
+
+	<if>if <condition>(<expr><name><name>decimal_point</name><index>[<expr>0</expr>]</index></name> != '.' || <name><name>decimal_point</name><index>[<expr>1</expr>]</index></name> != 0</expr>)</condition><then> <block>{
+		<decl_stmt><decl><type><name>size_t</name></type> <name>decimal_point_len</name> <init>= <expr><call><name>strlen</name><argument_list>(<argument><expr><name>decimal_point</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+		<if>if <condition>(<expr>*<name>buffer</name> == '+' || *<name>buffer</name> == '-'</expr>)</condition><then>
+			<expr_stmt><expr><name>buffer</name>++</expr>;</expr_stmt></then></if>
+		<while>while <condition>(<expr><call><name>isdigit</name><argument_list>(<argument><expr><call><name>Py_CHARMASK</name><argument_list>(<argument><expr>*<name>buffer</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>)</condition>
+			<expr_stmt><expr><name>buffer</name>++</expr>;</expr_stmt></while>
+		<if>if <condition>(<expr><call><name>strncmp</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>, <argument><expr><name>decimal_point</name></expr></argument>, <argument><expr><name>decimal_point_len</name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then> <block>{
+			<expr_stmt><expr>*<name>buffer</name> = '.'</expr>;</expr_stmt>
+			<expr_stmt><expr><name>buffer</name>++</expr>;</expr_stmt>
+			<if>if <condition>(<expr><name>decimal_point_len</name> &gt; 1</expr>)</condition><then> <block>{
+				<comment type="block">/* buffer needs to get smaller */</comment>
+				<decl_stmt><decl><type><name>size_t</name></type> <name>rest_len</name> <init>= <expr><call><name>strlen</name><argument_list>(<argument><expr><name>buffer</name> +
+						     (<name>decimal_point_len</name> - 1)</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+				<expr_stmt><expr><call><name>memmove</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>,
+					<argument><expr><name>buffer</name> + (<name>decimal_point_len</name> - 1)</expr></argument>,
+					<argument><expr><name>rest_len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+				<expr_stmt><expr><name><name>buffer</name><index>[<expr><name>rest_len</name></expr>]</index></name> = 0</expr>;</expr_stmt>
+			}</block></then></if>
+		}</block></then></if>
+	}</block></then></if>
+}</block>
+
+
+<comment type="block">/* From the C99 standard, section 7.19.6:
+The exponent always contains at least two digits, and only as many more digits
+as necessary to represent the exponent.
+*/</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>MIN_EXPONENT_DIGITS</name></cpp:macro> <cpp:value>2</cpp:value></cpp:define>
+
+<comment type="block">/* Ensure that any exponent, if present, is at least MIN_EXPONENT_DIGITS
+   in length. */</comment>
+<macro><name>Py_LOCAL_INLINE</name><argument_list>(<argument>void</argument>)</argument_list></macro>
+<macro><name>ensure_minumim_exponent_length</name><argument_list>(<argument>char* buffer</argument>, <argument>size_t buf_size</argument>)</argument_list></macro>
+<block>{
+	<decl_stmt><decl><type><name>char</name> *</type><name>p</name> <init>= <expr><call><name>strpbrk</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>, <argument><expr>"eE"</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+	<if>if <condition>(<expr><name>p</name> &amp;&amp; (*(<name>p</name> + 1) == '-' || *(<name>p</name> + 1) == '+')</expr>)</condition><then> <block>{
+		<decl_stmt><decl><type><name>char</name> *</type><name>start</name> <init>= <expr><name>p</name> + 2</expr></init></decl>;</decl_stmt>
+		<decl_stmt><decl><type><name>int</name></type> <name>exponent_digit_cnt</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+		<decl_stmt><decl><type><name>int</name></type> <name>leading_zero_cnt</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+		<decl_stmt><decl><type><name>int</name></type> <name>in_leading_zeros</name> <init>= <expr>1</expr></init></decl>;</decl_stmt>
+		<decl_stmt><decl><type><name>int</name></type> <name>significant_digit_cnt</name></decl>;</decl_stmt>
+
+		<comment type="block">/* Skip over the exponent and the sign. */</comment>
+		<expr_stmt><expr><name>p</name> += 2</expr>;</expr_stmt>
+
+		<comment type="block">/* Find the end of the exponent, keeping track of leading
+		   zeros. */</comment>
+		<while>while <condition>(<expr>*<name>p</name> &amp;&amp; <call><name>isdigit</name><argument_list>(<argument><expr><call><name>Py_CHARMASK</name><argument_list>(<argument><expr>*<name>p</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>)</condition> <block>{
+			<if>if <condition>(<expr><name>in_leading_zeros</name> &amp;&amp; *<name>p</name> == '0'</expr>)</condition><then>
+				<expr_stmt><expr>++<name>leading_zero_cnt</name></expr>;</expr_stmt></then></if>
+			<if>if <condition>(<expr>*<name>p</name> != '0'</expr>)</condition><then>
+				<expr_stmt><expr><name>in_leading_zeros</name> = 0</expr>;</expr_stmt></then></if>
+			<expr_stmt><expr>++<name>p</name></expr>;</expr_stmt>
+			<expr_stmt><expr>++<name>exponent_digit_cnt</name></expr>;</expr_stmt>
+		}</block></while>
+
+		<expr_stmt><expr><name>significant_digit_cnt</name> = <name>exponent_digit_cnt</name> - <name>leading_zero_cnt</name></expr>;</expr_stmt>
+		<if>if <condition>(<expr><name>exponent_digit_cnt</name> == <name>MIN_EXPONENT_DIGITS</name></expr>)</condition><then> <block>{
+			<comment type="block">/* If there are 2 exactly digits, we're done,
+			   regardless of what they contain */</comment>
+		}</block></then>
+		<else>else <if>if <condition>(<expr><name>exponent_digit_cnt</name> &gt; <name>MIN_EXPONENT_DIGITS</name></expr>)</condition><then> <block>{
+			<decl_stmt><decl><type><name>int</name></type> <name>extra_zeros_cnt</name></decl>;</decl_stmt>
+
+			<comment type="block">/* There are more than 2 digits in the exponent.  See
+			   if we can delete some of the leading zeros */</comment>
+			<if>if <condition>(<expr><name>significant_digit_cnt</name> &lt; <name>MIN_EXPONENT_DIGITS</name></expr>)</condition><then>
+				<expr_stmt><expr><name>significant_digit_cnt</name> = <name>MIN_EXPONENT_DIGITS</name></expr>;</expr_stmt></then></if>
+			<expr_stmt><expr><name>extra_zeros_cnt</name> = <name>exponent_digit_cnt</name> -
+				<name>significant_digit_cnt</name></expr>;</expr_stmt>
+
+			<comment type="block">/* Delete extra_zeros_cnt worth of characters from the
+			   front of the exponent */</comment>
+			<expr_stmt><expr><call><name>assert</name><argument_list>(<argument><expr><name>extra_zeros_cnt</name> &gt;= 0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+			<comment type="block">/* Add one to significant_digit_cnt to copy the
+			   trailing 0 byte, thus setting the length */</comment>
+			<expr_stmt><expr><call><name>memmove</name><argument_list>(<argument><expr><name>start</name></expr></argument>,
+				<argument><expr><name>start</name> + <name>extra_zeros_cnt</name></expr></argument>,
+				<argument><expr><name>significant_digit_cnt</name> + 1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		}</block></then>
+		<else>else <block>{
+			<comment type="block">/* If there are fewer than 2 digits, add zeros
+			   until there are 2, if there's enough room */</comment>
+			<decl_stmt><decl><type><name>int</name></type> <name>zeros</name> <init>= <expr><name>MIN_EXPONENT_DIGITS</name> - <name>exponent_digit_cnt</name></expr></init></decl>;</decl_stmt>
+			<if>if <condition>(<expr><name>start</name> + <name>zeros</name> + <name>exponent_digit_cnt</name> + 1
+			      &lt; <name>buffer</name> + <name>buf_size</name></expr>)</condition><then> <block>{
+				<expr_stmt><expr><call><name>memmove</name><argument_list>(<argument><expr><name>start</name> + <name>zeros</name></expr></argument>, <argument><expr><name>start</name></expr></argument>,
+					<argument><expr><name>exponent_digit_cnt</name> + 1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+				<expr_stmt><expr><call><name>memset</name><argument_list>(<argument><expr><name>start</name></expr></argument>, <argument><expr>'0'</expr></argument>, <argument><expr><name>zeros</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			}</block></then></if>
+		}</block></else></if></else></if>
+	}</block></then></if>
+}</block>
+
+<comment type="block">/* Ensure that buffer has a decimal point in it.  The decimal point
+   will not be in the current locale, it will always be '.' */</comment>
+<macro><name>Py_LOCAL_INLINE</name><argument_list>(<argument>void</argument>)</argument_list></macro>
+<macro><name>ensure_decimal_point</name><argument_list>(<argument>char* buffer</argument>, <argument>size_t buf_size</argument>)</argument_list></macro>
+<block>{
+	<decl_stmt><decl><type><name>int</name></type> <name>insert_count</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>char</name>*</type> <name>chars_to_insert</name></decl>;</decl_stmt>
+
+	<comment type="block">/* search for the first non-digit character */</comment>
+	<decl_stmt><decl><type><name>char</name> *</type><name>p</name> <init>= <expr><name>buffer</name></expr></init></decl>;</decl_stmt>
+	<if>if <condition>(<expr>*<name>p</name> == '-' || *<name>p</name> == '+'</expr>)</condition><then>
+		<comment type="block">/* Skip leading sign, if present.  I think this could only
+		   ever be '-', but it can't hurt to check for both. */</comment>
+		<expr_stmt><expr>++<name>p</name></expr>;</expr_stmt></then></if>
+	<while>while <condition>(<expr>*<name>p</name> &amp;&amp; <call><name>isdigit</name><argument_list>(<argument><expr><call><name>Py_CHARMASK</name><argument_list>(<argument><expr>*<name>p</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>)</condition>
+		<expr_stmt><expr>++<name>p</name></expr>;</expr_stmt></while>
+
+	<if>if <condition>(<expr>*<name>p</name> == '.'</expr>)</condition><then> <block>{
+		<if>if <condition>(<expr><call><name>isdigit</name><argument_list>(<argument><expr><call><name>Py_CHARMASK</name><argument_list>(<argument><expr>*(<name>p</name>+1)</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+			<comment type="block">/* Nothing to do, we already have a decimal
+			   point and a digit after it */</comment>
+		}</block></then>
+		<else>else <block>{
+			<comment type="block">/* We have a decimal point, but no following
+			   digit.  Insert a zero after the decimal. */</comment>
+			<expr_stmt><expr>++<name>p</name></expr>;</expr_stmt>
+			<expr_stmt><expr><name>chars_to_insert</name> = "0"</expr>;</expr_stmt>
+			<expr_stmt><expr><name>insert_count</name> = 1</expr>;</expr_stmt>
+		}</block></else></if>
+	}</block></then>
+	<else>else <block>{
+		<expr_stmt><expr><name>chars_to_insert</name> = ".0"</expr>;</expr_stmt>
+		<expr_stmt><expr><name>insert_count</name> = 2</expr>;</expr_stmt>
+	}</block></else></if>
+	<if>if <condition>(<expr><name>insert_count</name></expr>)</condition><then> <block>{
+		<decl_stmt><decl><type><name>size_t</name></type> <name>buf_len</name> <init>= <expr><call><name>strlen</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+		<if>if <condition>(<expr><name>buf_len</name> + <name>insert_count</name> + 1 &gt;= <name>buf_size</name></expr>)</condition><then> <block>{
+			<comment type="block">/* If there is not enough room in the buffer
+			   for the additional text, just skip it.  It's
+			   not worth generating an error over. */</comment>
+		}</block></then>
+		<else>else <block>{
+			<expr_stmt><expr><call><name>memmove</name><argument_list>(<argument><expr><name>p</name> + <name>insert_count</name></expr></argument>, <argument><expr><name>p</name></expr></argument>,
+				<argument><expr><name>buffer</name> + <call><name>strlen</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>)</argument_list></call> - <name>p</name> + 1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>chars_to_insert</name></expr></argument>, <argument><expr><name>insert_count</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		}</block></else></if>
+	}</block></then></if>
+}</block>
+
+<comment type="block">/* Add the locale specific grouping characters to buffer.  Note
+   that any decimal point (if it's present) in buffer is already
+   locale-specific.  Return 0 on error, else 1. */</comment>
+<macro><name>Py_LOCAL_INLINE</name><argument_list>(<argument>int</argument>)</argument_list></macro>
+<macro><name>add_thousands_grouping</name><argument_list>(<argument>char* buffer</argument>, <argument>size_t buf_size</argument>)</argument_list></macro>
+<block>{
+	<decl_stmt><decl><type><name>Py_ssize_t</name></type> <name>len</name> <init>= <expr><call><name>strlen</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type>struct <name>lconv</name> *</type><name>locale_data</name> <init>= <expr><call><name>localeconv</name><argument_list>()</argument_list></call></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>decimal_point</name> <init>= <expr><name><name>locale_data</name>-&gt;<name>decimal_point</name></name></expr></init></decl>;</decl_stmt>
+
+	<comment type="block">/* Find the decimal point, if any.  We're only concerned
+	   about the characters to the left of the decimal when
+	   adding grouping. */</comment>
+	<decl_stmt><decl><type><name>char</name> *</type><name>p</name> <init>= <expr><call><name>strstr</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>, <argument><expr><name>decimal_point</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+	<if>if <condition>(<expr>!<name>p</name></expr>)</condition><then> <block>{
+		<comment type="block">/* No decimal, use the entire string. */</comment>
+
+		<comment type="block">/* If any exponent, adjust p. */</comment>
+		<expr_stmt><expr><name>p</name> = <call><name>strpbrk</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>, <argument><expr>"eE"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<if>if <condition>(<expr>!<name>p</name></expr>)</condition><then>
+			<comment type="block">/* No exponent and no decimal.  Use the entire
+			   string. */</comment>
+			<expr_stmt><expr><name>p</name> = <name>buffer</name> + <name>len</name></expr>;</expr_stmt></then></if>
+	}</block></then></if>
+	<comment type="block">/* At this point, p points just past the right-most character we
+	   want to format.  We need to add the grouping string for the
+	   characters between buffer and p. */</comment>
+	<return>return <expr><call><name>_PyString_InsertThousandsGrouping</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>, <argument><expr><name>len</name></expr></argument>, <argument><expr><name>p</name>-<name>buffer</name></expr></argument>,
+						 <argument><expr><name>buf_size</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr>1</expr></argument>)</argument_list></call></expr>;</return>
+}</block>
+
+<comment type="block">/* see FORMATBUFLEN in unicodeobject.c */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>FLOAT_FORMATBUFLEN</name></cpp:macro> <cpp:value>120</cpp:value></cpp:define>
+
+<comment type="block">/**
+ * PyOS_ascii_formatd:
+ * @buffer: A buffer to place the resulting string in
+ * @buf_size: The length of the buffer.
+ * @format: The printf()-style format to use for the
+ *          code to use for converting. 
+ * @d: The #gdouble to convert
+ *
+ * Converts a #gdouble to a string, using the '.' as
+ * decimal point. To format the number you pass in
+ * a printf()-style format string. Allowed conversion
+ * specifiers are 'e', 'E', 'f', 'F', 'g', 'G', and 'n'.
+ * 
+ * 'n' is the same as 'g', except it uses the current locale.
+ * 'Z' is the same as 'g', except it always has a decimal and
+ *     at least one digit after the decimal.
+ *
+ * Return value: The pointer to the buffer with the converted string.
+ **/</comment>
+<function><type><name>char</name> *</type>
+<name>PyOS_ascii_formatd</name><parameter_list>(<param><decl><type><name>char</name>       *</type><name>buffer</name></decl></param>, 
+		   <param><decl><type><name>size_t</name></type>      <name>buf_size</name></decl></param>, 
+		   <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>format</name></decl></param>, 
+		   <param><decl><type><name>double</name></type>      <name>d</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>char</name></type> <name>format_char</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>size_t</name></type> <name>format_len</name> <init>= <expr><call><name>strlen</name><argument_list>(<argument><expr><name>format</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+	<comment type="block">/* For type 'n', we need to make a copy of the format string, because
+	   we're going to modify 'n' -&gt; 'g', and format is const char*, so we
+	   can't modify it directly.  FLOAT_FORMATBUFLEN should be longer than
+	   we ever need this to be.  There's an upcoming check to ensure it's
+	   big enough. */</comment>
+	<comment type="block">/* Issue 2264: code 'Z' requires copying the format.  'Z' is 'g', but
+	   also with at least one character past the decimal. */</comment>
+	<decl_stmt><decl><type><name>char</name></type> <name><name>tmp_format</name><index>[<expr><name>FLOAT_FORMATBUFLEN</name></expr>]</index></name></decl>;</decl_stmt>
+
+	<comment type="block">/* The last character in the format string must be the format char */</comment>
+	<expr_stmt><expr><name>format_char</name> = <name><name>format</name><index>[<expr><name>format_len</name> - 1</expr>]</index></name></expr>;</expr_stmt>
+
+	<if>if <condition>(<expr><name><name>format</name><index>[<expr>0</expr>]</index></name> != '%'</expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+	<comment type="block">/* I'm not sure why this test is here.  It's ensuring that the format
+	   string after the first character doesn't have a single quote, a
+	   lowercase l, or a percent. This is the reverse of the commented-out
+	   test about 10 lines ago. */</comment>
+	<if>if <condition>(<expr><call><name>strpbrk</name><argument_list>(<argument><expr><name>format</name> + 1</expr></argument>, <argument><expr>"'l%"</expr></argument>)</argument_list></call></expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+	<comment type="block">/* Also curious about this function is that it accepts format strings
+	   like "%xg", which are invalid for floats.  In general, the
+	   interface to this function is not very good, but changing it is
+	   difficult because it's a public API. */</comment>
+
+	<if>if <condition>(<expr>!(<name>format_char</name> == 'e' || <name>format_char</name> == 'E' || 
+	      <name>format_char</name> == 'f' || <name>format_char</name> == 'F' || 
+	      <name>format_char</name> == 'g' || <name>format_char</name> == 'G' ||
+	      <name>format_char</name> == 'n' || <name>format_char</name> == 'Z')</expr>)</condition><then>
+		<return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+	<comment type="block">/* Map 'n' or 'Z' format_char to 'g', by copying the format string and
+	   replacing the final char with a 'g' */</comment>
+	<if>if <condition>(<expr><name>format_char</name> == 'n' || <name>format_char</name> == 'Z'</expr>)</condition><then> <block>{
+		<if>if <condition>(<expr><name>format_len</name> + 1 &gt;= <sizeof>sizeof<argument_list>(<argument><expr><name>tmp_format</name></expr></argument>)</argument_list></sizeof></expr>)</condition><then> <block>{
+			<comment type="block">/* The format won't fit in our copy.  Error out.  In
+			   practice, this will never happen and will be
+			   detected by returning NULL */</comment>
+			<return>return <expr><name>NULL</name></expr>;</return>
+		}</block></then></if>
+		<expr_stmt><expr><call><name>strcpy</name><argument_list>(<argument><expr><name>tmp_format</name></expr></argument>, <argument><expr><name>format</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><name><name>tmp_format</name><index>[<expr><name>format_len</name> - 1</expr>]</index></name> = 'g'</expr>;</expr_stmt>
+		<expr_stmt><expr><name>format</name> = <name>tmp_format</name></expr>;</expr_stmt>
+	}</block></then></if>
+
+
+	<comment type="block">/* Have PyOS_snprintf do the hard work */</comment>
+	<expr_stmt><expr><call><name>PyOS_snprintf</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>, <argument><expr><name>buf_size</name></expr></argument>, <argument><expr><name>format</name></expr></argument>, <argument><expr><name>d</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+	<comment type="block">/* Do various fixups on the return string */</comment>
+
+	<comment type="block">/* Get the current locale, and find the decimal point string.
+	   Convert that string back to a dot.  Do not do this if using the
+	   'n' (number) format code, since we want to keep the localized
+	   decimal point in that case. */</comment>
+	<if>if <condition>(<expr><name>format_char</name> != 'n'</expr>)</condition><then>
+		<expr_stmt><expr><call><name>change_decimal_from_locale_to_dot</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+	<comment type="block">/* If an exponent exists, ensure that the exponent is at least
+	   MIN_EXPONENT_DIGITS digits, providing the buffer is large enough
+	   for the extra zeros.  Also, if there are more than
+	   MIN_EXPONENT_DIGITS, remove as many zeros as possible until we get
+	   back to MIN_EXPONENT_DIGITS */</comment>
+	<expr_stmt><expr><call><name>ensure_minumim_exponent_length</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>, <argument><expr><name>buf_size</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+	<comment type="block">/* If format_char is 'Z', make sure we have at least one character
+	   after the decimal point (and make sure we have a decimal point). */</comment>
+	<if>if <condition>(<expr><name>format_char</name> == 'Z'</expr>)</condition><then>
+		<expr_stmt><expr><call><name>ensure_decimal_point</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>, <argument><expr><name>buf_size</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+	<comment type="block">/* If format_char is 'n', add the thousands grouping. */</comment>
+	<if>if <condition>(<expr><name>format_char</name> == 'n'</expr>)</condition><then>
+		<if>if <condition>(<expr>!<call><name>add_thousands_grouping</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>, <argument><expr><name>buf_size</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+			<return>return <expr><name>NULL</name></expr>;</return></then></if></then></if>
+
+	<return>return <expr><name>buffer</name></expr>;</return>
+}</block></function>
+
+<function><type><name>double</name></type>
+<name>PyOS_ascii_atof</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>nptr</name></decl></param>)</parameter_list>
+<block>{
+	<return>return <expr><call><name>PyOS_ascii_strtod</name><argument_list>(<argument><expr><name>nptr</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+</unit>

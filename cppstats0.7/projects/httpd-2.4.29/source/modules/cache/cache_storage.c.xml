@@ -1,0 +1,793 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/httpd-2.4.29/modules/cache/cache_storage.c"><comment type="block">/* Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"mod_cache.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"cache_storage.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"cache_util.h"</cpp:file></cpp:include>
+
+<expr_stmt><expr><call><name>APLOG_USE_MODULE</name><argument_list>(<argument><expr><name>cache</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<extern>extern APR_OPTIONAL_FN_TYPE(ap_cache_generate_key</extern>) <expr_stmt><expr>*<name>cache_generate_key</name></expr>;</expr_stmt>
+
+<decl_stmt><decl><type><specifier>extern</specifier> <name>module</name> <name>AP_MODULE_DECLARE_DATA</name></type> <name>cache_module</name></decl>;</decl_stmt>
+
+<comment type="block">/* -------------------------------------------------------------- */</comment>
+
+<comment type="block">/*
+ * delete all URL entities from the cache
+ *
+ */</comment>
+<function><type><name>int</name></type> <name>cache_remove_url</name><parameter_list>(<param><decl><type><name>cache_request_rec</name> *</type><name>cache</name></decl></param>, <param><decl><type><name>request_rec</name> *</type><name>r</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>cache_provider_list</name> *</type><name>list</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>cache_handle_t</name> *</type><name>h</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>list</name> = <name><name>cache</name>-&gt;<name>providers</name></name></expr>;</expr_stmt>
+
+    <comment type="block">/* Remove the stale cache entry if present. If not, we're
+     * being called from outside of a request; remove the
+     * non-stale handle.
+     */</comment>
+    <expr_stmt><expr><name>h</name> = <name><name>cache</name>-&gt;<name>stale_handle</name></name> ? <name><name>cache</name>-&gt;<name>stale_handle</name></name> : <name><name>cache</name>-&gt;<name>handle</name></name></expr>;</expr_stmt>
+    <if>if <condition>(<expr>!<name>h</name></expr>)</condition><then> <block>{
+       <return>return <expr><name>OK</name></expr>;</return>
+    }</block></then></if>
+    <expr_stmt><expr><call><name>ap_log_rerror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_DEBUG</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>r</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00691</expr></argument>)</argument_list></call>
+                 "cache: Removing url %s from the cache"</expr></argument>, <argument><expr><name><name>h</name>-&gt;<name>cache_obj</name>-&gt;<name>key</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/* for each specified cache type, delete the URL */</comment>
+    <while>while <condition>(<expr><name>list</name></expr>)</condition> <block>{
+        <expr_stmt><expr><call><name><name>list</name>-&gt;<name>provider</name>-&gt;<name>remove_url</name></name><argument_list>(<argument><expr><name>h</name></expr></argument>, <argument><expr><name>r</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><name>list</name> = <name><name>list</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+    }</block></while>
+    <return>return <expr><name>OK</name></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/*
+ * create a new URL entity in the cache
+ *
+ * It is possible to store more than once entity per URL. This
+ * function will always create a new entity, regardless of whether
+ * other entities already exist for the same URL.
+ *
+ * The size of the entity is provided so that a cache module can
+ * decide whether or not it wants to cache this particular entity.
+ * If the size is unknown, a size of -1 should be set.
+ */</comment>
+<function><type><name>int</name></type> <name>cache_create_entity</name><parameter_list>(<param><decl><type><name>cache_request_rec</name> *</type><name>cache</name></decl></param>, <param><decl><type><name>request_rec</name> *</type><name>r</name></decl></param>,
+                        <param><decl><type><name>apr_off_t</name></type> <name>size</name></decl></param>, <param><decl><type><name>apr_bucket_brigade</name> *</type><name>in</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>cache_provider_list</name> *</type><name>list</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>cache_handle_t</name> *</type><name>h</name> <init>= <expr><call><name>apr_pcalloc</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>cache_handle_t</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>!<name>cache</name></expr>)</condition><then> <block>{
+        <comment type="block">/* This should never happen */</comment>
+        <expr_stmt><expr><call><name>ap_log_rerror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_ERR</name></expr></argument>, <argument><expr><name>APR_EGENERAL</name></expr></argument>, <argument><expr><name>r</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00692</expr></argument>)</argument_list></call>
+                "cache: No cache request information available for key"
+                " generation"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>APR_EGENERAL</name></expr>;</return>
+    }</block></then></if>
+
+    <if>if <condition>(<expr>!<name><name>cache</name>-&gt;<name>key</name></name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>rv</name> = <call><name>cache_generate_key</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>&amp;<name><name>cache</name>-&gt;<name>key</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+            <return>return <expr><name>rv</name></expr>;</return>
+        }</block></then></if>
+    }</block></then></if>
+
+    <expr_stmt><expr><name>list</name> = <name><name>cache</name>-&gt;<name>providers</name></name></expr>;</expr_stmt>
+    <comment type="block">/* for each specified cache type, delete the URL */</comment>
+    <while>while <condition>(<expr><name>list</name></expr>)</condition> <block>{
+        <switch>switch <condition>(<expr><name>rv</name> = <call><name><name>list</name>-&gt;<name>provider</name>-&gt;<name>create_entity</name></name><argument_list>(<argument><expr><name>h</name></expr></argument>, <argument><expr><name>r</name></expr></argument>, <argument><expr><name><name>cache</name>-&gt;<name>key</name></name></expr></argument>, <argument><expr><name>size</name></expr></argument>, <argument><expr><name>in</name></expr></argument>)</argument_list></call></expr>)</condition> <block>{
+        <case>case <expr><name>OK</name></expr>: <block>{
+            <expr_stmt><expr><name><name>cache</name>-&gt;<name>handle</name></name> = <name>h</name></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>cache</name>-&gt;<name>provider</name></name> = <name><name>list</name>-&gt;<name>provider</name></name></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>cache</name>-&gt;<name>provider_name</name></name> = <name><name>list</name>-&gt;<name>provider_name</name></name></expr>;</expr_stmt>
+            <return>return <expr><name>OK</name></expr>;</return>
+        }</block>
+        </case><case>case <expr><name>DECLINED</name></expr>: <block>{
+            <expr_stmt><expr><name>list</name> = <name><name>list</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+            <continue>continue;</continue>
+        }</block>
+        </case><default>default: <block>{
+            <return>return <expr><name>rv</name></expr>;</return>
+        }</block>
+        </default>}</block></switch>
+    }</block></while>
+    <return>return <expr><name>DECLINED</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type> <name>filter_header_do</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>v</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>key</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>val</name></decl></param>)</parameter_list>
+<block>{
+    <if>if <condition>(<expr>(*<name>key</name> == 'W' || *<name>key</name> == 'w') &amp;&amp; !<call><name>ap_cstr_casecmp</name><argument_list>(<argument><expr><name>key</name></expr></argument>, <argument><expr>"Warning"</expr></argument>)</argument_list></call>
+            &amp;&amp; *<name>val</name> == '1'</expr>)</condition><then> <block>{
+        <comment type="block">/* any stored Warning headers with warn-code 1xx (see section
+         * 14.46) MUST be deleted from the cache entry and the forwarded
+         * response.
+         */</comment>
+    }</block></then>
+    <else>else <block>{
+        <expr_stmt><expr><call><name>apr_table_addn</name><argument_list>(<argument><expr><name>v</name></expr></argument>, <argument><expr><name>key</name></expr></argument>, <argument><expr><name>val</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if>
+    <return>return <expr>1</expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>int</name></type> <name>remove_header_do</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>v</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>key</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>val</name></decl></param>)</parameter_list>
+<block>{
+    <if>if <condition>(<expr>(*<name>key</name> == 'W' || *<name>key</name> == 'w') &amp;&amp; !<call><name>ap_cstr_casecmp</name><argument_list>(<argument><expr><name>key</name></expr></argument>, <argument><expr>"Warning"</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <comment type="block">/* any stored Warning headers with warn-code 2xx MUST be retained
+         * in the cache entry and the forwarded response.
+         */</comment>
+    }</block></then>
+    <else>else <block>{
+        <expr_stmt><expr><call><name>apr_table_unset</name><argument_list>(<argument><expr><name>v</name></expr></argument>, <argument><expr><name>key</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></else></if>
+    <return>return <expr>1</expr>;</return>
+}</block></function>
+<function><type><specifier>static</specifier> <name>int</name></type> <name>add_header_do</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>v</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>key</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>val</name></decl></param>)</parameter_list>
+<block>{
+    <expr_stmt><expr><call><name>apr_table_addn</name><argument_list>(<argument><expr><name>v</name></expr></argument>, <argument><expr><name>key</name></expr></argument>, <argument><expr><name>val</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr>1</expr>;</return>
+}</block></function>
+
+<comment type="block">/**
+ * Take two sets of headers, sandwich them together, and apply the result to
+ * r-&gt;headers_out.
+ *
+ * To complicate this, a header may be duplicated in either table. Should a
+ * header exist in the top table, all matching headers will be removed from
+ * the bottom table before the headers are combined. The Warning headers are
+ * handled specially. Warnings are added rather than being replaced, while
+ * in the case of revalidation 1xx Warnings are stripped.
+ *
+ * The Content-Type and Last-Modified headers are then re-parsed and inserted
+ * into the request.
+ */</comment>
+<function><type><name>void</name></type> <name>cache_accept_headers</name><parameter_list>(<param><decl><type><name>cache_handle_t</name> *</type><name>h</name></decl></param>, <param><decl><type><name>request_rec</name> *</type><name>r</name></decl></param>, <param><decl><type><name>apr_table_t</name> *</type><name>top</name></decl></param>,
+        <param><decl><type><name>apr_table_t</name> *</type><name>bottom</name></decl></param>, <param><decl><type><name>int</name></type> <name>revalidation</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>v</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr><name>revalidation</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name><name>r</name>-&gt;<name>headers_out</name></name> = <call><name>apr_table_make</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>10</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>apr_table_do</name><argument_list>(<argument><expr><name>filter_header_do</name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>headers_out</name></name></expr></argument>, <argument><expr><name>bottom</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+    <else>else <if>if <condition>(<expr><name><name>r</name>-&gt;<name>headers_out</name></name> != <name>bottom</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name><name>r</name>-&gt;<name>headers_out</name></name> = <call><name>apr_table_copy</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>bottom</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if></else></if>
+    <expr_stmt><expr><call><name>apr_table_do</name><argument_list>(<argument><expr><name>remove_header_do</name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>headers_out</name></name></expr></argument>, <argument><expr><name>top</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>apr_table_do</name><argument_list>(<argument><expr><name>add_header_do</name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>headers_out</name></name></expr></argument>, <argument><expr><name>top</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>v</name> = <call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_out</name></name></expr></argument>, <argument><expr>"Content-Type"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>v</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>ap_set_content_type</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><name>v</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <comment type="block">/*
+         * Also unset possible Content-Type headers in r-&gt;headers_out and
+         * r-&gt;err_headers_out as they may be different to what we have received
+         * from the cache.
+         * Actually they are not needed as r-&gt;content_type set by
+         * ap_set_content_type above will be used in the store_headers functions
+         * of the storage providers as a fallback and the HTTP_HEADER filter
+         * does overwrite the Content-Type header with r-&gt;content_type anyway.
+         */</comment>
+        <expr_stmt><expr><call><name>apr_table_unset</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_out</name></name></expr></argument>, <argument><expr>"Content-Type"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>apr_table_unset</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>err_headers_out</name></name></expr></argument>, <argument><expr>"Content-Type"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <comment type="block">/* If the cache gave us a Last-Modified header, we can't just
+     * pass it on blindly because of restrictions on future values.
+     */</comment>
+    <expr_stmt><expr><name>v</name> = <call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_out</name></name></expr></argument>, <argument><expr>"Last-Modified"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>v</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>ap_update_mtime</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><call><name>apr_date_parse_http</name><argument_list>(<argument><expr><name>v</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>ap_set_last_modified</name><argument_list>(<argument><expr><name>r</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+}</block></function>
+
+<comment type="block">/*
+ * select a specific URL entity in the cache
+ *
+ * It is possible to store more than one entity per URL. Content
+ * negotiation is used to select an entity. Once an entity is
+ * selected, details of it are stored in the per request
+ * config to save time when serving the request later.
+ *
+ * This function returns OK if successful, DECLINED if no
+ * cached entity fits the bill.
+ */</comment>
+<function><type><name>int</name></type> <name>cache_select</name><parameter_list>(<param><decl><type><name>cache_request_rec</name> *</type><name>cache</name></decl></param>, <param><decl><type><name>request_rec</name> *</type><name>r</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>cache_provider_list</name> *</type><name>list</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>cache_handle_t</name> *</type><name>h</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>!<name>cache</name></expr>)</condition><then> <block>{
+        <comment type="block">/* This should never happen */</comment>
+        <expr_stmt><expr><call><name>ap_log_rerror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_ERR</name></expr></argument>, <argument><expr><name>APR_EGENERAL</name></expr></argument>, <argument><expr><name>r</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00693</expr></argument>)</argument_list></call>
+                "cache: No cache request information available for key"
+                " generation"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>DECLINED</name></expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/* if no-cache, we can't serve from the cache, but we may store to the
+     * cache.
+     */</comment>
+    <if>if <condition>(<expr>!<call><name>ap_cache_check_no_cache</name><argument_list>(<argument><expr><name>cache</name></expr></argument>, <argument><expr><name>r</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <return>return <expr><name>DECLINED</name></expr>;</return>
+    }</block></then></if>
+
+    <if>if <condition>(<expr>!<name><name>cache</name>-&gt;<name>key</name></name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>rv</name> = <call><name>cache_generate_key</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>&amp;<name><name>cache</name>-&gt;<name>key</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+            <return>return <expr><name>DECLINED</name></expr>;</return>
+        }</block></then></if>
+    }</block></then></if>
+
+    <comment type="block">/* go through the cache types till we get a match */</comment>
+    <expr_stmt><expr><name>h</name> = <call><name>apr_palloc</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>cache_handle_t</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>list</name> = <name><name>cache</name>-&gt;<name>providers</name></name></expr>;</expr_stmt>
+
+    <while>while <condition>(<expr><name>list</name></expr>)</condition> <block>{
+        <switch>switch <condition>(<expr>(<name>rv</name> = <call><name><name>list</name>-&gt;<name>provider</name>-&gt;<name>open_entity</name></name><argument_list>(<argument><expr><name>h</name></expr></argument>, <argument><expr><name>r</name></expr></argument>, <argument><expr><name><name>cache</name>-&gt;<name>key</name></name></expr></argument>)</argument_list></call>)</expr>)</condition> <block>{
+        <case>case <expr><name>OK</name></expr>: <block>{
+            <decl_stmt><decl><type><name>char</name> *</type><name>vary</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+            <decl_stmt><decl><type><name>int</name></type> <name>mismatch</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+            <decl_stmt><decl><type><name>char</name> *</type><name>last</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+
+            <if>if <condition>(<expr><call><name><name>list</name>-&gt;<name>provider</name>-&gt;<name>recall_headers</name></name><argument_list>(<argument><expr><name>h</name></expr></argument>, <argument><expr><name>r</name></expr></argument>)</argument_list></call> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+                <comment type="block">/* try again with next cache type */</comment>
+                <expr_stmt><expr><name>list</name> = <name><name>list</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+                <continue>continue;</continue>
+            }</block></then></if>
+
+            <comment type="block">/*
+             * Check Content-Negotiation - Vary
+             *
+             * At this point we need to make sure that the object we found in
+             * the cache is the same object that would be delivered to the
+             * client, when the effects of content negotiation are taken into
+             * effect.
+             *
+             * In plain english, we want to make sure that a language-negotiated
+             * document in one language is not given to a client asking for a
+             * language negotiated document in a different language by mistake.
+             *
+             * This code makes the assumption that the storage manager will
+             * cache the req_hdrs if the response contains a Vary
+             * header.
+             *
+             * RFC2616 13.6 and 14.44 describe the Vary mechanism.
+             */</comment>
+            <expr_stmt><expr><name>vary</name> = <call><name>cache_strqtok</name><argument_list>(
+                    <argument><expr><call><name>apr_pstrdup</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>,
+                            <argument><expr><call><name>cache_table_getm</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>h</name>-&gt;<name>resp_hdrs</name></name></expr></argument>, <argument><expr>"Vary"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr></argument>,
+                    <argument><expr><name>CACHE_SEPARATOR</name></expr></argument>, <argument><expr>&amp;<name>last</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <while>while <condition>(<expr><name>vary</name></expr>)</condition> <block>{
+                <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>h1</name></decl>, *<decl><type ref="prev"/><name>h2</name></decl>;</decl_stmt>
+
+                <comment type="block">/*
+                 * is this header in the request and the header in the cached
+                 * request identical? If not, we give up and do a straight get
+                 */</comment>
+                <expr_stmt><expr><name>h1</name> = <call><name>cache_table_getm</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>headers_in</name></name></expr></argument>, <argument><expr><name>vary</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><name>h2</name> = <call><name>cache_table_getm</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>h</name>-&gt;<name>req_hdrs</name></name></expr></argument>, <argument><expr><name>vary</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <if>if <condition>(<expr><name>h1</name> == <name>h2</name></expr>)</condition><then> <block>{
+                    <comment type="block">/* both headers NULL, so a match - do nothing */</comment>
+                }</block></then>
+                <else>else <if>if <condition>(<expr><name>h1</name> &amp;&amp; <name>h2</name> &amp;&amp; !<call><name>strcmp</name><argument_list>(<argument><expr><name>h1</name></expr></argument>, <argument><expr><name>h2</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+                    <comment type="block">/* both headers exist and are equal - do nothing */</comment>
+                }</block></then>
+                <else>else <block>{
+                    <comment type="block">/* headers do not match, so Vary failed */</comment>
+                    <expr_stmt><expr><call><name>ap_log_rerror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_DEBUG</name></expr></argument>, <argument><expr><name>APR_SUCCESS</name></expr></argument>,
+                            <argument><expr><name>r</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00694</expr></argument>)</argument_list></call> "cache_select(): Vary header mismatch."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                    <expr_stmt><expr><name>mismatch</name> = 1</expr>;</expr_stmt>
+                    <break>break;</break>
+                }</block></else></if></else></if>
+                <expr_stmt><expr><name>vary</name> = <call><name>cache_strqtok</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>CACHE_SEPARATOR</name></expr></argument>, <argument><expr>&amp;<name>last</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></while>
+
+            <comment type="block">/* no vary match, try next provider */</comment>
+            <if>if <condition>(<expr><name>mismatch</name></expr>)</condition><then> <block>{
+                <comment type="block">/* try again with next cache type */</comment>
+                <expr_stmt><expr><name>list</name> = <name><name>list</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+                <continue>continue;</continue>
+            }</block></then></if>
+
+            <expr_stmt><expr><name><name>cache</name>-&gt;<name>provider</name></name> = <name><name>list</name>-&gt;<name>provider</name></name></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>cache</name>-&gt;<name>provider_name</name></name> = <name><name>list</name>-&gt;<name>provider_name</name></name></expr>;</expr_stmt>
+
+            <comment type="block">/*
+             * RFC2616 13.3.4 Rules for When to Use Entity Tags and Last-Modified
+             * Dates: An HTTP/1.1 caching proxy, upon receiving a conditional request
+             * that includes both a Last-Modified date and one or more entity tags as
+             * cache validators, MUST NOT return a locally cached response to the
+             * client unless that cached response is consistent with all of the
+             * conditional header fields in the request.
+             */</comment>
+            <if>if <condition>(<expr><call><name>ap_condition_if_match</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><name><name>h</name>-&gt;<name>resp_hdrs</name></name></expr></argument>)</argument_list></call> == <name>AP_CONDITION_NOMATCH</name>
+                    || <call><name>ap_condition_if_unmodified_since</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><name><name>h</name>-&gt;<name>resp_hdrs</name></name></expr></argument>)</argument_list></call>
+                            == <name>AP_CONDITION_NOMATCH</name>
+                    || <call><name>ap_condition_if_none_match</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><name><name>h</name>-&gt;<name>resp_hdrs</name></name></expr></argument>)</argument_list></call>
+                            == <name>AP_CONDITION_NOMATCH</name>
+                    || <call><name>ap_condition_if_modified_since</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><name><name>h</name>-&gt;<name>resp_hdrs</name></name></expr></argument>)</argument_list></call>
+                            == <name>AP_CONDITION_NOMATCH</name>
+                    || <call><name>ap_condition_if_range</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><name><name>h</name>-&gt;<name>resp_hdrs</name></name></expr></argument>)</argument_list></call> == <name>AP_CONDITION_NOMATCH</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><name>mismatch</name> = 1</expr>;</expr_stmt>
+            }</block></then></if>
+
+            <comment type="block">/* Is our cached response fresh enough? */</comment>
+            <if>if <condition>(<expr><name>mismatch</name> || !<call><name>cache_check_freshness</name><argument_list>(<argument><expr><name>h</name></expr></argument>, <argument><expr><name>cache</name></expr></argument>, <argument><expr><name>r</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+                <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>etag</name></decl>, *<decl><type ref="prev"/><name>lastmod</name></decl>;</decl_stmt>
+
+                <comment type="block">/* Cache-Control: only-if-cached and revalidation required, try
+                 * the next provider
+                 */</comment>
+                <if>if <condition>(<expr><name><name>cache</name>-&gt;<name>control_in</name>.<name>only_if_cached</name></name></expr>)</condition><then> <block>{
+                    <comment type="block">/* try again with next cache type */</comment>
+                    <expr_stmt><expr><name>list</name> = <name><name>list</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+                    <continue>continue;</continue>
+                }</block></then></if>
+
+                <comment type="block">/* set aside the stale entry for accessing later */</comment>
+                <expr_stmt><expr><name><name>cache</name>-&gt;<name>stale_headers</name></name> = <call><name>apr_table_copy</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>,
+                        <argument><expr><name><name>r</name>-&gt;<name>headers_in</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><name><name>cache</name>-&gt;<name>stale_handle</name></name> = <name>h</name></expr>;</expr_stmt>
+
+                <comment type="block">/* if no existing conditionals, use conditionals of our own */</comment>
+                <if>if <condition>(<expr>!<name>mismatch</name></expr>)</condition><then> <block>{
+
+                    <expr_stmt><expr><call><name>ap_log_rerror</name><argument_list>(
+                            <argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_DEBUG</name></expr></argument>, <argument><expr><name>APR_SUCCESS</name></expr></argument>, <argument><expr><name>r</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00695</expr></argument>)</argument_list></call> "Cached response for %s isn't fresh. Adding "
+                            "conditional request headers."</expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>uri</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+                    <comment type="block">/* Remove existing conditionals that might conflict with ours */</comment>
+                    <expr_stmt><expr><call><name>apr_table_unset</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_in</name></name></expr></argument>, <argument><expr>"If-Match"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                    <expr_stmt><expr><call><name>apr_table_unset</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_in</name></name></expr></argument>, <argument><expr>"If-Modified-Since"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                    <expr_stmt><expr><call><name>apr_table_unset</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_in</name></name></expr></argument>, <argument><expr>"If-None-Match"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                    <expr_stmt><expr><call><name>apr_table_unset</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_in</name></name></expr></argument>, <argument><expr>"If-Range"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                    <expr_stmt><expr><call><name>apr_table_unset</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_in</name></name></expr></argument>, <argument><expr>"If-Unmodified-Since"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+                    <expr_stmt><expr><name>etag</name> = <call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>h</name>-&gt;<name>resp_hdrs</name></name></expr></argument>, <argument><expr>"ETag"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                    <expr_stmt><expr><name>lastmod</name> = <call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>h</name>-&gt;<name>resp_hdrs</name></name></expr></argument>, <argument><expr>"Last-Modified"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+                    <if>if <condition>(<expr><name>etag</name> || <name>lastmod</name></expr>)</condition><then> <block>{
+                        <comment type="block">/* If we have a cached etag and/or Last-Modified add in
+                         * our own conditionals.
+                         */</comment>
+
+                        <if>if <condition>(<expr><name>etag</name></expr>)</condition><then> <block>{
+                            <expr_stmt><expr><call><name>apr_table_set</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_in</name></name></expr></argument>, <argument><expr>"If-None-Match"</expr></argument>, <argument><expr><name>etag</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                        }</block></then></if>
+
+                        <if>if <condition>(<expr><name>lastmod</name></expr>)</condition><then> <block>{
+                            <expr_stmt><expr><call><name>apr_table_set</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_in</name></name></expr></argument>, <argument><expr>"If-Modified-Since"</expr></argument>,
+                                    <argument><expr><name>lastmod</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                        }</block></then></if>
+
+                        <comment type="block">/*
+                         * Do not do Range requests with our own conditionals: If
+                         * we get 304 the Range does not matter and otherwise the
+                         * entity changed and we want to have the complete entity
+                         */</comment>
+                        <expr_stmt><expr><call><name>apr_table_unset</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_in</name></name></expr></argument>, <argument><expr>"Range"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+                    }</block></then></if>
+
+                }</block></then></if>
+
+                <comment type="block">/* ready to revalidate, pretend we were never here */</comment>
+                <return>return <expr><name>DECLINED</name></expr>;</return>
+            }</block></then></if>
+
+            <comment type="block">/* Okay, this response looks okay.  Merge in our stuff and go. */</comment>
+            <expr_stmt><expr><call><name>cache_accept_headers</name><argument_list>(<argument><expr><name>h</name></expr></argument>, <argument><expr><name>r</name></expr></argument>, <argument><expr><name><name>h</name>-&gt;<name>resp_hdrs</name></name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>headers_out</name></name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+            <expr_stmt><expr><name><name>cache</name>-&gt;<name>handle</name></name> = <name>h</name></expr>;</expr_stmt>
+            <return>return <expr><name>OK</name></expr>;</return>
+        }</block>
+        </case><case>case <expr><name>DECLINED</name></expr>: <block>{
+            <comment type="block">/* try again with next cache type */</comment>
+            <expr_stmt><expr><name>list</name> = <name><name>list</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+            <continue>continue;</continue>
+        }</block>
+        </case><default>default: <block>{
+            <comment type="block">/* oo-er! an error */</comment>
+            <return>return <expr><name>rv</name></expr>;</return>
+        }</block>
+        </default>}</block></switch>
+    }</block></while>
+
+    <comment type="block">/* if Cache-Control: only-if-cached, and not cached, return 504 */</comment>
+    <if>if <condition>(<expr><name><name>cache</name>-&gt;<name>control_in</name>.<name>only_if_cached</name></name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>ap_log_rerror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_DEBUG</name></expr></argument>, <argument><expr><name>APR_SUCCESS</name></expr></argument>, <argument><expr><name>r</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00696</expr></argument>)</argument_list></call>
+                "cache: 'only-if-cached' requested and no cached entity, "
+                "returning 504 Gateway Timeout for: %s"</expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>uri</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>HTTP_GATEWAY_TIME_OUT</name></expr>;</return>
+    }</block></then></if>
+
+    <return>return <expr><name>DECLINED</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>cache_canonicalise_key</name><parameter_list>(<param><decl><type><name>request_rec</name> *</type><name>r</name></decl></param>, <param><decl><type><name>apr_pool_t</name>*</type> <name>p</name></decl></param>,
+                                           <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>query</name></decl></param>,
+                                           <param><decl><type><name>apr_uri_t</name> *</type><name>parsed_uri</name></decl></param>,
+                                           <param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>key</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>cache_server_conf</name> *</type><name>conf</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name> *</type><name>port_str</name></decl>, *<decl><type ref="prev"/><name>hn</name></decl>, *<decl><type ref="prev"/><name>lcs</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>hostname</name></decl>, *<decl><type ref="prev"/><name>scheme</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>kpath</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>kquery</name></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>*<name>key</name></expr>)</condition><then> <block>{
+        <comment type="block">/*
+         * We have been here before during the processing of this request.
+         */</comment>
+        <return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/*
+     * Get the module configuration. We need this for the CacheIgnoreQueryString
+     * option below.
+     */</comment>
+    <expr_stmt><expr><name>conf</name> = (<name>cache_server_conf</name> *) <call><name>ap_get_module_config</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>server</name>-&gt;<name>module_config</name></name></expr></argument>,
+            <argument><expr>&amp;<name>cache_module</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/*
+     * Use the canonical name to improve cache hit rate, but only if this is
+     * not a proxy request or if this is a reverse proxy request.
+     * We need to handle both cases in the same manner as for the reverse proxy
+     * case we have the following situation:
+     *
+     * If a cached entry is looked up by mod_cache's quick handler r-&gt;proxyreq
+     * is still unset in the reverse proxy case as it only gets set in the
+     * translate name hook (either by ProxyPass or mod_rewrite) which is run
+     * after the quick handler hook. This is different to the forward proxy
+     * case where it gets set before the quick handler is run (in the
+     * post_read_request hook).
+     * If a cache entry is created by the CACHE_SAVE filter we always have
+     * r-&gt;proxyreq set correctly.
+     * So we must ensure that in the reverse proxy case we use the same code
+     * path and using the canonical name seems to be the right thing to do
+     * in the reverse proxy case.
+     */</comment>
+    <if>if <condition>(<expr>!<name><name>r</name>-&gt;<name>proxyreq</name></name> || (<name><name>r</name>-&gt;<name>proxyreq</name></name> == <name>PROXYREQ_REVERSE</name>)</expr>)</condition><then> <block>{
+        <if>if <condition>(<expr><name><name>conf</name>-&gt;<name>base_uri</name></name> &amp;&amp; <name><name>conf</name>-&gt;<name>base_uri</name>-&gt;<name>hostname</name></name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>hostname</name> = <name><name>conf</name>-&gt;<name>base_uri</name>-&gt;<name>hostname</name></name></expr>;</expr_stmt>
+        }</block></then>
+        <else>else <block>{
+            <comment type="block">/* Use _default_ as the hostname if none present, as in mod_vhost */</comment>
+            <expr_stmt><expr><name>hostname</name> = <call><name>ap_get_server_name</name><argument_list>(<argument><expr><name>r</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <if>if <condition>(<expr>!<name>hostname</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><name>hostname</name> = "_default_"</expr>;</expr_stmt>
+            }</block></then></if>
+        }</block></else></if>
+    }</block></then>
+    <else>else <if>if <condition>(<expr><name><name>parsed_uri</name>-&gt;<name>hostname</name></name></expr>)</condition><then> <block>{
+        <comment type="block">/* Copy the parsed uri hostname */</comment>
+        <expr_stmt><expr><name>hn</name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name><name>parsed_uri</name>-&gt;<name>hostname</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>ap_str_tolower</name><argument_list>(<argument><expr><name>hn</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <comment type="block">/* const work-around */</comment>
+        <expr_stmt><expr><name>hostname</name> = <name>hn</name></expr>;</expr_stmt>
+    }</block></then>
+    <else>else <block>{
+        <comment type="block">/* We are a proxied request, with no hostname. Unlikely
+         * to get very far - but just in case */</comment>
+        <expr_stmt><expr><name>hostname</name> = "_default_"</expr>;</expr_stmt>
+    }</block></else></if></else></if>
+
+    <comment type="block">/*
+     * Copy the scheme, ensuring that it is lower case. If the parsed uri
+     * contains no string or if this is not a proxy request get the http
+     * scheme for this request. As r-&gt;parsed_uri.scheme is not set if this
+     * is a reverse proxy request, it is ensured that the cases
+     * "no proxy request" and "reverse proxy request" are handled in the same
+     * manner (see above why this is needed).
+     */</comment>
+    <if>if <condition>(<expr><name><name>r</name>-&gt;<name>proxyreq</name></name> &amp;&amp; <name><name>parsed_uri</name>-&gt;<name>scheme</name></name></expr>)</condition><then> <block>{
+        <comment type="block">/* Copy the scheme and lower-case it */</comment>
+        <expr_stmt><expr><name>lcs</name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name><name>parsed_uri</name>-&gt;<name>scheme</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>ap_str_tolower</name><argument_list>(<argument><expr><name>lcs</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <comment type="block">/* const work-around */</comment>
+        <expr_stmt><expr><name>scheme</name> = <name>lcs</name></expr>;</expr_stmt>
+    }</block></then>
+    <else>else <block>{
+        <if>if <condition>(<expr><name><name>conf</name>-&gt;<name>base_uri</name></name> &amp;&amp; <name><name>conf</name>-&gt;<name>base_uri</name>-&gt;<name>scheme</name></name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>scheme</name> = <name><name>conf</name>-&gt;<name>base_uri</name>-&gt;<name>scheme</name></name></expr>;</expr_stmt>
+        }</block></then>
+        <else>else <block>{
+            <expr_stmt><expr><name>scheme</name> = <call><name>ap_http_scheme</name><argument_list>(<argument><expr><name>r</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></else></if>
+    }</block></else></if>
+
+    <comment type="block">/*
+     * If this is a proxy request, but not a reverse proxy request (see comment
+     * above why these cases must be handled in the same manner), copy the
+     * URI's port-string (which may be a service name). If the URI contains
+     * no port-string, use apr-util's notion of the default port for that
+     * scheme - if available. Otherwise use the port-number of the current
+     * server.
+     */</comment>
+    <if>if <condition>(<expr><name><name>r</name>-&gt;<name>proxyreq</name></name> &amp;&amp; (<name><name>r</name>-&gt;<name>proxyreq</name></name> != <name>PROXYREQ_REVERSE</name>)</expr>)</condition><then> <block>{
+        <if>if <condition>(<expr><name><name>parsed_uri</name>-&gt;<name>port_str</name></name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>port_str</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><call><name>strlen</name><argument_list>(<argument><expr><name><name>parsed_uri</name>-&gt;<name>port_str</name></name></expr></argument>)</argument_list></call> + 2</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>port_str</name><index>[<expr>0</expr>]</index></name> = ':'</expr>;</expr_stmt>
+            <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name><name>parsed_uri</name>-&gt;<name>port_str</name><index>[<expr><name>i</name></expr>]</index></name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>) <block>{
+                <expr_stmt><expr><name><name>port_str</name><index>[<expr><name>i</name> + 1</expr>]</index></name> = <call><name>apr_tolower</name><argument_list>(<argument><expr><name><name>parsed_uri</name>-&gt;<name>port_str</name><index>[<expr><name>i</name></expr>]</index></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></for>
+        }</block></then>
+        <else>else <if>if <condition>(<expr><call><name>apr_uri_port_of_scheme</name><argument_list>(<argument><expr><name>scheme</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>port_str</name> = <call><name>apr_psprintf</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>":%u"</expr></argument>, <argument><expr><call><name>apr_uri_port_of_scheme</name><argument_list>(<argument><expr><name>scheme</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+        <else>else <block>{
+            <comment type="block">/* No port string given in the AbsoluteUri, and we have no
+             * idea what the default port for the scheme is. Leave it
+             * blank and live with the inefficiency of some extra cached
+             * entities.
+             */</comment>
+            <expr_stmt><expr><name>port_str</name> = ""</expr>;</expr_stmt>
+        }</block></else></if></else></if>
+    }</block></then>
+    <else>else <block>{
+        <if>if <condition>(<expr><name><name>conf</name>-&gt;<name>base_uri</name></name> &amp;&amp; <name><name>conf</name>-&gt;<name>base_uri</name>-&gt;<name>port_str</name></name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>port_str</name> = <name><name>conf</name>-&gt;<name>base_uri</name>-&gt;<name>port_str</name></name></expr>;</expr_stmt>
+        }</block></then>
+        <else>else <if>if <condition>(<expr><name><name>conf</name>-&gt;<name>base_uri</name></name> &amp;&amp; <name><name>conf</name>-&gt;<name>base_uri</name>-&gt;<name>hostname</name></name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>port_str</name> = ""</expr>;</expr_stmt>
+        }</block></then>
+        <else>else <block>{
+            <comment type="block">/* Use the server port */</comment>
+            <expr_stmt><expr><name>port_str</name> = <call><name>apr_psprintf</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>":%u"</expr></argument>, <argument><expr><call><name>ap_get_server_port</name><argument_list>(<argument><expr><name>r</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></else></if></else></if>
+    }</block></else></if>
+
+    <comment type="block">/*
+     * Check if we need to ignore session identifiers in the URL and do so
+     * if needed.
+     */</comment>
+    <expr_stmt><expr><name>kpath</name> = <name>path</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name>kquery</name> = <name><name>conf</name>-&gt;<name>ignorequerystring</name></name> ? <name>NULL</name> : <name>query</name></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name><name>conf</name>-&gt;<name>ignore_session_id</name>-&gt;<name>nelts</name></name></expr>)</condition><then> <block>{
+        <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>char</name> **</type><name>identifier</name></decl>;</decl_stmt>
+
+        <expr_stmt><expr><name>identifier</name> = (<name>char</name> **) <name><name>conf</name>-&gt;<name>ignore_session_id</name>-&gt;<name>elts</name></name></expr>;</expr_stmt>
+        <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name><name>conf</name>-&gt;<name>ignore_session_id</name>-&gt;<name>nelts</name></name></expr>;</condition> <incr><expr><name>i</name>++</expr>, <expr><name>identifier</name>++</expr></incr>) <block>{
+            <decl_stmt><decl><type><name>int</name></type> <name>len</name></decl>;</decl_stmt>
+            <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>param</name></decl>;</decl_stmt>
+
+            <expr_stmt><expr><name>len</name> = <call><name>strlen</name><argument_list>(<argument><expr>*<name>identifier</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <comment type="block">/*
+             * Check that we have a parameter separator in the last segment
+             * of the path and that the parameter matches our identifier
+             */</comment>
+            <if>if <condition>(<expr>(<name>param</name> = <call><name>ap_strrchr_c</name><argument_list>(<argument><expr><name>kpath</name></expr></argument>, <argument><expr>';'</expr></argument>)</argument_list></call>)
+                    &amp;&amp; !<call><name>strncmp</name><argument_list>(<argument><expr><name>param</name> + 1</expr></argument>, <argument><expr>*<name>identifier</name></expr></argument>, <argument><expr><name>len</name></expr></argument>)</argument_list></call>
+                    &amp;&amp; (*(<name>param</name> + <name>len</name> + 1) == '=')
+                    &amp;&amp; !<call><name>ap_strchr_c</name><argument_list>(<argument><expr><name>param</name> + <name>len</name> + 2</expr></argument>, <argument><expr>'/'</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+                <expr_stmt><expr><name>kpath</name> = <call><name>apr_pstrmemdup</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>kpath</name></expr></argument>, <argument><expr><name>param</name> - <name>kpath</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <continue>continue;</continue>
+            }</block></then></if>
+            <comment type="block">/*
+             * Check if the identifier is in the query string and cut it out.
+             */</comment>
+            <if>if <condition>(<expr><name>kquery</name> &amp;&amp; *<name>kquery</name></expr>)</condition><then> <block>{
+                <comment type="block">/*
+                 * First check if the identifier is at the beginning of the
+                 * query string and followed by a '='
+                 */</comment>
+                <if>if <condition>(<expr>!<call><name>strncmp</name><argument_list>(<argument><expr><name>kquery</name></expr></argument>, <argument><expr>*<name>identifier</name></expr></argument>, <argument><expr><name>len</name></expr></argument>)</argument_list></call> &amp;&amp; <name><name>kquery</name><index>[<expr><name>len</name></expr>]</index></name> == '='</expr>)</condition><then> <block>{
+                    <expr_stmt><expr><name>param</name> = <name>kquery</name></expr>;</expr_stmt>
+                }</block></then>
+                <else>else <block>{
+                    <decl_stmt><decl><type><name>char</name> *</type><name>complete</name></decl>;</decl_stmt>
+
+                    <comment type="block">/*
+                     * In order to avoid subkey matching (PR 48401) prepend
+                     * identifier with a '&amp;' and append a '='
+                     */</comment>
+                    <expr_stmt><expr><name>complete</name> = <call><name>apr_pstrcat</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr>"&amp;"</expr></argument>, <argument><expr>*<name>identifier</name></expr></argument>, <argument><expr>"="</expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                    <expr_stmt><expr><name>param</name> = <call><name>ap_strstr_c</name><argument_list>(<argument><expr><name>kquery</name></expr></argument>, <argument><expr><name>complete</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                    <comment type="block">/* If we found something we are sitting on the '&amp;' */</comment>
+                    <if>if <condition>(<expr><name>param</name></expr>)</condition><then> <block>{
+                        <expr_stmt><expr><name>param</name>++</expr>;</expr_stmt>
+                    }</block></then></if>
+                }</block></else></if>
+                <if>if <condition>(<expr><name>param</name></expr>)</condition><then> <block>{
+                    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>amp</name></decl>;</decl_stmt>
+                    <decl_stmt><decl><type><name>char</name> *</type><name>dup</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+
+                    <if>if <condition>(<expr><name>kquery</name> != <name>param</name></expr>)</condition><then> <block>{
+                        <expr_stmt><expr><name>dup</name> = <call><name>apr_pstrmemdup</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>kquery</name></expr></argument>, <argument><expr><name>param</name> - <name>kquery</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                        <expr_stmt><expr><name>kquery</name> = <name>dup</name></expr>;</expr_stmt>
+                    }</block></then>
+                    <else>else <block>{
+                        <expr_stmt><expr><name>kquery</name> = ""</expr>;</expr_stmt>
+                    }</block></else></if>
+
+                    <if>if <condition>(<expr>(<name>amp</name> = <call><name>ap_strchr_c</name><argument_list>(<argument><expr><name>param</name> + <name>len</name> + 1</expr></argument>, <argument><expr>'&amp;'</expr></argument>)</argument_list></call>)</expr>)</condition><then> <block>{
+                        <expr_stmt><expr><name>kquery</name> = <call><name>apr_pstrcat</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>kquery</name></expr></argument>, <argument><expr><name>amp</name> + 1</expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                    }</block></then>
+                    <else>else <block>{
+                        <comment type="block">/*
+                         * If query string is not "", then we have the case
+                         * that the identifier parameter we removed was the
+                         * last one in the original query string. Hence we have
+                         * a trailing '&amp;' which needs to be removed.
+                         */</comment>
+                        <if>if <condition>(<expr><name>dup</name></expr>)</condition><then> <block>{
+                            <expr_stmt><expr><name><name>dup</name><index>[<expr><call><name>strlen</name><argument_list>(<argument><expr><name>dup</name></expr></argument>)</argument_list></call> - 1</expr>]</index></name> = '\0'</expr>;</expr_stmt>
+                        }</block></then></if>
+                    }</block></else></if>
+                }</block></then></if>
+            }</block></then></if>
+        }</block></for>
+    }</block></then></if>
+
+    <comment type="block">/* Key format is a URI, optionally without the query-string (NULL
+     * per above if conf-&gt;ignorequerystring)
+     */</comment>
+    <expr_stmt><expr>*<name>key</name> = <call><name>apr_pstrcat</name><argument_list>(<argument><expr><name>p</name></expr></argument>, <argument><expr><name>scheme</name></expr></argument>, <argument><expr>"://"</expr></argument>, <argument><expr><name>hostname</name></expr></argument>, <argument><expr><name>port_str</name></expr></argument>,
+                       <argument><expr><name>kpath</name></expr></argument>, <argument><expr>"?"</expr></argument>, <argument><expr><name>kquery</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <comment type="block">/*
+     * Store the key in the request_config for the cache as r-&gt;parsed_uri
+     * might have changed in the time from our first visit here triggered by the
+     * quick handler and our possible second visit triggered by the CACHE_SAVE
+     * filter (e.g. r-&gt;parsed_uri got unescaped). In this case we would save the
+     * resource in the cache under a key where it is never found by the quick
+     * handler during following requests.
+     */</comment>
+    <expr_stmt><expr><call><name>ap_log_rerror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_DEBUG</name></expr></argument>, <argument><expr><name>APR_SUCCESS</name></expr></argument>, <argument><expr><name>r</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00698</expr></argument>)</argument_list></call>
+                  "cache: Key for entity %s?%s is %s"</expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>query</name></expr></argument>, <argument><expr>*<name>key</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+
+<function><type><name>apr_status_t</name></type> <name>cache_generate_key_default</name><parameter_list>(<param><decl><type><name>request_rec</name> *</type><name>r</name></decl></param>, <param><decl><type><name>apr_pool_t</name>*</type> <name>p</name></decl></param>,
+                                        <param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>key</name></decl></param>)</parameter_list>
+<block>{
+    <comment type="block">/* In early processing (quick-handler, forward proxy), we want the initial
+     * query-string from r-&gt;parsed_uri, since any change before CACHE_SAVE
+     * shouldn't modify the key. Otherwise we want the actual query-string.
+     */</comment>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name> <init>= <expr><name><name>r</name>-&gt;<name>uri</name></name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>query</name> <init>= <expr><name><name>r</name>-&gt;<name>args</name></name></expr></init></decl>;</decl_stmt>
+    <if>if <condition>(<expr><call><name>cache_use_early_url</name><argument_list>(<argument><expr><name>r</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>path</name> = <name><name>r</name>-&gt;<name>parsed_uri</name>.<name>path</name></name></expr>;</expr_stmt>
+        <expr_stmt><expr><name>query</name> = <name><name>r</name>-&gt;<name>parsed_uri</name>.<name>query</name></name></expr>;</expr_stmt>
+    }</block></then></if>
+    <return>return <expr><call><name>cache_canonicalise_key</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><name>p</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>query</name></expr></argument>, <argument><expr>&amp;<name><name>r</name>-&gt;<name>parsed_uri</name></name></expr></argument>, <argument><expr><name>key</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<comment type="block">/*
+ * Invalidate a specific URL entity in all caches
+ *
+ * All cached entities for this URL are removed, usually in
+ * response to a POST/PUT or DELETE.
+ *
+ * This function returns OK if at least one entity was found and
+ * removed, and DECLINED if no cached entities were removed.
+ */</comment>
+<function><type><name>int</name></type> <name>cache_invalidate</name><parameter_list>(<param><decl><type><name>cache_request_rec</name> *</type><name>cache</name></decl></param>, <param><decl><type><name>request_rec</name> *</type><name>r</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>cache_provider_list</name> *</type><name>list</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>, <decl><type ref="prev"/><name>status</name> <init>= <expr><name>DECLINED</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>cache_handle_t</name> *</type><name>h</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_uri_t</name></type> <name>location_uri</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>apr_uri_t</name></type> <name>content_location_uri</name></decl>;</decl_stmt>
+
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>location</name></decl>, *<decl><type ref="prev"/><name>location_key</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>content_location</name></decl>, *<decl><type ref="prev"/><name>content_location_key</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+
+    <if>if <condition>(<expr>!<name>cache</name></expr>)</condition><then> <block>{
+        <comment type="block">/* This should never happen */</comment>
+        <expr_stmt><expr><call><name>ap_log_rerror</name><argument_list>(
+                <argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_ERR</name></expr></argument>, <argument><expr><name>APR_EGENERAL</name></expr></argument>, <argument><expr><name>r</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>00697</expr></argument>)</argument_list></call> "cache: No cache request information available for key"
+                " generation"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr><name>DECLINED</name></expr>;</return>
+    }</block></then></if>
+
+    <if>if <condition>(<expr>!<name><name>cache</name>-&gt;<name>key</name></name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>rv</name> = <call><name>cache_generate_key</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>&amp;<name><name>cache</name>-&gt;<name>key</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+            <return>return <expr><name>DECLINED</name></expr>;</return>
+        }</block></then></if>
+    }</block></then></if>
+
+    <expr_stmt><expr><name>location</name> = <call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_out</name></name></expr></argument>, <argument><expr>"Location"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>location</name></expr>)</condition><then> <block>{
+        <if>if <condition>(<expr><call><name>apr_uri_parse</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>location</name></expr></argument>, <argument><expr>&amp;<name>location_uri</name></expr></argument>)</argument_list></call>
+                || <call><name>cache_canonicalise_key</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>,
+                                          <argument><expr><name><name>location_uri</name>.<name>path</name></name></expr></argument>,
+                                          <argument><expr><name><name>location_uri</name>.<name>query</name></name></expr></argument>,
+                                          <argument><expr>&amp;<name>location_uri</name></expr></argument>, <argument><expr>&amp;<name>location_key</name></expr></argument>)</argument_list></call>
+                || !(<name><name>r</name>-&gt;<name>parsed_uri</name>.<name>hostname</name></name>
+                     &amp;&amp; <name><name>location_uri</name>.<name>hostname</name></name>
+                     &amp;&amp; !<call><name>strcmp</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>parsed_uri</name>.<name>hostname</name></name></expr></argument>,
+                                <argument><expr><name><name>location_uri</name>.<name>hostname</name></name></expr></argument>)</argument_list></call>)</expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>location_key</name> = <name>NULL</name></expr>;</expr_stmt>
+        }</block></then></if>
+    }</block></then></if>
+
+    <expr_stmt><expr><name>content_location</name> = <call><name>apr_table_get</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>headers_out</name></name></expr></argument>, <argument><expr>"Content-Location"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>content_location</name></expr>)</condition><then> <block>{
+        <if>if <condition>(<expr><call><name>apr_uri_parse</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>content_location</name></expr></argument>,
+                          <argument><expr>&amp;<name>content_location_uri</name></expr></argument>)</argument_list></call>
+                || <call><name>cache_canonicalise_key</name><argument_list>(<argument><expr><name>r</name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>,
+                                          <argument><expr><name><name>content_location_uri</name>.<name>path</name></name></expr></argument>,
+                                          <argument><expr><name><name>content_location_uri</name>.<name>query</name></name></expr></argument>,
+                                          <argument><expr>&amp;<name>content_location_uri</name></expr></argument>,
+                                          <argument><expr>&amp;<name>content_location_key</name></expr></argument>)</argument_list></call>
+                || !(<name><name>r</name>-&gt;<name>parsed_uri</name>.<name>hostname</name></name>
+                     &amp;&amp; <name><name>content_location_uri</name>.<name>hostname</name></name>
+                     &amp;&amp; !<call><name>strcmp</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>parsed_uri</name>.<name>hostname</name></name></expr></argument>,
+                                <argument><expr><name><name>content_location_uri</name>.<name>hostname</name></name></expr></argument>)</argument_list></call>)</expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>content_location_key</name> = <name>NULL</name></expr>;</expr_stmt>
+        }</block></then></if>
+    }</block></then></if>
+
+    <comment type="block">/* go through the cache types */</comment>
+    <expr_stmt><expr><name>h</name> = <call><name>apr_palloc</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>cache_handle_t</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>list</name> = <name><name>cache</name>-&gt;<name>providers</name></name></expr>;</expr_stmt>
+
+    <while>while <condition>(<expr><name>list</name></expr>)</condition> <block>{
+
+        <comment type="block">/* invalidate the request uri */</comment>
+        <expr_stmt><expr><name>rv</name> = <call><name><name>list</name>-&gt;<name>provider</name>-&gt;<name>open_entity</name></name><argument_list>(<argument><expr><name>h</name></expr></argument>, <argument><expr><name>r</name></expr></argument>, <argument><expr><name><name>cache</name>-&gt;<name>key</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>OK</name> == <name>rv</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>rv</name> = <call><name><name>list</name>-&gt;<name>provider</name>-&gt;<name>invalidate_entity</name></name><argument_list>(<argument><expr><name>h</name></expr></argument>, <argument><expr><name>r</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name>status</name> = <name>OK</name></expr>;</expr_stmt>
+        }</block></then></if>
+        <expr_stmt><expr><call><name>ap_log_rerror</name><argument_list>(
+                <argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_DEBUG</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name>r</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>02468</expr></argument>)</argument_list></call> "cache: Attempted to invalidate cached entity with key: %s"</expr></argument>, <argument><expr><name><name>cache</name>-&gt;<name>key</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+        <comment type="block">/* invalidate the Location */</comment>
+        <if>if <condition>(<expr><name>location_key</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>rv</name> = <call><name><name>list</name>-&gt;<name>provider</name>-&gt;<name>open_entity</name></name><argument_list>(<argument><expr><name>h</name></expr></argument>, <argument><expr><name>r</name></expr></argument>, <argument><expr><name>location_key</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <if>if <condition>(<expr><name>OK</name> == <name>rv</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><name>rv</name> = <call><name><name>list</name>-&gt;<name>provider</name>-&gt;<name>invalidate_entity</name></name><argument_list>(<argument><expr><name>h</name></expr></argument>, <argument><expr><name>r</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><name>status</name> = <name>OK</name></expr>;</expr_stmt>
+            }</block></then></if>
+            <expr_stmt><expr><call><name>ap_log_rerror</name><argument_list>(
+                    <argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_DEBUG</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name>r</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>02469</expr></argument>)</argument_list></call> "cache: Attempted to invalidate cached entity with key: %s"</expr></argument>, <argument><expr><name>location_key</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+
+        <comment type="block">/* invalidate the Content-Location */</comment>
+        <if>if <condition>(<expr><name>content_location_key</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>rv</name> = <call><name><name>list</name>-&gt;<name>provider</name>-&gt;<name>open_entity</name></name><argument_list>(<argument><expr><name>h</name></expr></argument>, <argument><expr><name>r</name></expr></argument>, <argument><expr><name>content_location_key</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <if>if <condition>(<expr><name>OK</name> == <name>rv</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><name>rv</name> = <call><name><name>list</name>-&gt;<name>provider</name>-&gt;<name>invalidate_entity</name></name><argument_list>(<argument><expr><name>h</name></expr></argument>, <argument><expr><name>r</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><name>status</name> = <name>OK</name></expr>;</expr_stmt>
+            }</block></then></if>
+            <expr_stmt><expr><call><name>ap_log_rerror</name><argument_list>(
+                    <argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_DEBUG</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name>r</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>02470</expr></argument>)</argument_list></call> "cache: Attempted to invalidate cached entity with key: %s"</expr></argument>, <argument><expr><name>content_location_key</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+
+        <expr_stmt><expr><name>list</name> = <name><name>list</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+    }</block></while>
+
+    <return>return <expr><name>status</name></expr>;</return>
+}</block></function>
+</unit>

@@ -1,0 +1,855 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/subversion-1.5.1/source/subversion/libsvn_ra_svn/cyrus_auth.c"><comment type="block">/*
+ * cyrus_auth.c :  functions for Cyrus SASL-based authentication
+ *
+ * ====================================================================
+ * Copyright (c) 2006-2007 CollabNet.  All rights reserved.
+ *
+ * This software is licensed as described in the file COPYING, which
+ * you should have received as part of this distribution.  The terms
+ * are also available at http://subversion.tigris.org/license-1.html.
+ * If newer versions of this license are posted there, you may use a
+ * newer version instead, at your option.
+ *
+ * This software consists of voluntary contributions made by many
+ * individuals.  For exact contribution history, see the revision
+ * history and logs, available at http://subversion.tigris.org/.
+ * ====================================================================
+ */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_private_config.h"</cpp:file></cpp:include>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>SVN_HAVE_SASL</name></cpp:ifdef>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>APR_WANT_STRFUNC</name></cpp:macro></cpp:define>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_want.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_general.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_strings.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_atomic.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_thread_mutex.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_version.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_types.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_string.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_error.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_pools.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_ra.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_ra_svn.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_base64.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"private/svn_atomic.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"private/ra_svn_sasl.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"ra_svn.h"</cpp:file></cpp:include>
+
+<comment type="block">/* Note: In addition to being used via svn_atomic__init_once to control
+ *       initialization of the SASL code this will also be referenced in
+ *       the various functions that work with sasl mutexes to determine
+ *       if the sasl pool has been destroyed.  This should be safe, since
+ *       it is only set back to zero in the sasl pool's cleanups, which
+ *       only happens during apr_terminate, which we assume is occurring
+ *       in atexit processing, at which point we are already running in
+ *       single threaded mode.
+ */</comment>
+<decl_stmt><decl><type><specifier>volatile</specifier> <name>svn_atomic_t</name></type> <name>svn_ra_svn__sasl_status</name></decl>;</decl_stmt>
+
+<decl_stmt><decl><type><specifier>static</specifier> <specifier>volatile</specifier> <name>svn_atomic_t</name></type> <name>sasl_ctx_count</name></decl>;</decl_stmt>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>apr_pool_t</name> *</type><name>sasl_pool</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+
+
+<comment type="block">/* Pool cleanup called when sasl_pool is destroyed. */</comment>
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>sasl_done_cb</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>data</name></decl></param>)</parameter_list>
+<block>{
+  <comment type="block">/* Reset svn_ra_svn__sasl_status, in case the client calls
+     apr_initialize()/apr_terminate() more than once. */</comment>
+  <expr_stmt><expr><name>svn_ra_svn__sasl_status</name> = 0</expr>;</expr_stmt>
+  <if>if <condition>(<expr><call><name>svn_atomic_dec</name><argument_list>(<argument><expr>&amp;<name>sasl_ctx_count</name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+    <expr_stmt><expr><call><name>sasl_done</name><argument_list>()</argument_list></call></expr>;</expr_stmt></then></if>
+  <return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_HAS_THREADS</name></expr></cpp:if>
+<comment type="block">/* Cyrus SASL is thread-safe only if we supply it with mutex functions
+ * (with sasl_set_mutex()).  To make this work with APR, we need to use the
+ * global sasl_pool for the mutex allocations.  Freeing a mutex actually
+ * returns it to a global array.  We allocate mutexes from this
+ * array if it is non-empty, or directly from the pool otherwise.
+ * We also need a mutex to serialize accesses to the array itself.
+ */</comment>
+
+<comment type="block">/* An array of allocated, but unused, apr_thread_mutex_t's. */</comment>
+<decl_stmt><decl><type><specifier>static</specifier> <name>apr_array_header_t</name> *</type><name>free_mutexes</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+
+<comment type="block">/* A mutex to serialize access to the array. */</comment>
+<decl_stmt><decl><type><specifier>static</specifier> <name>apr_thread_mutex_t</name> *</type><name>array_mutex</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+
+<comment type="block">/* Callbacks we pass to sasl_set_mutex(). */</comment>
+
+<function><type><specifier>static</specifier> <name>void</name> *</type><name>sasl_mutex_alloc_cb</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>apr_thread_mutex_t</name> *</type><name>mutex</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_status_t</name></type> <name>apr_err</name></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr>!<name>svn_ra_svn__sasl_status</name></expr>)</condition><then>
+    <return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+  <expr_stmt><expr><name>apr_err</name> = <call><name>apr_thread_mutex_lock</name><argument_list>(<argument><expr><name>array_mutex</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>apr_err</name> != <name>APR_SUCCESS</name></expr>)</condition><then>
+    <return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+  <if>if <condition>(<expr><call><name>apr_is_empty_array</name><argument_list>(<argument><expr><name>free_mutexes</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><name>apr_err</name> = <call><name>apr_thread_mutex_create</name><argument_list>(<argument><expr>&amp;<name>mutex</name></expr></argument>,
+                                        <argument><expr><name>APR_THREAD_MUTEX_DEFAULT</name></expr></argument>,
+                                        <argument><expr><name>sasl_pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>apr_err</name> != <name>APR_SUCCESS</name></expr>)</condition><then>
+        <expr_stmt><expr><name>mutex</name> = <name>NULL</name></expr>;</expr_stmt></then></if>
+    }</block></then>
+  <else>else
+    <expr_stmt><expr><name>mutex</name> = *((<name>apr_thread_mutex_t</name>**)<call><name>apr_array_pop</name><argument_list>(<argument><expr><name>free_mutexes</name></expr></argument>)</argument_list></call>)</expr>;</expr_stmt></else></if>
+
+  <expr_stmt><expr><name>apr_err</name> = <call><name>apr_thread_mutex_unlock</name><argument_list>(<argument><expr><name>array_mutex</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>apr_err</name> != <name>APR_SUCCESS</name></expr>)</condition><then>
+    <return>return <expr><name>NULL</name></expr>;</return></then></if>
+
+  <return>return <expr><name>mutex</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type> <name>sasl_mutex_lock_cb</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>mutex</name></decl></param>)</parameter_list>
+<block>{
+  <if>if <condition>(<expr>!<name>svn_ra_svn__sasl_status</name></expr>)</condition><then>
+    <return>return <expr>0</expr>;</return></then></if>
+  <return>return <expr>(<call><name>apr_thread_mutex_lock</name><argument_list>(<argument><expr><name>mutex</name></expr></argument>)</argument_list></call> == <name>APR_SUCCESS</name>) ? 0 : -1</expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type> <name>sasl_mutex_unlock_cb</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>mutex</name></decl></param>)</parameter_list>
+<block>{
+  <if>if <condition>(<expr>!<name>svn_ra_svn__sasl_status</name></expr>)</condition><then>
+    <return>return <expr>0</expr>;</return></then></if>
+  <return>return <expr>(<call><name>apr_thread_mutex_unlock</name><argument_list>(<argument><expr><name>mutex</name></expr></argument>)</argument_list></call> == <name>APR_SUCCESS</name>) ? 0 : -1</expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>void</name></type> <name>sasl_mutex_free_cb</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>mutex</name></decl></param>)</parameter_list>
+<block>{
+  <if>if <condition>(<expr><name>svn_ra_svn__sasl_status</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>apr_status_t</name></type> <name>apr_err</name> <init>= <expr><call><name>apr_thread_mutex_lock</name><argument_list>(<argument><expr><name>array_mutex</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+      <if>if <condition>(<expr><name>apr_err</name> == <name>APR_SUCCESS</name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>APR_ARRAY_PUSH</name><argument_list>(<argument><expr><name>free_mutexes</name></expr></argument>, <argument><expr><name>apr_thread_mutex_t</name>*</expr></argument>)</argument_list></call> = <name>mutex</name></expr>;</expr_stmt>
+          <expr_stmt><expr><call><name>apr_thread_mutex_unlock</name><argument_list>(<argument><expr><name>array_mutex</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+    }</block></then></if>
+}</block></function>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* APR_HAS_THREADS */</comment>
+
+<function><type><name>apr_status_t</name></type> <name>svn_ra_svn__sasl_common_init</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>apr_status_t</name></type> <name>apr_err</name> <init>= <expr><name>APR_SUCCESS</name></expr></init></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name>sasl_pool</name> = <call><name>svn_pool_create</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>sasl_ctx_count</name> = 1</expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>apr_pool_cleanup_register</name><argument_list>(<argument><expr><name>sasl_pool</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>sasl_done_cb</name></expr></argument>,
+                            <argument><expr><name>apr_pool_cleanup_null</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_HAS_THREADS</name></expr></cpp:if>
+  <expr_stmt><expr><call><name>sasl_set_mutex</name><argument_list>(<argument><expr><name>sasl_mutex_alloc_cb</name></expr></argument>,
+                 <argument><expr><name>sasl_mutex_lock_cb</name></expr></argument>,
+                 <argument><expr><name>sasl_mutex_unlock_cb</name></expr></argument>,
+                 <argument><expr><name>sasl_mutex_free_cb</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>free_mutexes</name> = <call><name>apr_array_make</name><argument_list>(<argument><expr><name>sasl_pool</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>apr_thread_mutex_t</name> *</expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>apr_err</name> = <call><name>apr_thread_mutex_create</name><argument_list>(<argument><expr>&amp;<name>array_mutex</name></expr></argument>,
+                                    <argument><expr><name>APR_THREAD_MUTEX_DEFAULT</name></expr></argument>,
+                                    <argument><expr><name>sasl_pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* APR_HAS_THREADS */</comment>
+  <return>return <expr><name>apr_err</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type><name>sasl_init_cb</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <if>if <condition>(<expr><call><name>svn_ra_svn__sasl_common_init</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call> != <name>APR_SUCCESS</name>
+      || <call><name>sasl_client_init</name><argument_list>(<argument><expr><name>NULL</name></expr></argument>)</argument_list></call> != <name>SASL_OK</name></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_NOT_AUTHORIZED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                            <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Could not initialize the SASL library"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type><name>svn_ra_svn__sasl_init</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>
+<block>{
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_atomic__init_once</name><argument_list>(<argument><expr>&amp;<name>svn_ra_svn__sasl_status</name></expr></argument>, <argument><expr><name>sasl_init_cb</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>sasl_dispose_cb</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>data</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>sasl_conn_t</name> *</type><name>sasl_ctx</name> <init>= <expr><name>data</name></expr></init></decl>;</decl_stmt>
+  <expr_stmt><expr><call><name>sasl_dispose</name><argument_list>(<argument><expr>&amp;<name>sasl_ctx</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><call><name>svn_atomic_dec</name><argument_list>(<argument><expr>&amp;<name>sasl_ctx_count</name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+    <expr_stmt><expr><call><name>sasl_done</name><argument_list>()</argument_list></call></expr>;</expr_stmt></then></if>
+  <return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+
+<function><type><name>void</name></type> <name>svn_ra_svn__default_secprops</name><parameter_list>(<param><decl><type><name>sasl_security_properties_t</name> *</type><name>secprops</name></decl></param>)</parameter_list>
+<block>{
+  <comment type="block">/* The minimum and maximum security strength factors that the chosen
+     SASL mechanism should provide.  0 means 'no encryption', 256 means
+     '256-bit encryption', which is about the best that any SASL
+     mechanism can provide.  Using these values effectively means 'use
+     whatever encryption the other side wants'.  Note that SASL will try
+     to use better encryption whenever possible, so if both the server and
+     the client use these values the highest possible encryption strength
+     will be used. */</comment>
+  <expr_stmt><expr><name><name>secprops</name>-&gt;<name>min_ssf</name></name> = 0</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>secprops</name>-&gt;<name>max_ssf</name></name> = 256</expr>;</expr_stmt>
+
+  <comment type="block">/* Set maxbufsize to the maximum amount of data we can read at any one time.
+     This value needs to be commmunicated to the peer if a security layer
+     is negotiated. */</comment>
+  <expr_stmt><expr><name><name>secprops</name>-&gt;<name>maxbufsize</name></name> = <name>SVN_RA_SVN__READBUF_SIZE</name></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name><name>secprops</name>-&gt;<name>security_flags</name></name> = 0</expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>secprops</name>-&gt;<name>property_names</name></name> = <name><name>secprops</name>-&gt;<name>property_values</name></name> = <name>NULL</name></expr>;</expr_stmt>
+}</block></function>
+
+<comment type="block">/* A baton type used by the SASL username and password callbacks. */</comment>
+<typedef>typedef <type><struct>struct <name>cred_baton</name> <block>{
+  <decl_stmt><decl><type><name>svn_auth_baton_t</name> *</type><name>auth_baton</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_auth_iterstate_t</name> *</type><name>iterstate</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>realmstring</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Unfortunately SASL uses two separate callbacks for the username and
+     password, but we must fetch both of them at the same time. So we cache
+     their values in the baton, set them to NULL individually when SASL
+     demands them, and fetch the next pair when both are NULL. */</comment>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>username</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>password</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Any errors we receive from svn_auth_{first,next}_credentials
+     are saved here. */</comment>
+  <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name></decl>;</decl_stmt>
+
+  <comment type="block">/* This flag is set when we run out of credential providers. */</comment>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>no_more_creds</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Were the auth callbacks ever called? */</comment>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>was_used</name></decl>;</decl_stmt>
+
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl>;</decl_stmt>
+}</block></struct></type> <name>cred_baton_t</name>;</typedef>
+
+<comment type="block">/* Call svn_auth_{first,next}_credentials. If successful, set BATON-&gt;username
+   and BATON-&gt;password to the new username and password and return TRUE,
+   otherwise return FALSE. If there are no more credentials, set
+   BATON-&gt;no_more_creds to TRUE. Any errors are saved in BATON-&gt;err. */</comment>
+<function><type><specifier>static</specifier> <name>svn_boolean_t</name></type>
+<name>get_credentials</name><parameter_list>(<param><decl><type><name>cred_baton_t</name> *</type><name>baton</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>void</name> *</type><name>creds</name></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr><name><name>baton</name>-&gt;<name>iterstate</name></name></expr>)</condition><then>
+    <expr_stmt><expr><name><name>baton</name>-&gt;<name>err</name></name> = <call><name>svn_auth_next_credentials</name><argument_list>(<argument><expr>&amp;<name>creds</name></expr></argument>, <argument><expr><name><name>baton</name>-&gt;<name>iterstate</name></name></expr></argument>,
+                                           <argument><expr><name><name>baton</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+  <else>else
+    <expr_stmt><expr><name><name>baton</name>-&gt;<name>err</name></name> = <call><name>svn_auth_first_credentials</name><argument_list>(<argument><expr>&amp;<name>creds</name></expr></argument>, <argument><expr>&amp;<name><name>baton</name>-&gt;<name>iterstate</name></name></expr></argument>,
+                                            <argument><expr><name>SVN_AUTH_CRED_SIMPLE</name></expr></argument>,
+                                            <argument><expr><name><name>baton</name>-&gt;<name>realmstring</name></name></expr></argument>,
+                                            <argument><expr><name><name>baton</name>-&gt;<name>auth_baton</name></name></expr></argument>, <argument><expr><name><name>baton</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+  <if>if <condition>(<expr><name><name>baton</name>-&gt;<name>err</name></name></expr>)</condition><then>
+    <return>return <expr><name>FALSE</name></expr>;</return></then></if>
+
+  <if>if <condition>(<expr>! <name>creds</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><name><name>baton</name>-&gt;<name>no_more_creds</name></name> = <name>TRUE</name></expr>;</expr_stmt>
+      <return>return <expr><name>FALSE</name></expr>;</return>
+    }</block></then></if>
+
+  <expr_stmt><expr><name><name>baton</name>-&gt;<name>username</name></name> = ((<name>svn_auth_cred_simple_t</name> *)<name>creds</name>)-&gt;<name>username</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>baton</name>-&gt;<name>password</name></name> = ((<name>svn_auth_cred_simple_t</name> *)<name>creds</name>)-&gt;<name>password</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>baton</name>-&gt;<name>was_used</name></name> = <name>TRUE</name></expr>;</expr_stmt>
+
+  <return>return <expr><name>TRUE</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* The username callback. Implements the sasl_getsimple_t interface. */</comment>
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>get_username_cb</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>b</name></decl></param>, <param><decl><type><name>int</name></type> <name>id</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>username</name></decl></param>, <param><decl><type><name>unsigned</name> *</type><name>len</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>cred_baton_t</name> *</type><name>baton</name> <init>= <expr><name>b</name></expr></init></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr><name><name>baton</name>-&gt;<name>username</name></name> || <call><name>get_credentials</name><argument_list>(<argument><expr><name>baton</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr>*<name>username</name> = <name><name>baton</name>-&gt;<name>username</name></name></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>len</name></expr>)</condition><then>
+        <expr_stmt><expr>*<name>len</name> = <call><name>strlen</name><argument_list>(<argument><expr><name><name>baton</name>-&gt;<name>username</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+      <expr_stmt><expr><name><name>baton</name>-&gt;<name>username</name></name> = <name>NULL</name></expr>;</expr_stmt>
+
+      <return>return <expr><name>SASL_OK</name></expr>;</return>
+    }</block></then></if>
+
+  <return>return <expr><name>SASL_FAIL</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* The password callback. Implements the sasl_getsecret_t interface. */</comment>
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>get_password_cb</name><parameter_list>(<param><decl><type><name>sasl_conn_t</name> *</type><name>conn</name></decl></param>, <param><decl><type><name>void</name> *</type><name>b</name></decl></param>, <param><decl><type><name>int</name></type> <name>id</name></decl></param>, <param><decl><type><name>sasl_secret_t</name> **</type><name>psecret</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>cred_baton_t</name> *</type><name>baton</name> <init>= <expr><name>b</name></expr></init></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr><name><name>baton</name>-&gt;<name>password</name></name> || <call><name>get_credentials</name><argument_list>(<argument><expr><name>baton</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>sasl_secret_t</name> *</type><name>secret</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>int</name></type> <name>len</name> <init>= <expr><call><name>strlen</name><argument_list>(<argument><expr><name><name>baton</name>-&gt;<name>password</name></name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+      <comment type="block">/* sasl_secret_t is a struct with a variable-sized array as a final
+         member, which means we need to allocate len-1 supplementary bytes
+         (one byte is part of sasl_secret_t, and we don't need a NULL
+         terminator). */</comment>
+      <expr_stmt><expr><name>secret</name> = <call><name>apr_palloc</name><argument_list>(<argument><expr><name><name>baton</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>secret</name></expr></argument>)</argument_list></sizeof> + <name>len</name> - 1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>secret</name>-&gt;<name>len</name></name> = <name>len</name></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name><name>secret</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name><name>baton</name>-&gt;<name>password</name></name></expr></argument>, <argument><expr><name>len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>baton</name>-&gt;<name>password</name></name> = <name>NULL</name></expr>;</expr_stmt>
+      <expr_stmt><expr>*<name>psecret</name> = <name>secret</name></expr>;</expr_stmt>
+
+      <return>return <expr><name>SASL_OK</name></expr>;</return>
+    }</block></then></if>
+
+  <return>return <expr><name>SASL_FAIL</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* Create a new SASL context. */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type><name>new_sasl_ctx</name><parameter_list>(<param><decl><type><name>sasl_conn_t</name> **</type><name>sasl_ctx</name></decl></param>,
+                                 <param><decl><type><name>svn_boolean_t</name></type> <name>is_tunneled</name></decl></param>,
+                                 <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>hostname</name></decl></param>,
+                                 <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>local_addrport</name></decl></param>,
+                                 <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>remote_addrport</name></decl></param>,
+                                 <param><decl><type><name>sasl_callback_t</name> *</type><name>callbacks</name></decl></param>,
+                                 <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>sasl_security_properties_t</name></type> <name>secprops</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>result</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name>result</name> = <call><name>sasl_client_new</name><argument_list>(<argument><expr><name>SVN_RA_SVN_SASL_NAME</name></expr></argument>,
+                           <argument><expr><name>hostname</name></expr></argument>, <argument><expr><name>local_addrport</name></expr></argument>, <argument><expr><name>remote_addrport</name></expr></argument>,
+                           <argument><expr><name>callbacks</name></expr></argument>, <argument><expr><name>SASL_SUCCESS_DATA</name></expr></argument>,
+                           <argument><expr><name>sasl_ctx</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><name>result</name> != <name>SASL_OK</name></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_NOT_AUTHORIZED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                            <argument><expr><call><name>sasl_errstring</name><argument_list>(<argument><expr><name>result</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <expr_stmt><expr><call><name>svn_atomic_inc</name><argument_list>(<argument><expr>&amp;<name>sasl_ctx_count</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>apr_pool_cleanup_register</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>*<name>sasl_ctx</name></expr></argument>, <argument><expr><name>sasl_dispose_cb</name></expr></argument>,
+                            <argument><expr><name>apr_pool_cleanup_null</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name>is_tunneled</name></expr>)</condition><then>
+    <block>{
+      <comment type="block">/* We need to tell SASL that this connection is tunneled,
+         otherwise it will ignore EXTERNAL. The third paramater
+         should be the username, but since SASL doesn't seem
+         to use it on the client side, any non-empty string will do. */</comment>
+      <expr_stmt><expr><name>result</name> = <call><name>sasl_setprop</name><argument_list>(<argument><expr>*<name>sasl_ctx</name></expr></argument>,
+                            <argument><expr><name>SASL_AUTH_EXTERNAL</name></expr></argument>, <argument><expr>" "</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>result</name> != <name>SASL_OK</name></expr>)</condition><then>
+        <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_NOT_AUTHORIZED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                <argument><expr><call><name>sasl_errdetail</name><argument_list>(<argument><expr>*<name>sasl_ctx</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+    }</block></then></if>
+
+  <comment type="block">/* Set security properties. Don't allow PLAIN or LOGIN, since we
+     don't support TLS yet. */</comment>
+  <expr_stmt><expr><call><name>svn_ra_svn__default_secprops</name><argument_list>(<argument><expr>&amp;<name>secprops</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>secprops</name>.<name>security_flags</name></name> = <name>SASL_SEC_NOPLAINTEXT</name></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>sasl_setprop</name><argument_list>(<argument><expr>*<name>sasl_ctx</name></expr></argument>, <argument><expr><name>SASL_SEC_PROPS</name></expr></argument>, <argument><expr>&amp;<name>secprops</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* Perform an authentication exchange */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type><name>try_auth</name><parameter_list>(<param><decl><type><name>svn_ra_svn__session_baton_t</name> *</type><name>sess</name></decl></param>,
+                             <param><decl><type><name>sasl_conn_t</name> *</type><name>sasl_ctx</name></decl></param>,
+                             <param><decl><type><name>svn_boolean_t</name> *</type><name>success</name></decl></param>,
+                             <param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>last_err</name></decl></param>,
+                             <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>mechstring</name></decl></param>,
+                             <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>sasl_interact_t</name> *</type><name>client_interact</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>out</name></decl>, *<decl><type ref="prev"/><name>mech</name></decl>, *<decl><type ref="prev"/><name>status</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>svn_string_t</name> *</type><name>arg</name> <init>= <expr><name>NULL</name></expr></init>, *<name>in</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>result</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>unsigned</name> <name>int</name></type> <name>outlen</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>again</name></decl>;</decl_stmt>
+
+  <do>do
+    <block>{
+      <expr_stmt><expr><name>again</name> = <name>FALSE</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name>result</name> = <call><name>sasl_client_start</name><argument_list>(<argument><expr><name>sasl_ctx</name></expr></argument>,
+                                 <argument><expr><name>mechstring</name></expr></argument>,
+                                 <argument><expr>&amp;<name>client_interact</name></expr></argument>,
+                                 <argument><expr>&amp;<name>out</name></expr></argument>,
+                                 <argument><expr>&amp;<name>outlen</name></expr></argument>,
+                                 <argument><expr>&amp;<name>mech</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <switch>switch <condition>(<expr><name>result</name></expr>)</condition>
+        <block>{
+          <case>case <expr><name>SASL_OK</name></expr>:
+          </case><case>case <expr><name>SASL_CONTINUE</name></expr>:
+            <comment type="block">/* Success. */</comment>
+            <break>break;</break>
+          </case><case>case <expr><name>SASL_NOMECH</name></expr>:
+            <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_SVN_NO_MECHANISMS</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</return>
+          </case><case>case <expr><name>SASL_BADPARAM</name></expr>:
+          </case><case>case <expr><name>SASL_NOMEM</name></expr>:
+            <comment type="block">/* Fatal error.  Fail the authentication. */</comment>
+            <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_NOT_AUTHORIZED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                    <argument><expr><call><name>sasl_errdetail</name><argument_list>(<argument><expr><name>sasl_ctx</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+          </case><default>default:
+            <comment type="block">/* For anything else, delete the mech from the list
+               and try again. */</comment>
+            <block>{
+              <decl_stmt><decl><type><name>char</name> *</type><name>dst</name> <init>= <expr><call><name>strstr</name><argument_list>(<argument><expr><name>mechstring</name></expr></argument>, <argument><expr><name>mech</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+              <decl_stmt><decl><type><name>char</name> *</type><name>src</name> <init>= <expr><name>dst</name> + <call><name>strlen</name><argument_list>(<argument><expr><name>mech</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+              <while>while <condition>(<expr>(*<name>dst</name>++ = *<name>src</name>++) != '\0'</expr>)</condition>
+                <empty_stmt>;</empty_stmt></while>
+              <expr_stmt><expr><name>again</name> = <name>TRUE</name></expr>;</expr_stmt>
+            }</block>
+        </default>}</block></switch>
+    }</block>
+  while <condition>(<expr><name>again</name></expr>)</condition>;</do>
+
+  <comment type="block">/* Prepare the initial authentication token. */</comment>
+  <if>if <condition>(<expr><name>outlen</name> &gt; 0 || <call><name>strcmp</name><argument_list>(<argument><expr><name>mech</name></expr></argument>, <argument><expr>"EXTERNAL"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+    <expr_stmt><expr><name>arg</name> = <call><name>svn_base64_encode_string</name><argument_list>(<argument><expr><call><name>svn_string_ncreate</name><argument_list>(<argument><expr><name>out</name></expr></argument>, <argument><expr><name>outlen</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>,
+                                   <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <comment type="block">/* Send the initial client response */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_ra_svn__auth_response</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>conn</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>, <argument><expr><name>mech</name></expr></argument>,
+                                    <argument><expr><name>arg</name> ? <name><name>arg</name>-&gt;<name>data</name></name> : <name>NULL</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <while>while <condition>(<expr><name>result</name> == <name>SASL_CONTINUE</name></expr>)</condition>
+    <block>{
+      <comment type="block">/* Read the server response */</comment>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_ra_svn_read_tuple</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>conn</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>, <argument><expr>"w(?s)"</expr></argument>,
+                                    <argument><expr>&amp;<name>status</name></expr></argument>, <argument><expr>&amp;<name>in</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>status</name></expr></argument>, <argument><expr>"failure"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <block>{
+          <comment type="block">/* Authentication failed.  Use the next set of credentials */</comment>
+          <expr_stmt><expr>*<name>success</name> = <name>FALSE</name></expr>;</expr_stmt>
+          <comment type="block">/* Remember the message sent by the server because we'll want to
+             return a meaningful error if we run out of auth providers. */</comment>
+          <expr_stmt><expr>*<name>last_err</name> = <name>in</name> ? <name><name>in</name>-&gt;<name>data</name></name> : ""</expr>;</expr_stmt>
+          <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+        }</block></then></if>
+
+      <if>if <condition>(<expr>(<call><name>strcmp</name><argument_list>(<argument><expr><name>status</name></expr></argument>, <argument><expr>"success"</expr></argument>)</argument_list></call> != 0 &amp;&amp; <call><name>strcmp</name><argument_list>(<argument><expr><name>status</name></expr></argument>, <argument><expr>"step"</expr></argument>)</argument_list></call> != 0)
+          || <name>in</name> == <name>NULL</name></expr>)</condition><then>
+        <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_NOT_AUTHORIZED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Unexpected server response"
+                                " to authentication"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+      <comment type="block">/* If the mech is CRAM-MD5 we don't base64-decode the server response. */</comment>
+      <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>mech</name></expr></argument>, <argument><expr>"CRAM-MD5"</expr></argument>)</argument_list></call> != 0</expr>)</condition><then>
+        <expr_stmt><expr><name>in</name> = <call><name>svn_base64_decode_string</name><argument_list>(<argument><expr><name>in</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+      <expr_stmt><expr><name>result</name> = <call><name>sasl_client_step</name><argument_list>(<argument><expr><name>sasl_ctx</name></expr></argument>,
+                                <argument><expr><name><name>in</name>-&gt;<name>data</name></name></expr></argument>,
+                                <argument><expr><name><name>in</name>-&gt;<name>len</name></name></expr></argument>,
+                                <argument><expr>&amp;<name>client_interact</name></expr></argument>,
+                                <argument><expr>&amp;<name>out</name></expr></argument>, <comment type="block">/* Filled in by SASL. */</comment>
+                                <argument><expr>&amp;<name>outlen</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <if>if <condition>(<expr><name>result</name> != <name>SASL_OK</name> &amp;&amp; <name>result</name> != <name>SASL_CONTINUE</name></expr>)</condition><then>
+        <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_NOT_AUTHORIZED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                <argument><expr><call><name>sasl_errdetail</name><argument_list>(<argument><expr><name>sasl_ctx</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+      <comment type="block">/* If the server thinks we're done, then don't send any response. */</comment>
+      <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>status</name></expr></argument>, <argument><expr>"success"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <break>break;</break></then></if>
+
+      <if>if <condition>(<expr><name>outlen</name> &gt; 0</expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><name>arg</name> = <call><name>svn_string_ncreate</name><argument_list>(<argument><expr><name>out</name></expr></argument>, <argument><expr><name>outlen</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <comment type="block">/* Write our response. */</comment>
+          <comment type="block">/* For CRAM-MD5, we don't use base64-encoding. */</comment>
+          <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>mech</name></expr></argument>, <argument><expr>"CRAM-MD5"</expr></argument>)</argument_list></call> != 0</expr>)</condition><then>
+            <expr_stmt><expr><name>arg</name> = <call><name>svn_base64_encode_string</name><argument_list>(<argument><expr><name>arg</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_ra_svn_write_cstring</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>conn</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>, <argument><expr><name><name>arg</name>-&gt;<name>data</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then>
+      <else>else
+        <block>{
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_ra_svn_write_cstring</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>conn</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></else></if>
+    }</block></while>
+
+  <if>if <condition>(<expr>!<name>status</name> || <call><name>strcmp</name><argument_list>(<argument><expr><name>status</name></expr></argument>, <argument><expr>"step"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+    <block>{
+      <comment type="block">/* This is a client-send-last mech.  Read the last server response. */</comment>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_ra_svn_read_tuple</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>conn</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>, <argument><expr>"w(?s)"</expr></argument>,
+              <argument><expr>&amp;<name>status</name></expr></argument>, <argument><expr>&amp;<name>in</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>status</name></expr></argument>, <argument><expr>"failure"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr>*<name>success</name> = <name>FALSE</name></expr>;</expr_stmt>
+          <expr_stmt><expr>*<name>last_err</name> = <name>in</name> ? <name><name>in</name>-&gt;<name>data</name></name> : ""</expr>;</expr_stmt>
+        }</block></then>
+      <else>else <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>status</name></expr></argument>, <argument><expr>"success"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <block>{
+          <comment type="block">/* We're done */</comment>
+          <expr_stmt><expr>*<name>success</name> = <name>TRUE</name></expr>;</expr_stmt>
+        }</block></then>
+      <else>else
+        <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_NOT_AUTHORIZED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Unexpected server response"
+                                " to authentication"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></else></if></else></if>
+    }</block></then>
+  <else>else
+    <expr_stmt><expr>*<name>success</name> = <name>TRUE</name></expr>;</expr_stmt></else></if>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* Baton for a SASL encrypted svn_ra_svn__stream_t. */</comment>
+<typedef>typedef <type><struct>struct <name>sasl_baton</name> <block>{
+  <decl_stmt><decl><type><name>svn_ra_svn__stream_t</name> *</type><name>stream</name></decl>;</decl_stmt> <comment type="block">/* Inherited stream. */</comment>
+  <decl_stmt><decl><type><name>sasl_conn_t</name> *</type><name>ctx</name></decl>;</decl_stmt>             <comment type="block">/* The SASL context for this connection. */</comment>
+  <decl_stmt><decl><type><name>unsigned</name> <name>int</name></type> <name>maxsize</name></decl>;</decl_stmt>         <comment type="block">/* The maximum amount of data we can encode. */</comment>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>read_buf</name></decl>;</decl_stmt>         <comment type="block">/* The buffer returned by sasl_decode. */</comment>
+  <decl_stmt><decl><type><name>unsigned</name> <name>int</name></type> <name>read_len</name></decl>;</decl_stmt>        <comment type="block">/* Its current length. */</comment>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>write_buf</name></decl>;</decl_stmt>        <comment type="block">/* The buffer returned by sasl_encode. */</comment>
+  <decl_stmt><decl><type><name>unsigned</name> <name>int</name></type> <name>write_len</name></decl>;</decl_stmt>       <comment type="block">/* Its length. */</comment>
+}</block></struct></type> <name>sasl_baton_t</name>;</typedef>
+
+<comment type="block">/* Functions to implement a SASL encrypted svn_ra_svn__stream_t. */</comment>
+
+<comment type="block">/* Implements svn_read_fn_t. */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type><name>sasl_read_cb</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>, <param><decl><type><name>char</name> *</type><name>buffer</name></decl></param>, <param><decl><type><name>apr_size_t</name> *</type><name>len</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>sasl_baton_t</name> *</type><name>sasl_baton</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>result</name></decl>;</decl_stmt>
+  <comment type="block">/* A copy of *len, used by the wrapped stream. */</comment>
+  <decl_stmt><decl><type><name>apr_size_t</name></type> <name>len2</name> <init>= <expr>*<name>len</name></expr></init></decl>;</decl_stmt>
+
+  <comment type="block">/* sasl_decode might need more data than a single read can provide,
+     hence the need to put a loop around the decoding. */</comment>
+  <while>while <condition>(<expr>! <name><name>sasl_baton</name>-&gt;<name>read_buf</name></name> || <name><name>sasl_baton</name>-&gt;<name>read_len</name></name> == 0</expr>)</condition>
+    <block>{
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_ra_svn__stream_read</name><argument_list>(<argument><expr><name><name>sasl_baton</name>-&gt;<name>stream</name></name></expr></argument>, <argument><expr><name>buffer</name></expr></argument>, <argument><expr>&amp;<name>len2</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>len2</name> == 0</expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr>*<name>len</name> = 0</expr>;</expr_stmt>
+          <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+        }</block></then></if>
+      <expr_stmt><expr><name>result</name> = <call><name>sasl_decode</name><argument_list>(<argument><expr><name><name>sasl_baton</name>-&gt;<name>ctx</name></name></expr></argument>, <argument><expr><name>buffer</name></expr></argument>, <argument><expr><name>len2</name></expr></argument>,
+                           <argument><expr>&amp;<name><name>sasl_baton</name>-&gt;<name>read_buf</name></name></expr></argument>,
+                           <argument><expr>&amp;<name><name>sasl_baton</name>-&gt;<name>read_len</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>result</name> != <name>SASL_OK</name></expr>)</condition><then>
+        <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_NOT_AUTHORIZED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                <argument><expr><call><name>sasl_errdetail</name><argument_list>(<argument><expr><name><name>sasl_baton</name>-&gt;<name>ctx</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+    }</block></while>
+
+  <comment type="block">/* The buffer returned by sasl_decode might be larger than what the
+     caller wants.  If this is the case, we only copy back *len bytes now
+     (the rest will be returned by subsequent calls to this function).
+     If not, we just copy back the whole thing. */</comment>
+  <if>if <condition>(<expr>*<name>len</name> &gt;= <name><name>sasl_baton</name>-&gt;<name>read_len</name></name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>, <argument><expr><name><name>sasl_baton</name>-&gt;<name>read_buf</name></name></expr></argument>, <argument><expr><name><name>sasl_baton</name>-&gt;<name>read_len</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr>*<name>len</name> = <name><name>sasl_baton</name>-&gt;<name>read_len</name></name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>sasl_baton</name>-&gt;<name>read_buf</name></name> = <name>NULL</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>sasl_baton</name>-&gt;<name>read_len</name></name> = 0</expr>;</expr_stmt>
+    }</block></then>
+  <else>else
+    <block>{
+      <expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>buffer</name></expr></argument>, <argument><expr><name><name>sasl_baton</name>-&gt;<name>read_buf</name></name></expr></argument>, <argument><expr>*<name>len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>sasl_baton</name>-&gt;<name>read_len</name></name> -= *<name>len</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>sasl_baton</name>-&gt;<name>read_buf</name></name> += *<name>len</name></expr>;</expr_stmt>
+    }</block></else></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* Implements svn_write_fn_t. */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>sasl_write_cb</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>buffer</name></decl></param>, <param><decl><type><name>apr_size_t</name> *</type><name>len</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>sasl_baton_t</name> *</type><name>sasl_baton</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>result</name></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr>! <name><name>sasl_baton</name>-&gt;<name>write_buf</name></name> || <name><name>sasl_baton</name>-&gt;<name>write_len</name></name> == 0</expr>)</condition><then>
+    <block>{
+      <comment type="block">/* Make sure we don't write too much. */</comment>
+      <expr_stmt><expr>*<name>len</name> = (*<name>len</name> &gt; <name><name>sasl_baton</name>-&gt;<name>maxsize</name></name>) ? <name><name>sasl_baton</name>-&gt;<name>maxsize</name></name> : *<name>len</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name>result</name> = <call><name>sasl_encode</name><argument_list>(<argument><expr><name><name>sasl_baton</name>-&gt;<name>ctx</name></name></expr></argument>, <argument><expr><name>buffer</name></expr></argument>, <argument><expr>*<name>len</name></expr></argument>,
+                           <argument><expr>&amp;<name><name>sasl_baton</name>-&gt;<name>write_buf</name></name></expr></argument>,
+                           <argument><expr>&amp;<name><name>sasl_baton</name>-&gt;<name>write_len</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <if>if <condition>(<expr><name>result</name> != <name>SASL_OK</name></expr>)</condition><then>
+        <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_NOT_AUTHORIZED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                <argument><expr><call><name>sasl_errdetail</name><argument_list>(<argument><expr><name><name>sasl_baton</name>-&gt;<name>ctx</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+    }</block></then></if>
+
+  <do>do
+    <block>{
+      <decl_stmt><decl><type><name>apr_size_t</name></type> <name>tmplen</name> <init>= <expr><name><name>sasl_baton</name>-&gt;<name>write_len</name></name></expr></init></decl>;</decl_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_ra_svn__stream_write</name><argument_list>(<argument><expr><name><name>sasl_baton</name>-&gt;<name>stream</name></name></expr></argument>,
+                                       <argument><expr><name><name>sasl_baton</name>-&gt;<name>write_buf</name></name></expr></argument>,
+                                       <argument><expr>&amp;<name>tmplen</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>tmplen</name> == 0</expr>)</condition><then>
+      <block>{
+        <comment type="block">/* The output buffer and its length will be preserved in sasl_baton
+           and will be written out during the next call to this function
+           (which will have the same arguments). */</comment>
+        <expr_stmt><expr>*<name>len</name> = 0</expr>;</expr_stmt>
+        <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+      }</block></then></if>
+      <expr_stmt><expr><name><name>sasl_baton</name>-&gt;<name>write_len</name></name> -= <name>tmplen</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>sasl_baton</name>-&gt;<name>write_buf</name></name> += <name>tmplen</name></expr>;</expr_stmt>
+    }</block>
+  while <condition>(<expr><name><name>sasl_baton</name>-&gt;<name>write_len</name></name> &gt; 0</expr>)</condition>;</do>
+
+  <expr_stmt><expr><name><name>sasl_baton</name>-&gt;<name>write_buf</name></name> = <name>NULL</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>sasl_baton</name>-&gt;<name>write_len</name></name> = 0</expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* Implements ra_svn_timeout_fn_t. */</comment>
+<function><type><specifier>static</specifier> <name>void</name></type> <name>sasl_timeout_cb</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>, <param><decl><type><name>apr_interval_time_t</name></type> <name>interval</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>sasl_baton_t</name> *</type><name>sasl_baton</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+  <expr_stmt><expr><call><name>svn_ra_svn__stream_timeout</name><argument_list>(<argument><expr><name><name>sasl_baton</name>-&gt;<name>stream</name></name></expr></argument>, <argument><expr><name>interval</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+}</block></function>
+
+<comment type="block">/* Implements ra_svn_pending_fn_t. */</comment>
+<function><type><specifier>static</specifier> <name>svn_boolean_t</name></type> <name>sasl_pending_cb</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>sasl_baton_t</name> *</type><name>sasl_baton</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+  <return>return <expr><call><name>svn_ra_svn__stream_pending</name><argument_list>(<argument><expr><name><name>sasl_baton</name>-&gt;<name>stream</name></name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type><name>svn_ra_svn__enable_sasl_encryption</name><parameter_list>(<param><decl><type><name>svn_ra_svn_conn_t</name> *</type><name>conn</name></decl></param>,
+                                                <param><decl><type><name>sasl_conn_t</name> *</type><name>sasl_ctx</name></decl></param>,
+                                                <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>sasl_baton_t</name> *</type><name>sasl_baton</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>sasl_ssf_t</name> *</type><name>ssfp</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>result</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>void</name> *</type><name>maxsize</name></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr>! <name><name>conn</name>-&gt;<name>encrypted</name></name></expr>)</condition><then>
+    <block>{
+      <comment type="block">/* Get the strength of the security layer. */</comment>
+      <expr_stmt><expr><name>result</name> = <call><name>sasl_getprop</name><argument_list>(<argument><expr><name>sasl_ctx</name></expr></argument>, <argument><expr><name>SASL_SSF</name></expr></argument>, <argument><expr>(<name>void</name>*) &amp;<name>ssfp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>result</name> != <name>SASL_OK</name></expr>)</condition><then>
+        <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_NOT_AUTHORIZED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                <argument><expr><call><name>sasl_errdetail</name><argument_list>(<argument><expr><name>sasl_ctx</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+      <if>if <condition>(<expr>*<name>ssfp</name> &gt; 0</expr>)</condition><then>
+        <block>{
+          <comment type="block">/* Flush the connection, as we're about to replace its stream. */</comment>
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_ra_svn_flush</name><argument_list>(<argument><expr><name>conn</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+          <comment type="block">/* Create and initialize the stream baton. */</comment>
+          <expr_stmt><expr><name>sasl_baton</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name><name>conn</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>sasl_baton</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><name><name>sasl_baton</name>-&gt;<name>ctx</name></name> = <name>sasl_ctx</name></expr>;</expr_stmt>
+
+          <comment type="block">/* Find out the maximum input size for sasl_encode. */</comment>
+          <expr_stmt><expr><name>result</name> = <call><name>sasl_getprop</name><argument_list>(<argument><expr><name>sasl_ctx</name></expr></argument>, <argument><expr><name>SASL_MAXOUTBUF</name></expr></argument>, <argument><expr>&amp;<name>maxsize</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <if>if <condition>(<expr><name>result</name> != <name>SASL_OK</name></expr>)</condition><then>
+            <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_NOT_AUTHORIZED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                    <argument><expr><call><name>sasl_errdetail</name><argument_list>(<argument><expr><name>sasl_ctx</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+          <expr_stmt><expr><name><name>sasl_baton</name>-&gt;<name>maxsize</name></name> = *((<name>unsigned</name> <name>int</name> *) <name>maxsize</name>)</expr>;</expr_stmt>
+
+          <comment type="block">/* If there is any data left in the read buffer at this point,
+             we need to decrypt it. */</comment>
+          <if>if <condition>(<expr><name><name>conn</name>-&gt;<name>read_end</name></name> &gt; <name><name>conn</name>-&gt;<name>read_ptr</name></name></expr>)</condition><then>
+            <block>{
+              <expr_stmt><expr><name>result</name> = <call><name>sasl_decode</name><argument_list>(<argument><expr><name>sasl_ctx</name></expr></argument>, <argument><expr><name><name>conn</name>-&gt;<name>read_ptr</name></name></expr></argument>,
+                                   <argument><expr><name><name>conn</name>-&gt;<name>read_end</name></name> - <name><name>conn</name>-&gt;<name>read_ptr</name></name></expr></argument>,
+                                   <argument><expr>&amp;<name><name>sasl_baton</name>-&gt;<name>read_buf</name></name></expr></argument>,
+                                   <argument><expr>&amp;<name><name>sasl_baton</name>-&gt;<name>read_len</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+              <if>if <condition>(<expr><name>result</name> != <name>SASL_OK</name></expr>)</condition><then>
+                <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_NOT_AUTHORIZED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                        <argument><expr><call><name>sasl_errdetail</name><argument_list>(<argument><expr><name>sasl_ctx</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return></then></if>
+              <expr_stmt><expr><name><name>conn</name>-&gt;<name>read_end</name></name> = <name><name>conn</name>-&gt;<name>read_ptr</name></name></expr>;</expr_stmt>
+            }</block></then></if>
+
+          <comment type="block">/* Wrap the existing stream. */</comment>
+          <expr_stmt><expr><name><name>sasl_baton</name>-&gt;<name>stream</name></name> = <name><name>conn</name>-&gt;<name>stream</name></name></expr>;</expr_stmt>
+
+          <expr_stmt><expr><name><name>conn</name>-&gt;<name>stream</name></name> = <call><name>svn_ra_svn__stream_create</name><argument_list>(<argument><expr><name>sasl_baton</name></expr></argument>, <argument><expr><name>sasl_read_cb</name></expr></argument>,
+                                                   <argument><expr><name>sasl_write_cb</name></expr></argument>,
+                                                   <argument><expr><name>sasl_timeout_cb</name></expr></argument>,
+                                                   <argument><expr><name>sasl_pending_cb</name></expr></argument>, <argument><expr><name><name>conn</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <comment type="block">/* Yay, we have a security layer! */</comment>
+          <expr_stmt><expr><name><name>conn</name>-&gt;<name>encrypted</name></name> = <name>TRUE</name></expr>;</expr_stmt>
+        }</block></then></if>
+    }</block></then></if>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type><name>svn_ra_svn__get_addresses</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>local_addrport</name></decl></param>,
+                                       <param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>remote_addrport</name></decl></param>,
+                                       <param><decl><type><name>svn_ra_svn_conn_t</name> *</type><name>conn</name></decl></param>,
+                                       <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <if>if <condition>(<expr><name><name>conn</name>-&gt;<name>sock</name></name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>apr_status_t</name></type> <name>apr_err</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>apr_sockaddr_t</name> *</type><name>local_sa</name></decl>, *<decl><type ref="prev"/><name>remote_sa</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>char</name> *</type><name>local_addr</name></decl>, *<decl><type ref="prev"/><name>remote_addr</name></decl>;</decl_stmt>
+
+      <expr_stmt><expr><name>apr_err</name> = <call><name>apr_socket_addr_get</name><argument_list>(<argument><expr>&amp;<name>local_sa</name></expr></argument>, <argument><expr><name>APR_LOCAL</name></expr></argument>, <argument><expr><name><name>conn</name>-&gt;<name>sock</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>apr_err</name></expr>)</condition><then>
+        <return>return <expr><call><name>svn_error_wrap_apr</name><argument_list>(<argument><expr><name>apr_err</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+      <expr_stmt><expr><name>apr_err</name> = <call><name>apr_socket_addr_get</name><argument_list>(<argument><expr>&amp;<name>remote_sa</name></expr></argument>, <argument><expr><name>APR_REMOTE</name></expr></argument>, <argument><expr><name><name>conn</name>-&gt;<name>sock</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>apr_err</name></expr>)</condition><then>
+        <return>return <expr><call><name>svn_error_wrap_apr</name><argument_list>(<argument><expr><name>apr_err</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+      <expr_stmt><expr><name>apr_err</name> = <call><name>apr_sockaddr_ip_get</name><argument_list>(<argument><expr>&amp;<name>local_addr</name></expr></argument>, <argument><expr><name>local_sa</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>apr_err</name></expr>)</condition><then>
+        <return>return <expr><call><name>svn_error_wrap_apr</name><argument_list>(<argument><expr><name>apr_err</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+      <expr_stmt><expr><name>apr_err</name> = <call><name>apr_sockaddr_ip_get</name><argument_list>(<argument><expr>&amp;<name>remote_addr</name></expr></argument>, <argument><expr><name>remote_sa</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>apr_err</name></expr>)</condition><then>
+        <return>return <expr><call><name>svn_error_wrap_apr</name><argument_list>(<argument><expr><name>apr_err</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+      <comment type="block">/* Format the IP address and port number like this: a.b.c.d;port */</comment>
+      <expr_stmt><expr>*<name>local_addrport</name> = <call><name>apr_pstrcat</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>local_addr</name></expr></argument>, <argument><expr>";"</expr></argument>,
+                                    <argument><expr><call><name>apr_itoa</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>(<name>int</name>)<name><name>local_sa</name>-&gt;<name>port</name></name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr>*<name>remote_addrport</name> = <call><name>apr_pstrcat</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>remote_addr</name></expr></argument>, <argument><expr>";"</expr></argument>,
+                                     <argument><expr><call><name>apr_itoa</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>(<name>int</name>)<name><name>remote_sa</name>-&gt;<name>port</name></name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_ra_svn__do_cyrus_auth</name><parameter_list>(<param><decl><type><name>svn_ra_svn__session_baton_t</name> *</type><name>sess</name></decl></param>,
+                          <param><decl><type><name>apr_array_header_t</name> *</type><name>mechlist</name></decl></param>,
+                          <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>realm</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>subpool</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>sasl_conn_t</name> *</type><name>sasl_ctx</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>mechstring</name> <init>= <expr>""</expr></init>, *<name>last_err</name> <init>= <expr>""</expr></init>, *<name>realmstring</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>local_addrport</name> <init>= <expr><name>NULL</name></expr></init>, *<name>remote_addrport</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_boolean_t</name></type> <name>success</name></decl>;</decl_stmt>
+  <comment type="block">/* Reserve space for 3 callbacks (for the username, password and the
+     array terminator). */</comment>
+  <decl_stmt><decl><type><name>sasl_callback_t</name></type> <name><name>callbacks</name><index>[<expr>3</expr>]</index></name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>cred_baton_t</name></type> <name>cred_baton</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr>!<name><name>sess</name>-&gt;<name>is_tunneled</name></name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_ra_svn__get_addresses</name><argument_list>(<argument><expr>&amp;<name>local_addrport</name></expr></argument>, <argument><expr>&amp;<name>remote_addrport</name></expr></argument>,
+                                        <argument><expr><name><name>sess</name>-&gt;<name>conn</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <comment type="block">/* Create a string containing the list of mechanisms, separated by spaces. */</comment>
+  <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name><name>mechlist</name>-&gt;<name>nelts</name></name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>)
+    <block>{
+      <decl_stmt><decl><type><name>svn_ra_svn_item_t</name> *</type><name>elt</name> <init>= <expr>&amp;<call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>mechlist</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr><name>svn_ra_svn_item_t</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+      <comment type="block">/* Force the client to use ANONYMOUS or EXTERNAL if they are available.*/</comment>
+      <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name><name>elt</name>-&gt;<name>u</name>.<name>word</name></name></expr></argument>, <argument><expr>"ANONYMOUS"</expr></argument>)</argument_list></call> == 0
+          || <call><name>strcmp</name><argument_list>(<argument><expr><name><name>elt</name>-&gt;<name>u</name>.<name>word</name></name></expr></argument>, <argument><expr>"EXTERNAL"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><name>mechstring</name> = <name><name>elt</name>-&gt;<name>u</name>.<name>word</name></name></expr>;</expr_stmt>
+          <break>break;</break>
+        }</block></then></if>
+      <expr_stmt><expr><name>mechstring</name> = <call><name>apr_pstrcat</name><argument_list>(<argument><expr><name>pool</name></expr></argument>,
+                               <argument><expr><name>mechstring</name></expr></argument>,
+                               <argument><expr><name>i</name> == 0 ? "" : " "</expr></argument>,
+                               <argument><expr><name><name>elt</name>-&gt;<name>u</name>.<name>word</name></name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></for>
+
+  <expr_stmt><expr><name>realmstring</name> = <call><name>apr_psprintf</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>"%s %s"</expr></argument>, <argument><expr><name><name>sess</name>-&gt;<name>realm_prefix</name></name></expr></argument>, <argument><expr><name>realm</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Initialize the credential baton. */</comment>
+  <expr_stmt><expr><call><name>memset</name><argument_list>(<argument><expr>&amp;<name>cred_baton</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>cred_baton</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>cred_baton</name>.<name>auth_baton</name></name> = <name><name>sess</name>-&gt;<name>callbacks</name>-&gt;<name>auth_baton</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>cred_baton</name>.<name>realmstring</name></name> = <name>realmstring</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>cred_baton</name>.<name>pool</name></name> = <name>pool</name></expr>;</expr_stmt>
+
+  <comment type="block">/* Initialize the callbacks array. */</comment>
+
+  <comment type="block">/* The username callback. */</comment>
+  <expr_stmt><expr><name><name>callbacks</name><index>[<expr>0</expr>]</index></name>.<name>id</name> = <name>SASL_CB_AUTHNAME</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>callbacks</name><index>[<expr>0</expr>]</index></name>.<name>proc</name> = <name>get_username_cb</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>callbacks</name><index>[<expr>0</expr>]</index></name>.<name>context</name> = &amp;<name>cred_baton</name></expr>;</expr_stmt>
+
+  <comment type="block">/* The password callback. */</comment>
+  <expr_stmt><expr><name><name>callbacks</name><index>[<expr>1</expr>]</index></name>.<name>id</name> = <name>SASL_CB_PASS</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>callbacks</name><index>[<expr>1</expr>]</index></name>.<name>proc</name> = <name>get_password_cb</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>callbacks</name><index>[<expr>1</expr>]</index></name>.<name>context</name> = &amp;<name>cred_baton</name></expr>;</expr_stmt>
+
+  <comment type="block">/* Mark the end of the array. */</comment>
+  <expr_stmt><expr><name><name>callbacks</name><index>[<expr>2</expr>]</index></name>.<name>id</name> = <name>SASL_CB_LIST_END</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>callbacks</name><index>[<expr>2</expr>]</index></name>.<name>proc</name> = <name>NULL</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>callbacks</name><index>[<expr>2</expr>]</index></name>.<name>context</name> = <name>NULL</name></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name>subpool</name> = <call><name>svn_pool_create</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <do>do
+    <block>{
+      <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name></decl>;</decl_stmt>
+
+      <comment type="block">/* If last_err was set to a non-empty string, it needs to be duplicated
+         to the parent pool before the subpool is cleared. */</comment>
+      <if>if <condition>(<expr>*<name>last_err</name></expr>)</condition><then>
+        <expr_stmt><expr><name>last_err</name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>last_err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+      <expr_stmt><expr><call><name>svn_pool_clear</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>new_sasl_ctx</name><argument_list>(<argument><expr>&amp;<name>sasl_ctx</name></expr></argument>, <argument><expr><name><name>sess</name>-&gt;<name>is_tunneled</name></name></expr></argument>,
+                           <argument><expr><name><name>sess</name>-&gt;<name>hostname</name></name></expr></argument>, <argument><expr><name>local_addrport</name></expr></argument>, <argument><expr><name>remote_addrport</name></expr></argument>,
+                           <argument><expr><name>callbacks</name></expr></argument>, <argument><expr><name><name>sess</name>-&gt;<name>conn</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name>err</name> = <call><name>try_auth</name><argument_list>(<argument><expr><name>sess</name></expr></argument>, <argument><expr><name>sasl_ctx</name></expr></argument>, <argument><expr>&amp;<name>success</name></expr></argument>, <argument><expr>&amp;<name>last_err</name></expr></argument>, <argument><expr><name>mechstring</name></expr></argument>,
+                     <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <comment type="block">/* If we encountered an error while fetching credentials, that error
+         has priority. */</comment>
+      <if>if <condition>(<expr><name><name>cred_baton</name>.<name>err</name></name></expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <return>return <expr><name><name>cred_baton</name>.<name>err</name></name></expr>;</return>
+        }</block></then></if>
+      <if>if <condition>(<expr><name><name>cred_baton</name>.<name>no_more_creds</name></name>
+          || (! <name>success</name> &amp;&amp; ! <name>err</name> &amp;&amp; ! <name><name>cred_baton</name>.<name>was_used</name></name>)</expr>)</condition><then>
+        <block>{
+          <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <comment type="block">/* If we ran out of authentication providers, or if we got a server
+             error and our callbacks were never called, there's no point in
+             retrying authentication.  Return the last error sent by the
+             server. */</comment>
+          <if>if <condition>(<expr>*<name>last_err</name></expr>)</condition><then>
+            <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_RA_NOT_AUTHORIZED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                     <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Authentication error from server: %s"</expr></argument>)</argument_list></call></expr></argument>,
+                                     <argument><expr><name>last_err</name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+          <comment type="block">/* Hmm, we don't have a server error. Return a generic error. */</comment>
+          <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_NOT_AUTHORIZED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                  <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Can't get username or password"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</return>
+        }</block></then></if>
+      <if>if <condition>(<expr><name>err</name></expr>)</condition><then>
+        <block>{
+          <if>if <condition>(<expr><name><name>err</name>-&gt;<name>apr_err</name></name> == <name>SVN_ERR_RA_SVN_NO_MECHANISMS</name></expr>)</condition><then>
+            <block>{
+              <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+              <comment type="block">/* We could not find a supported mechanism in the list sent by the
+                 server. In many cases this happens because the client is missing
+                 the CRAM-MD5 or ANONYMOUS plugins, in which case we can simply use
+                 the built-in implementation. In all other cases this call will be
+                 useless, but hey, at least we'll get consistent error messages. */</comment>
+              <return>return <expr><call><name>svn_ra_svn__do_internal_auth</name><argument_list>(<argument><expr><name>sess</name></expr></argument>, <argument><expr><name>mechlist</name></expr></argument>,
+                                                  <argument><expr><name>realm</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+            }</block></then></if>
+          <return>return <expr><name>err</name></expr>;</return>
+        }</block></then></if>
+    }</block>
+  while <condition>(<expr>!<name>success</name></expr>)</condition>;</do>
+  <expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_ra_svn__enable_sasl_encryption</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>conn</name></name></expr></argument>, <argument><expr><name>sasl_ctx</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_auth_save_credentials</name><argument_list>(<argument><expr><name><name>cred_baton</name>.<name>iterstate</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* SVN_HAVE_SASL */</comment>
+</unit>

@@ -1,0 +1,640 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/cpython-2.6.1/source/Modules/getaddrinfo.c"><comment type="block">/*
+ * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
+ * All rights reserved.
+ * 
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the project nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ * 
+ * THIS SOFTWARE IS PROVIDED BY THE PROJECT AND CONTRIBUTORS ``AS IS'' AND
+ * GAI_ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE PROJECT OR CONTRIBUTORS BE LIABLE
+ * FOR GAI_ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON GAI_ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN GAI_ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */</comment>
+
+<comment type="block">/*
+ * "#ifdef FAITH" part is local hack for supporting IPv4-v6 translator.
+ *
+ * Issues to be discussed:
+ * - Thread safe-ness must be checked.
+ * - Return values.  There are nonstandard return values defined and used
+ *   in the source code.  This is because RFC2133 is silent about which error
+ *   code must be returned for which situation.
+ * - PF_UNSPEC case would be handled in getipnodebyname() with the AI_ALL flag.
+ */</comment>
+
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr>0</expr></cpp:if>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;sys/types.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;sys/param.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;sys/sysctl.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;sys/socket.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;netinet/in.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;arpa/inet.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;arpa/nameser.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;netdb.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;resolv.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;string.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;stdlib.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;stddef.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;ctype.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;unistd.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"addrinfo.h"</cpp:file></cpp:include>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>__KAME__</name></expr></argument>)</argument_list></call> &amp;&amp; <call><name>defined</name><argument_list>(<argument><expr><name>ENABLE_IPV6</name></expr></argument>)</argument_list></call></expr></cpp:if>
+<cpp:define># <cpp:directive>define</cpp:directive> <cpp:macro><name>FAITH</name></cpp:macro></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>SUCCESS</name></cpp:macro> <cpp:value>0</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>GAI_ANY</name></cpp:macro> <cpp:value>0</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>YES</name></cpp:macro> <cpp:value>1</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>NO</name></cpp:macro>  <cpp:value>0</cpp:value></cpp:define>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>FAITH</name></cpp:ifdef>
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name></type> <name>translate</name> <init>= <expr><name>NO</name></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> struct <name>in6_addr</name></type> <name>faith_prefix</name> <init>= <expr><name>IN6ADDR_GAI_ANY_INIT</name></expr></init></decl>;</decl_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name></type> <name><name>in_addrany</name><index>[]</index></name> <init>= <expr><block>{ <expr>0</expr>, <expr>0</expr>, <expr>0</expr>, <expr>0</expr> }</block></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name></type> <name><name>in6_addrany</name><index>[]</index></name> <init>= <expr><block>{
+	<expr>0</expr>, <expr>0</expr>, <expr>0</expr>, <expr>0</expr>, <expr>0</expr>, <expr>0</expr>, <expr>0</expr>, <expr>0</expr>, <expr>0</expr>, <expr>0</expr>, <expr>0</expr>, <expr>0</expr>, <expr>0</expr>, <expr>0</expr>, <expr>0</expr>, <expr>0</expr>
+}</block></expr></init></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name></type> <name><name>in_loopback</name><index>[]</index></name> <init>= <expr><block>{ <expr>127</expr>, <expr>0</expr>, <expr>0</expr>, <expr>1</expr> }</block></expr></init></decl>;</decl_stmt> 
+<decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name></type> <name><name>in6_loopback</name><index>[]</index></name> <init>= <expr><block>{
+	<expr>0</expr>, <expr>0</expr>, <expr>0</expr>, <expr>0</expr>, <expr>0</expr>, <expr>0</expr>, <expr>0</expr>, <expr>0</expr>, <expr>0</expr>, <expr>0</expr>, <expr>0</expr>, <expr>0</expr>, <expr>0</expr>, <expr>0</expr>, <expr>0</expr>, <expr>1</expr>
+}</block></expr></init></decl>;</decl_stmt>
+
+<struct>struct <name>sockinet</name> <block>{
+	<decl_stmt><decl><type><name>u_char</name></type>	<name>si_len</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>u_char</name></type>	<name>si_family</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>u_short</name></type>	<name>si_port</name></decl>;</decl_stmt>
+}</block>;</struct>
+
+<struct><specifier>static</specifier> struct <name>gai_afd</name> <block>{
+	<decl_stmt><decl><type><name>int</name></type> <name>a_af</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>a_addrlen</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>a_socklen</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>a_off</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>a_addrany</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>a_loopback</name></decl>;</decl_stmt>	
+}</block> <decl><name><name>gai_afdl</name> <index>[]</index></name> <init>= <expr><block>{
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>ENABLE_IPV6</name></cpp:ifdef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>N_INET6</name></cpp:macro> <cpp:value>0</cpp:value></cpp:define>
+	<expr><block>{<expr><name>PF_INET6</name></expr>, <expr><sizeof>sizeof<argument_list>(<argument>struct <expr><name>in6_addr</name></expr></argument>)</argument_list></sizeof></expr>,
+	 <expr><sizeof>sizeof<argument_list>(<argument>struct <expr><name>sockaddr_in6</name></expr></argument>)</argument_list></sizeof></expr>,
+	 <expr><call><name>offsetof</name><argument_list>(<argument>struct <expr><name>sockaddr_in6</name></expr></argument>, <argument><expr><name>sin6_addr</name></expr></argument>)</argument_list></call></expr>,
+	 <expr><name>in6_addrany</name></expr>, <expr><name>in6_loopback</name></expr>}</block></expr>,
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>N_INET</name></cpp:macro>  <cpp:value>1</cpp:value></cpp:define>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>N_INET</name></cpp:macro>  <cpp:value>0</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<expr><block>{<expr><name>PF_INET</name></expr>, <expr><sizeof>sizeof<argument_list>(<argument>struct <expr><name>in_addr</name></expr></argument>)</argument_list></sizeof></expr>,
+	 <expr><sizeof>sizeof<argument_list>(<argument>struct <expr><name>sockaddr_in</name></expr></argument>)</argument_list></sizeof></expr>,
+	 <expr><call><name>offsetof</name><argument_list>(<argument>struct <expr><name>sockaddr_in</name></expr></argument>, <argument><expr><name>sin_addr</name></expr></argument>)</argument_list></call></expr>,
+	 <expr><name>in_addrany</name></expr>, <expr><name>in_loopback</name></expr>}</block></expr>,
+	<expr><block>{<expr>0</expr>, <expr>0</expr>, <expr>0</expr>, <expr>0</expr>, <expr><name>NULL</name></expr>, <expr><name>NULL</name></expr>}</block></expr>,
+}</block></expr></init></decl>;</struct>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>ENABLE_IPV6</name></cpp:ifdef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PTON_MAX</name></cpp:macro>	<cpp:value>16</cpp:value></cpp:define>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PTON_MAX</name></cpp:macro>	<cpp:value>4</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>IN_MULTICAST</name></cpp:ifndef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>IN_MULTICAST</name><parameter_list>(<param><type><name>i</name></type></param>)</parameter_list></cpp:macro>	    <cpp:value>(((i) &amp; 0xf0000000U) == 0xe0000000U)</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>IN_EXPERIMENTAL</name></cpp:ifndef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>IN_EXPERIMENTAL</name><parameter_list>(<param><type><name>i</name></type></param>)</parameter_list></cpp:macro>  <cpp:value>(((i) &amp; 0xe0000000U) == 0xe0000000U)</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>IN_LOOPBACKNET</name></cpp:ifndef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>IN_LOOPBACKNET</name></cpp:macro>	    <cpp:value>127</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name> <name>get_name</name></type> <name>Py_PROTO</name><argument_list>(<argument><expr>(const <name>char</name> *, struct <name>gai_afd</name> *,
+			  struct <name>addrinfo</name> **, <name>char</name> *, struct <name>addrinfo</name> *,
+			  <name>int</name>)</expr></argument>)</argument_list></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name> <name>get_addr</name></type> <name>Py_PROTO</name><argument_list>(<argument><expr>(const <name>char</name> *, <name>int</name>, struct <name>addrinfo</name> **,
+			struct <name>addrinfo</name> *, <name>int</name>)</expr></argument>)</argument_list></decl>;</decl_stmt>
+<decl_stmt><decl><type><specifier>static</specifier> <name>int</name> <name>str_isnumber</name></type> <name>Py_PROTO</name><argument_list>(<argument><expr>(const <name>char</name> *)</expr></argument>)</argument_list></decl>;</decl_stmt>
+	
+<decl_stmt><decl><type><specifier>static</specifier> <name>char</name> *</type><name><name>ai_errlist</name><index>[]</index></name> <init>= <expr><block>{
+	<expr>"success."</expr>,
+	<expr>"address family for hostname not supported."</expr>,	<comment type="block">/* EAI_ADDRFAMILY */</comment>
+	<expr>"temporary failure in name resolution."</expr>,	<comment type="block">/* EAI_AGAIN      */</comment>
+	<expr>"invalid value for ai_flags."</expr>,		       	<comment type="block">/* EAI_BADFLAGS   */</comment>
+	<expr>"non-recoverable failure in name resolution."</expr>, 	<comment type="block">/* EAI_FAIL       */</comment>
+	<expr>"ai_family not supported."</expr>,			<comment type="block">/* EAI_FAMILY     */</comment>
+	<expr>"memory allocation failure."</expr>, 			<comment type="block">/* EAI_MEMORY     */</comment>
+	<expr>"no address associated with hostname."</expr>, 	<comment type="block">/* EAI_NODATA     */</comment>
+	<expr>"hostname nor servname provided, or not known."</expr>,<comment type="block">/* EAI_NONAME     */</comment>
+	<expr>"servname not supported for ai_socktype."</expr>,	<comment type="block">/* EAI_SERVICE    */</comment>
+	<expr>"ai_socktype not supported."</expr>, 			<comment type="block">/* EAI_SOCKTYPE   */</comment>
+	<expr>"system error returned in errno."</expr>, 		<comment type="block">/* EAI_SYSTEM     */</comment>
+	<expr>"invalid value for hints."</expr>,			<comment type="block">/* EAI_BADHINTS	  */</comment>
+	<expr>"resolved protocol is unknown."</expr>,		<comment type="block">/* EAI_PROTOCOL   */</comment>
+	<expr>"unknown error."</expr>, 				<comment type="block">/* EAI_MAX        */</comment>
+}</block></expr></init></decl>;</decl_stmt>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>GET_CANONNAME</name><parameter_list>(<param><type><name>ai</name></type></param>, <param><type><name>str</name></type></param>)</parameter_list></cpp:macro> \
+<cpp:value>if (pai-&gt;ai_flags &amp; AI_CANONNAME) {\
+	if (((ai)-&gt;ai_canonname = (char *)malloc(strlen(str) + 1)) != NULL) {\
+		strcpy((ai)-&gt;ai_canonname, (str));\
+	} else {\
+		error = EAI_MEMORY;\
+		goto free;\
+	}\
+}</cpp:value></cpp:define>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>HAVE_SOCKADDR_SA_LEN</name></cpp:ifdef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>GET_AI</name><parameter_list>(<param><type><name>ai</name></type></param>, <param><type><name>gai_afd</name></type></param>, <param><type><name>addr</name></type></param>, <param><type><name>port</name></type></param>)</parameter_list></cpp:macro> <cpp:value>{\
+	char *p;\
+	if (((ai) = (struct addrinfo *)malloc(sizeof(struct addrinfo) +\
+					      ((gai_afd)-&gt;a_socklen)))\
+	    == NULL) goto free;\
+	memcpy(ai, pai, sizeof(struct addrinfo));\
+	(ai)-&gt;ai_addr = (struct sockaddr *)((ai) + 1);\
+	memset((ai)-&gt;ai_addr, 0, (gai_afd)-&gt;a_socklen);\
+	(ai)-&gt;ai_addr-&gt;sa_len = (ai)-&gt;ai_addrlen = (gai_afd)-&gt;a_socklen;\
+	(ai)-&gt;ai_addr-&gt;sa_family = (ai)-&gt;ai_family = (gai_afd)-&gt;a_af;\
+	((struct sockinet *)(ai)-&gt;ai_addr)-&gt;si_port = port;\
+	p = (char *)((ai)-&gt;ai_addr);\
+	memcpy(p + (gai_afd)-&gt;a_off, (addr), (gai_afd)-&gt;a_addrlen);\
+}</cpp:value></cpp:define>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>GET_AI</name><parameter_list>(<param><type><name>ai</name></type></param>, <param><type><name>gai_afd</name></type></param>, <param><type><name>addr</name></type></param>, <param><type><name>port</name></type></param>)</parameter_list></cpp:macro> <cpp:value>{\
+	char *p;\
+	if (((ai) = (struct addrinfo *)malloc(sizeof(struct addrinfo) +\
+					      ((gai_afd)-&gt;a_socklen)))\
+	    == NULL) goto free;\
+	memcpy(ai, pai, sizeof(struct addrinfo));\
+	(ai)-&gt;ai_addr = (struct sockaddr *)((ai) + 1);\
+	memset((ai)-&gt;ai_addr, 0, (gai_afd)-&gt;a_socklen);\
+	(ai)-&gt;ai_addrlen = (gai_afd)-&gt;a_socklen;\
+	(ai)-&gt;ai_addr-&gt;sa_family = (ai)-&gt;ai_family = (gai_afd)-&gt;a_af;\
+	((struct sockinet *)(ai)-&gt;ai_addr)-&gt;si_port = port;\
+	p = (char *)((ai)-&gt;ai_addr);\
+	memcpy(p + (gai_afd)-&gt;a_off, (addr), (gai_afd)-&gt;a_addrlen);\
+}</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>ERR</name><parameter_list>(<param><type><name>err</name></type></param>)</parameter_list></cpp:macro> <cpp:value>{ error = (err); goto bad; }</cpp:value></cpp:define>
+
+<function><type><name>char</name> *</type>
+<name>gai_strerror</name><parameter_list>(<param><decl><type><name>int</name></type> <name>ecode</name></decl></param>)</parameter_list>
+<block>{
+	<if>if <condition>(<expr><name>ecode</name> &lt; 0 || <name>ecode</name> &gt; <name>EAI_MAX</name></expr>)</condition><then>
+		<expr_stmt><expr><name>ecode</name> = <name>EAI_MAX</name></expr>;</expr_stmt></then></if>
+	<return>return <expr><name><name>ai_errlist</name><index>[<expr><name>ecode</name></expr>]</index></name></expr>;</return>
+}</block></function>
+
+<function><type><name>void</name></type>
+<name>freeaddrinfo</name><parameter_list>(<param><decl><type>struct <name>addrinfo</name> *</type><name>ai</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type>struct <name>addrinfo</name> *</type><name>next</name></decl>;</decl_stmt>
+
+	<do>do <block>{
+		<expr_stmt><expr><name>next</name> = <name><name>ai</name>-&gt;<name>ai_next</name></name></expr>;</expr_stmt>
+		<if>if <condition>(<expr><name><name>ai</name>-&gt;<name>ai_canonname</name></name></expr>)</condition><then>
+			<expr_stmt><expr><call><name>free</name><argument_list>(<argument><expr><name><name>ai</name>-&gt;<name>ai_canonname</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+		<comment type="block">/* no need to free(ai-&gt;ai_addr) */</comment>
+		<expr_stmt><expr><call><name>free</name><argument_list>(<argument><expr><name>ai</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	}</block> while <condition>(<expr>(<name>ai</name> = <name>next</name>) != <name>NULL</name></expr>)</condition>;</do>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>str_isnumber</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>p</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>unsigned</name> <name>char</name> *</type><name>q</name> <init>= <expr>(<name>unsigned</name> <name>char</name> *)<name>p</name></expr></init></decl>;</decl_stmt>
+	<while>while <condition>(<expr>*<name>q</name></expr>)</condition> <block>{
+		<if>if <condition>(<expr>! <call><name>isdigit</name><argument_list>(<argument><expr>*<name>q</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+			<return>return <expr><name>NO</name></expr>;</return></then></if>
+		<expr_stmt><expr><name>q</name>++</expr>;</expr_stmt>
+	}</block></while>
+	<return>return <expr><name>YES</name></expr>;</return>
+}</block></function>
+
+<function><type><name>int</name></type>
+<name>getaddrinfo</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>char</name>*</type><name>hostname</name></decl></param>, <param><decl><type><specifier>const</specifier> <name>char</name>*</type><name>servname</name></decl></param>,
+            <param><decl><type><specifier>const</specifier> struct <name>addrinfo</name> *</type><name>hints</name></decl></param>, <param><decl><type>struct <name>addrinfo</name> **</type><name>res</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type>struct <name>addrinfo</name></type> <name>sentinel</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type>struct <name>addrinfo</name> *</type><name>top</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type>struct <name>addrinfo</name> *</type><name>cur</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>, <decl><type ref="prev"/><name>error</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>char</name></type> <name><name>pton</name><index>[<expr><name>PTON_MAX</name></expr>]</index></name></decl>;</decl_stmt>
+	<decl_stmt><decl><type>struct <name>addrinfo</name></type> <name>ai</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type>struct <name>addrinfo</name> *</type><name>pai</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>u_short</name></type> <name>port</name></decl>;</decl_stmt>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>FAITH</name></cpp:ifdef>
+	<decl_stmt><decl><type><specifier>static</specifier> <name>int</name></type> <name>firsttime</name> <init>= <expr>1</expr></init></decl>;</decl_stmt>
+
+	<if>if <condition>(<expr><name>firsttime</name></expr>)</condition><then> <block>{
+		<comment type="block">/* translator hack */</comment>
+		<block>{
+			<decl_stmt><decl><type><name>char</name> *</type><name>q</name> <init>= <expr><call><name>getenv</name><argument_list>(<argument><expr>"GAI"</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+			<if>if <condition>(<expr><name>q</name> &amp;&amp; <call><name>inet_pton</name><argument_list>(<argument><expr><name>AF_INET6</name></expr></argument>, <argument><expr><name>q</name></expr></argument>, <argument><expr>&amp;<name>faith_prefix</name></expr></argument>)</argument_list></call> == 1</expr>)</condition><then>
+				<expr_stmt><expr><name>translate</name> = <name>YES</name></expr>;</expr_stmt></then></if>
+		}</block>
+		<expr_stmt><expr><name>firsttime</name> = 0</expr>;</expr_stmt>
+	}</block></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+	<comment type="block">/* initialize file static vars */</comment>
+	<expr_stmt><expr><name><name>sentinel</name>.<name>ai_next</name></name> = <name>NULL</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name>cur</name> = &amp;<name>sentinel</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name>pai</name> = &amp;<name>ai</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>pai</name>-&gt;<name>ai_flags</name></name> = 0</expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>pai</name>-&gt;<name>ai_family</name></name> = <name>PF_UNSPEC</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>pai</name>-&gt;<name>ai_socktype</name></name> = <name>GAI_ANY</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>pai</name>-&gt;<name>ai_protocol</name></name> = <name>GAI_ANY</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>pai</name>-&gt;<name>ai_addrlen</name></name> = 0</expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>pai</name>-&gt;<name>ai_canonname</name></name> = <name>NULL</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>pai</name>-&gt;<name>ai_addr</name></name> = <name>NULL</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>pai</name>-&gt;<name>ai_next</name></name> = <name>NULL</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name>port</name> = <name>GAI_ANY</name></expr>;</expr_stmt>
+	
+	<if>if <condition>(<expr><name>hostname</name> == <name>NULL</name> &amp;&amp; <name>servname</name> == <name>NULL</name></expr>)</condition><then>
+		<return>return <expr><name>EAI_NONAME</name></expr>;</return></then></if>
+	<if>if <condition>(<expr><name>hints</name></expr>)</condition><then> <block>{
+		<comment type="block">/* error check for hints */</comment>
+		<if>if <condition>(<expr><name><name>hints</name>-&gt;<name>ai_addrlen</name></name> || <name><name>hints</name>-&gt;<name>ai_canonname</name></name> ||
+		    <name><name>hints</name>-&gt;<name>ai_addr</name></name> || <name><name>hints</name>-&gt;<name>ai_next</name></name></expr>)</condition><then>
+			<expr_stmt><expr><call><name>ERR</name><argument_list>(<argument><expr><name>EAI_BADHINTS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if> <comment type="block">/* xxx */</comment>
+		<if>if <condition>(<expr><name><name>hints</name>-&gt;<name>ai_flags</name></name> &amp; ~<name>AI_MASK</name></expr>)</condition><then>
+			<expr_stmt><expr><call><name>ERR</name><argument_list>(<argument><expr><name>EAI_BADFLAGS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+		<switch>switch <condition>(<expr><name><name>hints</name>-&gt;<name>ai_family</name></name></expr>)</condition> <block>{
+		<case>case <expr><name>PF_UNSPEC</name></expr>:
+		</case><case>case <expr><name>PF_INET</name></expr>:
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>ENABLE_IPV6</name></cpp:ifdef>
+		</case><case>case <expr><name>PF_INET6</name></expr>:
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+			<break>break;</break>
+		</case><default>default:
+			<expr_stmt><expr><call><name>ERR</name><argument_list>(<argument><expr><name>EAI_FAMILY</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		</default>}</block></switch>
+		<expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr><name>pai</name></expr></argument>, <argument><expr><name>hints</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>pai</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<switch>switch <condition>(<expr><name><name>pai</name>-&gt;<name>ai_socktype</name></name></expr>)</condition> <block>{
+		<case>case <expr><name>GAI_ANY</name></expr>:
+			<switch>switch <condition>(<expr><name><name>pai</name>-&gt;<name>ai_protocol</name></name></expr>)</condition> <block>{
+			<case>case <expr><name>GAI_ANY</name></expr>:
+				<break>break;</break>
+			</case><case>case <expr><name>IPPROTO_UDP</name></expr>:
+				<expr_stmt><expr><name><name>pai</name>-&gt;<name>ai_socktype</name></name> = <name>SOCK_DGRAM</name></expr>;</expr_stmt>
+				<break>break;</break>
+			</case><case>case <expr><name>IPPROTO_TCP</name></expr>:
+				<expr_stmt><expr><name><name>pai</name>-&gt;<name>ai_socktype</name></name> = <name>SOCK_STREAM</name></expr>;</expr_stmt>
+				<break>break;</break>
+			</case><default>default:
+				<expr_stmt><expr><name><name>pai</name>-&gt;<name>ai_socktype</name></name> = <name>SOCK_RAW</name></expr>;</expr_stmt>
+				<break>break;</break>
+			</default>}</block></switch>
+			<break>break;</break>
+		</case><case>case <expr><name>SOCK_RAW</name></expr>:
+			<break>break;</break>
+		</case><case>case <expr><name>SOCK_DGRAM</name></expr>:
+			<if>if <condition>(<expr><name><name>pai</name>-&gt;<name>ai_protocol</name></name> != <name>IPPROTO_UDP</name> &amp;&amp;
+			    <name><name>pai</name>-&gt;<name>ai_protocol</name></name> != <name>GAI_ANY</name></expr>)</condition><then>
+				<expr_stmt><expr><call><name>ERR</name><argument_list>(<argument><expr><name>EAI_BADHINTS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>	<comment type="block">/*xxx*/</comment>
+			<expr_stmt><expr><name><name>pai</name>-&gt;<name>ai_protocol</name></name> = <name>IPPROTO_UDP</name></expr>;</expr_stmt>
+			<break>break;</break>
+		</case><case>case <expr><name>SOCK_STREAM</name></expr>:
+			<if>if <condition>(<expr><name><name>pai</name>-&gt;<name>ai_protocol</name></name> != <name>IPPROTO_TCP</name> &amp;&amp;
+			    <name><name>pai</name>-&gt;<name>ai_protocol</name></name> != <name>GAI_ANY</name></expr>)</condition><then>
+				<expr_stmt><expr><call><name>ERR</name><argument_list>(<argument><expr><name>EAI_BADHINTS</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>	<comment type="block">/*xxx*/</comment>
+			<expr_stmt><expr><name><name>pai</name>-&gt;<name>ai_protocol</name></name> = <name>IPPROTO_TCP</name></expr>;</expr_stmt>
+			<break>break;</break>
+		</case><default>default:
+			<expr_stmt><expr><call><name>ERR</name><argument_list>(<argument><expr><name>EAI_SOCKTYPE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<comment type="block">/* unreachable */</comment>
+		</default>}</block></switch>
+	}</block></then></if>
+
+	<comment type="block">/*
+	 * service port
+	 */</comment>
+	<if>if <condition>(<expr><name>servname</name></expr>)</condition><then> <block>{
+		<if>if <condition>(<expr><call><name>str_isnumber</name><argument_list>(<argument><expr><name>servname</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+			<if>if <condition>(<expr><name><name>pai</name>-&gt;<name>ai_socktype</name></name> == <name>GAI_ANY</name></expr>)</condition><then> <block>{
+				<comment type="block">/* caller accept *GAI_ANY* socktype */</comment>
+				<expr_stmt><expr><name><name>pai</name>-&gt;<name>ai_socktype</name></name> = <name>SOCK_DGRAM</name></expr>;</expr_stmt>
+				<expr_stmt><expr><name><name>pai</name>-&gt;<name>ai_protocol</name></name> = <name>IPPROTO_UDP</name></expr>;</expr_stmt>
+			}</block></then></if>
+			<expr_stmt><expr><name>port</name> = <call><name>htons</name><argument_list>(<argument><expr>(<name>u_short</name>)<call><name>atoi</name><argument_list>(<argument><expr><name>servname</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		}</block></then> <else>else <block>{
+			<decl_stmt><decl><type>struct <name>servent</name> *</type><name>sp</name></decl>;</decl_stmt>
+			<decl_stmt><decl><type><name>char</name> *</type><name>proto</name></decl>;</decl_stmt>
+
+			<expr_stmt><expr><name>proto</name> = <name>NULL</name></expr>;</expr_stmt>
+			<switch>switch <condition>(<expr><name><name>pai</name>-&gt;<name>ai_socktype</name></name></expr>)</condition> <block>{
+			<case>case <expr><name>GAI_ANY</name></expr>:
+				<expr_stmt><expr><name>proto</name> = <name>NULL</name></expr>;</expr_stmt>
+				<break>break;</break>
+			</case><case>case <expr><name>SOCK_DGRAM</name></expr>:
+				<expr_stmt><expr><name>proto</name> = "udp"</expr>;</expr_stmt>
+				<break>break;</break>
+			</case><case>case <expr><name>SOCK_STREAM</name></expr>:
+				<expr_stmt><expr><name>proto</name> = "tcp"</expr>;</expr_stmt>
+				<break>break;</break>
+			</case><default>default:
+				<expr_stmt><expr><call><name>fprintf</name><argument_list>(<argument><expr><name>stderr</name></expr></argument>, <argument><expr>"panic!\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+				<break>break;</break>
+			</default>}</block></switch>
+			<if>if <condition>(<expr>(<name>sp</name> = <call><name>getservbyname</name><argument_list>(<argument><expr><name>servname</name></expr></argument>, <argument><expr><name>proto</name></expr></argument>)</argument_list></call>) == <name>NULL</name></expr>)</condition><then>
+				<expr_stmt><expr><call><name>ERR</name><argument_list>(<argument><expr><name>EAI_SERVICE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+			<expr_stmt><expr><name>port</name> = <name><name>sp</name>-&gt;<name>s_port</name></name></expr>;</expr_stmt>
+			<if>if <condition>(<expr><name><name>pai</name>-&gt;<name>ai_socktype</name></name> == <name>GAI_ANY</name></expr>)</condition><then> <block>{
+				<if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name><name>sp</name>-&gt;<name>s_proto</name></name></expr></argument>, <argument><expr>"udp"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then> <block>{
+					<expr_stmt><expr><name><name>pai</name>-&gt;<name>ai_socktype</name></name> = <name>SOCK_DGRAM</name></expr>;</expr_stmt>
+					<expr_stmt><expr><name><name>pai</name>-&gt;<name>ai_protocol</name></name> = <name>IPPROTO_UDP</name></expr>;</expr_stmt>
+				}</block></then> <else>else <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name><name>sp</name>-&gt;<name>s_proto</name></name></expr></argument>, <argument><expr>"tcp"</expr></argument>)</argument_list></call> == 0</expr>)</condition><then> <block>{
+                                        <expr_stmt><expr><name><name>pai</name>-&gt;<name>ai_socktype</name></name> = <name>SOCK_STREAM</name></expr>;</expr_stmt>
+                                        <expr_stmt><expr><name><name>pai</name>-&gt;<name>ai_protocol</name></name> = <name>IPPROTO_TCP</name></expr>;</expr_stmt>
+                                }</block></then> <else>else
+                                        <expr_stmt><expr><call><name>ERR</name><argument_list>(<argument><expr><name>EAI_PROTOCOL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if></else></if>	<comment type="block">/*xxx*/</comment>
+                        }</block></then></if>
+		}</block></else></if>
+	}</block></then></if>
+	
+	<comment type="block">/*
+	 * hostname == NULL.
+	 * passive socket -&gt; anyaddr (0.0.0.0 or ::)
+	 * non-passive socket -&gt; localhost (127.0.0.1 or ::1)
+	 */</comment>
+	<if>if <condition>(<expr><name>hostname</name> == <name>NULL</name></expr>)</condition><then> <block>{
+		<decl_stmt><decl><type>struct <name>gai_afd</name> *</type><name>gai_afd</name></decl>;</decl_stmt>
+
+		<for>for (<init><expr><name>gai_afd</name> = &amp;<name><name>gai_afdl</name><index>[<expr>0</expr>]</index></name></expr>;</init> <condition><expr><name><name>gai_afd</name>-&gt;<name>a_af</name></name></expr>;</condition> <incr><expr><name>gai_afd</name>++</expr></incr>) <block>{
+			<if>if <condition>(<expr>!(<name><name>pai</name>-&gt;<name>ai_family</name></name> == <name>PF_UNSPEC</name>
+			   || <name><name>pai</name>-&gt;<name>ai_family</name></name> == <name><name>gai_afd</name>-&gt;<name>a_af</name></name>)</expr>)</condition><then> <block>{
+				<continue>continue;</continue>
+			}</block></then></if>
+
+			<if>if <condition>(<expr><name><name>pai</name>-&gt;<name>ai_flags</name></name> &amp; <name>AI_PASSIVE</name></expr>)</condition><then> <block>{
+				<expr_stmt><expr><call><name>GET_AI</name><argument_list>(<argument><expr><name><name>cur</name>-&gt;<name>ai_next</name></name></expr></argument>, <argument><expr><name>gai_afd</name></expr></argument>, <argument><expr><name><name>gai_afd</name>-&gt;<name>a_addrany</name></name></expr></argument>, <argument><expr><name>port</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+				<comment type="block">/* xxx meaningless?
+				 * GET_CANONNAME(cur-&gt;ai_next, "anyaddr");
+				 */</comment>
+			}</block></then> <else>else <block>{
+				<expr_stmt><expr><call><name>GET_AI</name><argument_list>(<argument><expr><name><name>cur</name>-&gt;<name>ai_next</name></name></expr></argument>, <argument><expr><name>gai_afd</name></expr></argument>, <argument><expr><name><name>gai_afd</name>-&gt;<name>a_loopback</name></name></expr></argument>,
+					<argument><expr><name>port</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+				<comment type="block">/* xxx meaningless?
+				 * GET_CANONNAME(cur-&gt;ai_next, "localhost");
+				 */</comment>
+			}</block></else></if>
+			<expr_stmt><expr><name>cur</name> = <name><name>cur</name>-&gt;<name>ai_next</name></name></expr>;</expr_stmt>
+		}</block></for>
+		<expr_stmt><expr><name>top</name> = <name><name>sentinel</name>.<name>ai_next</name></name></expr>;</expr_stmt>
+		<if>if <condition>(<expr><name>top</name></expr>)</condition><then>
+			<goto>goto <name>good</name>;</goto></then>
+		<else>else
+			<expr_stmt><expr><call><name>ERR</name><argument_list>(<argument><expr><name>EAI_FAMILY</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+	}</block></then></if>
+	
+	<comment type="block">/* hostname as numeric name */</comment>
+	<for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name><name>gai_afdl</name><index>[<expr><name>i</name></expr>]</index></name>.<name>a_af</name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>) <block>{
+		<if>if <condition>(<expr><call><name>inet_pton</name><argument_list>(<argument><expr><name><name>gai_afdl</name><index>[<expr><name>i</name></expr>]</index></name>.<name>a_af</name></expr></argument>, <argument><expr><name>hostname</name></expr></argument>, <argument><expr><name>pton</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+			<decl_stmt><decl><type><name>u_long</name></type> <name>v4a</name></decl>;</decl_stmt>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>ENABLE_IPV6</name></cpp:ifdef>
+			<decl_stmt><decl><type><name>u_char</name></type> <name>pfx</name></decl>;</decl_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+			<switch>switch <condition>(<expr><name><name>gai_afdl</name><index>[<expr><name>i</name></expr>]</index></name>.<name>a_af</name></expr>)</condition> <block>{
+			<case>case <expr><name>AF_INET</name></expr>:
+				<expr_stmt><expr><name>v4a</name> = ((struct <name>in_addr</name> *)<name>pton</name>)-&gt;<name>s_addr</name></expr>;</expr_stmt>
+				<expr_stmt><expr><name>v4a</name> = <call><name>ntohl</name><argument_list>(<argument><expr><name>v4a</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+				<if>if <condition>(<expr><call><name>IN_MULTICAST</name><argument_list>(<argument><expr><name>v4a</name></expr></argument>)</argument_list></call> || <call><name>IN_EXPERIMENTAL</name><argument_list>(<argument><expr><name>v4a</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+					<expr_stmt><expr><name><name>pai</name>-&gt;<name>ai_flags</name></name> &amp;= ~<name>AI_CANONNAME</name></expr>;</expr_stmt></then></if>
+				<expr_stmt><expr><name>v4a</name> &gt;&gt;= <name>IN_CLASSA_NSHIFT</name></expr>;</expr_stmt>
+				<if>if <condition>(<expr><name>v4a</name> == 0 || <name>v4a</name> == <name>IN_LOOPBACKNET</name></expr>)</condition><then>
+					<expr_stmt><expr><name><name>pai</name>-&gt;<name>ai_flags</name></name> &amp;= ~<name>AI_CANONNAME</name></expr>;</expr_stmt></then></if>
+				<break>break;</break>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>ENABLE_IPV6</name></cpp:ifdef>
+			</case><case>case <expr><name>AF_INET6</name></expr>:
+				<expr_stmt><expr><name>pfx</name> = ((struct <name>in6_addr</name> *)<name>pton</name>)-&gt;<name><name>s6_addr8</name><index>[<expr>0</expr>]</index></name></expr>;</expr_stmt>
+				<if>if <condition>(<expr><name>pfx</name> == 0 || <name>pfx</name> == 0xfe || <name>pfx</name> == 0xff</expr>)</condition><then>
+					<expr_stmt><expr><name><name>pai</name>-&gt;<name>ai_flags</name></name> &amp;= ~<name>AI_CANONNAME</name></expr>;</expr_stmt></then></if>
+				<break>break;</break>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+			</case>}</block></switch>
+			
+			<if>if <condition>(<expr><name><name>pai</name>-&gt;<name>ai_family</name></name> == <name><name>gai_afdl</name><index>[<expr><name>i</name></expr>]</index></name>.<name>a_af</name> ||
+			    <name><name>pai</name>-&gt;<name>ai_family</name></name> == <name>PF_UNSPEC</name></expr>)</condition><then> <block>{
+				<if>if <condition>(<expr>! (<name><name>pai</name>-&gt;<name>ai_flags</name></name> &amp; <name>AI_CANONNAME</name>)</expr>)</condition><then> <block>{
+					<expr_stmt><expr><call><name>GET_AI</name><argument_list>(<argument><expr><name>top</name></expr></argument>, <argument><expr>&amp;<name><name>gai_afdl</name><index>[<expr><name>i</name></expr>]</index></name></expr></argument>, <argument><expr><name>pton</name></expr></argument>, <argument><expr><name>port</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+					<goto>goto <name>good</name>;</goto>
+				}</block></then></if>
+				<comment type="block">/*
+				 * if AI_CANONNAME and if reverse lookup
+				 * fail, return ai anyway to pacify
+				 * calling application.
+				 *
+				 * XXX getaddrinfo() is a name-&gt;address
+				 * translation function, and it looks strange
+				 * that we do addr-&gt;name translation here.
+				 */</comment>
+				<expr_stmt><expr><call><name>get_name</name><argument_list>(<argument><expr><name>pton</name></expr></argument>, <argument><expr>&amp;<name><name>gai_afdl</name><index>[<expr><name>i</name></expr>]</index></name></expr></argument>, <argument><expr>&amp;<name>top</name></expr></argument>, <argument><expr><name>pton</name></expr></argument>, <argument><expr><name>pai</name></expr></argument>, <argument><expr><name>port</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+				<goto>goto <name>good</name>;</goto>
+			}</block></then> <else>else 
+				<expr_stmt><expr><call><name>ERR</name><argument_list>(<argument><expr><name>EAI_FAMILY</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>	<comment type="block">/*xxx*/</comment>
+		}</block></then></if>
+	}</block></for>
+
+	<if>if <condition>(<expr><name><name>pai</name>-&gt;<name>ai_flags</name></name> &amp; <name>AI_NUMERICHOST</name></expr>)</condition><then>
+		<expr_stmt><expr><call><name>ERR</name><argument_list>(<argument><expr><name>EAI_NONAME</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+	<comment type="block">/* hostname as alphabetical name */</comment>
+	<expr_stmt><expr><name>error</name> = <call><name>get_addr</name><argument_list>(<argument><expr><name>hostname</name></expr></argument>, <argument><expr><name><name>pai</name>-&gt;<name>ai_family</name></name></expr></argument>, <argument><expr>&amp;<name>top</name></expr></argument>, <argument><expr><name>pai</name></expr></argument>, <argument><expr><name>port</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>error</name> == 0</expr>)</condition><then> <block>{
+		<if>if <condition>(<expr><name>top</name></expr>)</condition><then> <block>{
+ <label><name>good</name>:</label>
+			<expr_stmt><expr>*<name>res</name> = <name>top</name></expr>;</expr_stmt>
+			<return>return <expr><name>SUCCESS</name></expr>;</return>
+		}</block></then> <else>else
+			<expr_stmt><expr><name>error</name> = <name>EAI_FAIL</name></expr>;</expr_stmt></else></if>
+	}</block></then></if>
+ <label><name>free</name>:</label>
+	<if>if <condition>(<expr><name>top</name></expr>)</condition><then>
+		<expr_stmt><expr><call><name>freeaddrinfo</name><argument_list>(<argument><expr><name>top</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+ <label><name>bad</name>:</label>
+	<expr_stmt><expr>*<name>res</name> = <name>NULL</name></expr>;</expr_stmt>
+	<return>return <expr><name>error</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>get_name</name><parameter_list>(<param><decl><type><name>addr</name></type></decl></param>, <param><decl><type><name>gai_afd</name></type></decl></param>, <param><decl><type><name>res</name></type></decl></param>, <param><decl><type><name>numaddr</name></type></decl></param>, <param><decl><type><name>pai</name></type></decl></param>, <param><decl><type><name>port0</name></type></decl></param>)</parameter_list>
+	<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>addr</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type>struct <name>gai_afd</name> *</type><name>gai_afd</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type>struct <name>addrinfo</name> **</type><name>res</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>char</name> *</type><name>numaddr</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type>struct <name>addrinfo</name> *</type><name>pai</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>port0</name></decl>;</decl_stmt>
+<block>{
+	<decl_stmt><decl><type><name>u_short</name></type> <name>port</name> <init>= <expr><name>port0</name> &amp; 0xffff</expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type>struct <name>hostent</name> *</type><name>hp</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type>struct <name>addrinfo</name> *</type><name>cur</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>error</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>ENABLE_IPV6</name></cpp:ifdef>
+	<decl_stmt><decl><type><name>int</name></type> <name>h_error</name></decl>;</decl_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>ENABLE_IPV6</name></cpp:ifdef>
+	<expr_stmt><expr><name>hp</name> = <call><name>getipnodebyaddr</name><argument_list>(<argument><expr><name>addr</name></expr></argument>, <argument><expr><name><name>gai_afd</name>-&gt;<name>a_addrlen</name></name></expr></argument>, <argument><expr><name><name>gai_afd</name>-&gt;<name>a_af</name></name></expr></argument>, <argument><expr>&amp;<name>h_error</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+	<expr_stmt><expr><name>hp</name> = <call><name>gethostbyaddr</name><argument_list>(<argument><expr><name>addr</name></expr></argument>, <argument><expr><name><name>gai_afd</name>-&gt;<name>a_addrlen</name></name></expr></argument>, <argument><expr><name>AF_INET</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr><name>hp</name> &amp;&amp; <name><name>hp</name>-&gt;<name>h_name</name></name> &amp;&amp; <name><name>hp</name>-&gt;<name>h_name</name><index>[<expr>0</expr>]</index></name> &amp;&amp; <name><name>hp</name>-&gt;<name>h_addr_list</name><index>[<expr>0</expr>]</index></name></expr>)</condition><then> <block>{
+		<expr_stmt><expr><call><name>GET_AI</name><argument_list>(<argument><expr><name>cur</name></expr></argument>, <argument><expr><name>gai_afd</name></expr></argument>, <argument><expr><name><name>hp</name>-&gt;<name>h_addr_list</name><index>[<expr>0</expr>]</index></name></expr></argument>, <argument><expr><name>port</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><call><name>GET_CANONNAME</name><argument_list>(<argument><expr><name>cur</name></expr></argument>, <argument><expr><name><name>hp</name>-&gt;<name>h_name</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	}</block></then> <else>else
+		<expr_stmt><expr><call><name>GET_AI</name><argument_list>(<argument><expr><name>cur</name></expr></argument>, <argument><expr><name>gai_afd</name></expr></argument>, <argument><expr><name>numaddr</name></expr></argument>, <argument><expr><name>port</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+	
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>ENABLE_IPV6</name></cpp:ifdef>
+	<if>if <condition>(<expr><name>hp</name></expr>)</condition><then>
+		<expr_stmt><expr><call><name>freehostent</name><argument_list>(<argument><expr><name>hp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<expr_stmt><expr>*<name>res</name> = <name>cur</name></expr>;</expr_stmt>
+	<return>return <expr><name>SUCCESS</name></expr>;</return>
+ <label><name>free</name>:</label>
+	<if>if <condition>(<expr><name>cur</name></expr>)</condition><then>
+		<expr_stmt><expr><call><name>freeaddrinfo</name><argument_list>(<argument><expr><name>cur</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>ENABLE_IPV6</name></cpp:ifdef>
+	<if>if <condition>(<expr><name>hp</name></expr>)</condition><then>
+		<expr_stmt><expr><call><name>freehostent</name><argument_list>(<argument><expr><name>hp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+ <comment type="block">/* bad: */</comment>
+	<expr_stmt><expr>*<name>res</name> = <name>NULL</name></expr>;</expr_stmt>
+	<return>return <expr><name>error</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>int</name></type>
+<name>get_addr</name><parameter_list>(<param><decl><type><name>hostname</name></type></decl></param>, <param><decl><type><name>af</name></type></decl></param>, <param><decl><type><name>res</name></type></decl></param>, <param><decl><type><name>pai</name></type></decl></param>, <param><decl><type><name>port0</name></type></decl></param>)</parameter_list>
+	<decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>hostname</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>af</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type>struct <name>addrinfo</name> **</type><name>res</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type>struct <name>addrinfo</name> *</type><name>pai</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>port0</name></decl>;</decl_stmt>
+<block>{
+	<decl_stmt><decl><type><name>u_short</name></type> <name>port</name> <init>= <expr><name>port0</name> &amp; 0xffff</expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type>struct <name>addrinfo</name></type> <name>sentinel</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type>struct <name>hostent</name> *</type><name>hp</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type>struct <name>addrinfo</name> *</type><name>top</name></decl>, *<decl><type ref="prev"/><name>cur</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type>struct <name>gai_afd</name> *</type><name>gai_afd</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>, <decl><type ref="prev"/><name>error</name> <init>= <expr>0</expr></init>, <name>h_error</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>char</name> *</type><name>ap</name></decl>;</decl_stmt>
+
+	<expr_stmt><expr><name>top</name> = <name>NULL</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name><name>sentinel</name>.<name>ai_next</name></name> = <name>NULL</name></expr>;</expr_stmt>
+	<expr_stmt><expr><name>cur</name> = &amp;<name>sentinel</name></expr>;</expr_stmt>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>ENABLE_IPV6</name></cpp:ifdef>
+	<if>if <condition>(<expr><name>af</name> == <name>AF_UNSPEC</name></expr>)</condition><then> <block>{
+		<expr_stmt><expr><name>hp</name> = <call><name>getipnodebyname</name><argument_list>(<argument><expr><name>hostname</name></expr></argument>, <argument><expr><name>AF_INET6</name></expr></argument>,
+				<argument><expr><name>AI_ADDRCONFIG</name>|<name>AI_ALL</name>|<name>AI_V4MAPPED</name></expr></argument>, <argument><expr>&amp;<name>h_error</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	}</block></then> <else>else
+		<expr_stmt><expr><name>hp</name> = <call><name>getipnodebyname</name><argument_list>(<argument><expr><name>hostname</name></expr></argument>, <argument><expr><name>af</name></expr></argument>, <argument><expr><name>AI_ADDRCONFIG</name></expr></argument>, <argument><expr>&amp;<name>h_error</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+	<expr_stmt><expr><name>hp</name> = <call><name>gethostbyname</name><argument_list>(<argument><expr><name>hostname</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<expr_stmt><expr><name>h_error</name> = <name>h_errno</name></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<if>if <condition>(<expr><name>hp</name> == <name>NULL</name></expr>)</condition><then> <block>{
+		<switch>switch <condition>(<expr><name>h_error</name></expr>)</condition> <block>{
+		<case>case <expr><name>HOST_NOT_FOUND</name></expr>:
+		</case><case>case <expr><name>NO_DATA</name></expr>:
+			<expr_stmt><expr><name>error</name> = <name>EAI_NODATA</name></expr>;</expr_stmt>
+			<break>break;</break>
+		</case><case>case <expr><name>TRY_AGAIN</name></expr>:
+			<expr_stmt><expr><name>error</name> = <name>EAI_AGAIN</name></expr>;</expr_stmt>
+			<break>break;</break>
+		</case><case>case <expr><name>NO_RECOVERY</name></expr>:
+		</case><default>default:
+			<expr_stmt><expr><name>error</name> = <name>EAI_FAIL</name></expr>;</expr_stmt>
+			<break>break;</break>
+		</default>}</block></switch>
+		<goto>goto <name>free</name>;</goto>
+	}</block></then></if>
+
+	<if>if <condition>(<expr>(<name><name>hp</name>-&gt;<name>h_name</name></name> == <name>NULL</name>) || (<name><name>hp</name>-&gt;<name>h_name</name><index>[<expr>0</expr>]</index></name> == 0) ||
+	    (<name><name>hp</name>-&gt;<name>h_addr_list</name><index>[<expr>0</expr>]</index></name> == <name>NULL</name>)</expr>)</condition><then> <block>{
+		<expr_stmt><expr><name>error</name> = <name>EAI_FAIL</name></expr>;</expr_stmt>
+		<goto>goto <name>free</name>;</goto>
+	}</block></then></if>
+	
+	<for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr>(<name>ap</name> = <name><name>hp</name>-&gt;<name>h_addr_list</name><index>[<expr><name>i</name></expr>]</index></name>) != <name>NULL</name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>) <block>{
+		<switch>switch <condition>(<expr><name>af</name></expr>)</condition> <block>{
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>ENABLE_IPV6</name></cpp:ifdef>
+		<case>case <expr><name>AF_INET6</name></expr>:
+			<expr_stmt><expr><name>gai_afd</name> = &amp;<name><name>gai_afdl</name><index>[<expr><name>N_INET6</name></expr>]</index></name></expr>;</expr_stmt>
+			<break>break;</break>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>ENABLE_IPV6</name></cpp:ifndef>
+		</case><default>default:	<comment type="block">/* AF_UNSPEC */</comment>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+		</default><case>case <expr><name>AF_INET</name></expr>:
+			<expr_stmt><expr><name>gai_afd</name> = &amp;<name><name>gai_afdl</name><index>[<expr><name>N_INET</name></expr>]</index></name></expr>;</expr_stmt>
+			<break>break;</break>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>ENABLE_IPV6</name></cpp:ifdef>
+		</case><default>default:	<comment type="block">/* AF_UNSPEC */</comment>
+			<if>if <condition>(<expr><call><name>IN6_IS_ADDR_V4MAPPED</name><argument_list>(<argument><expr>(struct <name>in6_addr</name> *)<name>ap</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+				<expr_stmt><expr><name>ap</name> += <sizeof>sizeof<argument_list>(<argument>struct <expr><name>in6_addr</name></expr></argument>)</argument_list></sizeof> -
+					<sizeof>sizeof<argument_list>(<argument>struct <expr><name>in_addr</name></expr></argument>)</argument_list></sizeof></expr>;</expr_stmt>
+				<expr_stmt><expr><name>gai_afd</name> = &amp;<name><name>gai_afdl</name><index>[<expr><name>N_INET</name></expr>]</index></name></expr>;</expr_stmt>
+			}</block></then> <else>else
+				<expr_stmt><expr><name>gai_afd</name> = &amp;<name><name>gai_afdl</name><index>[<expr><name>N_INET6</name></expr>]</index></name></expr>;</expr_stmt></else></if>
+			<break>break;</break>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+		</default>}</block></switch>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>FAITH</name></cpp:ifdef>
+		<if>if <condition>(<expr><name>translate</name> &amp;&amp; <name><name>gai_afd</name>-&gt;<name>a_af</name></name> == <name>AF_INET</name></expr>)</condition><then> <block>{
+			<decl_stmt><decl><type>struct <name>in6_addr</name> *</type><name>in6</name></decl>;</decl_stmt>
+
+			<expr_stmt><expr><call><name>GET_AI</name><argument_list>(<argument><expr><name><name>cur</name>-&gt;<name>ai_next</name></name></expr></argument>, <argument><expr>&amp;<name><name>gai_afdl</name><index>[<expr><name>N_INET6</name></expr>]</index></name></expr></argument>, <argument><expr><name>ap</name></expr></argument>, <argument><expr><name>port</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<expr_stmt><expr><name>in6</name> = &amp;((struct <name>sockaddr_in6</name> *)<name><name>cur</name>-&gt;<name>ai_next</name>-&gt;<name>ai_addr</name></name>)-&gt;<name>sin6_addr</name></expr>;</expr_stmt>
+			<expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr>&amp;<name><name>in6</name>-&gt;<name>s6_addr32</name><index>[<expr>0</expr>]</index></name></expr></argument>, <argument><expr>&amp;<name>faith_prefix</name></expr></argument>,
+			    <argument><expr><sizeof>sizeof<argument_list>(<argument>struct <expr><name>in6_addr</name></expr></argument>)</argument_list></sizeof> - <sizeof>sizeof<argument_list>(<argument>struct <expr><name>in_addr</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<expr_stmt><expr><call><name>memcpy</name><argument_list>(<argument><expr>&amp;<name><name>in6</name>-&gt;<name>s6_addr32</name><index>[<expr>3</expr>]</index></name></expr></argument>, <argument><expr><name>ap</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument>struct <expr><name>in_addr</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		}</block></then> <else>else
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif> <comment type="block">/* FAITH */</comment>
+		<expr_stmt><expr><call><name>GET_AI</name><argument_list>(<argument><expr><name><name>cur</name>-&gt;<name>ai_next</name></name></expr></argument>, <argument><expr><name>gai_afd</name></expr></argument>, <argument><expr><name>ap</name></expr></argument>, <argument><expr><name>port</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+		<if>if <condition>(<expr><name>cur</name> == &amp;<name>sentinel</name></expr>)</condition><then> <block>{
+			<expr_stmt><expr><name>top</name> = <name><name>cur</name>-&gt;<name>ai_next</name></name></expr>;</expr_stmt>
+			<expr_stmt><expr><call><name>GET_CANONNAME</name><argument_list>(<argument><expr><name>top</name></expr></argument>, <argument><expr><name><name>hp</name>-&gt;<name>h_name</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		}</block></then></if>
+		<expr_stmt><expr><name>cur</name> = <name><name>cur</name>-&gt;<name>ai_next</name></name></expr>;</expr_stmt>
+	}</block></for>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>ENABLE_IPV6</name></cpp:ifdef>
+	<expr_stmt><expr><call><name>freehostent</name><argument_list>(<argument><expr><name>hp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+	<expr_stmt><expr>*<name>res</name> = <name>top</name></expr>;</expr_stmt>
+	<return>return <expr><name>SUCCESS</name></expr>;</return>
+ <label><name>free</name>:</label>
+	<if>if <condition>(<expr><name>top</name></expr>)</condition><then>
+		<expr_stmt><expr><call><name>freeaddrinfo</name><argument_list>(<argument><expr><name>top</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>ENABLE_IPV6</name></cpp:ifdef>
+	<if>if <condition>(<expr><name>hp</name></expr>)</condition><then>
+		<expr_stmt><expr><call><name>freehostent</name><argument_list>(<argument><expr><name>hp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<comment type="block">/* bad: */</comment>
+	<expr_stmt><expr>*<name>res</name> = <name>NULL</name></expr>;</expr_stmt>
+	<return>return <expr><name>error</name></expr>;</return>
+}</block></function>
+</unit>

@@ -1,0 +1,180 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/cpython-2.6.1/source/PCbuild/kill_python.c"><comment type="block">/*
+ * Helper program for killing lingering python[_d].exe processes before
+ * building, thus attempting to avoid build failures due to files being
+ * locked.
+ */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;windows.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;wchar.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;tlhelp32.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;stdio.h&gt;</cpp:file></cpp:include>
+
+<cpp:pragma>#<cpp:directive>pragma</cpp:directive> comment(lib, "psapi")</cpp:pragma>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>_DEBUG</name></cpp:ifdef>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PYTHON_EXE</name></cpp:macro>          <cpp:value>(L"python_d.exe")</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PYTHON_EXE_LEN</name></cpp:macro>      <cpp:value>(12)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>KILL_PYTHON_EXE</name></cpp:macro>     <cpp:value>(L"kill_python_d.exe")</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>KILL_PYTHON_EXE_LEN</name></cpp:macro> <cpp:value>(17)</cpp:value></cpp:define>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PYTHON_EXE</name></cpp:macro>          <cpp:value>(L"python.exe")</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>PYTHON_EXE_LEN</name></cpp:macro>      <cpp:value>(10)</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>KILL_PYTHON_EXE</name></cpp:macro>     <cpp:value>(L"kill_python.exe")</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>KILL_PYTHON_EXE_LEN</name></cpp:macro> <cpp:value>(15)</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<function><type><name>int</name></type>
+<name>main</name><parameter_list>(<param><decl><type><name>int</name></type> <name>argc</name></decl></param>, <param><decl><type><name>char</name> **</type><name>argv</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>HANDLE</name></type>   <name>hp</name></decl>, <decl><type ref="prev"/><name>hsp</name></decl>, <decl><type ref="prev"/><name>hsm</name></decl>;</decl_stmt> <comment type="block">/* process, snapshot processes, snapshot modules */</comment>
+    <decl_stmt><decl><type><name>DWORD</name></type>    <name>dac</name></decl>, <decl><type ref="prev"/><name>our_pid</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>size_t</name></type>   <name>len</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>wchar_t</name></type>  <name><name>path</name><index>[<expr><name>MAX_PATH</name>+1</expr>]</index></name></decl>;</decl_stmt>
+
+    <decl_stmt><decl><type><name>MODULEENTRY32W</name></type>  <name>me</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>PROCESSENTRY32W</name></type> <name>pe</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name><name>me</name>.<name>dwSize</name></name> = <sizeof>sizeof<argument_list>(<argument><expr><name>MODULEENTRY32W</name></expr></argument>)</argument_list></sizeof></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>pe</name>.<name>dwSize</name></name> = <sizeof>sizeof<argument_list>(<argument><expr><name>PROCESSENTRY32W</name></expr></argument>)</argument_list></sizeof></expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>memset</name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>MAX_PATH</name>+1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>our_pid</name> = <call><name>GetCurrentProcessId</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>hsm</name> = <call><name>CreateToolhelp32Snapshot</name><argument_list>(<argument><expr><name>TH32CS_SNAPMODULE</name></expr></argument>, <argument><expr><name>our_pid</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>hsm</name> == <name>INVALID_HANDLE_VALUE</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"CreateToolhelp32Snapshot[1] failed: %d\n"</expr></argument>, <argument><expr><call><name>GetLastError</name><argument_list>()</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr>1</expr>;</return>
+    }</block></then></if>
+
+    <if>if <condition>(<expr>!<call><name>Module32FirstW</name><argument_list>(<argument><expr><name>hsm</name></expr></argument>, <argument><expr>&amp;<name>me</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"Module32FirstW[1] failed: %d\n"</expr></argument>, <argument><expr><call><name>GetLastError</name><argument_list>()</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>CloseHandle</name><argument_list>(<argument><expr><name>hsm</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr>1</expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/*
+     * Enumerate over the modules for the current process in order to find
+     * kill_process[_d].exe, then take a note of the directory it lives in.
+     */</comment>
+    <do>do <block>{
+        <if>if <condition>(<expr><call><name>_wcsnicmp</name><argument_list>(<argument><expr><name><name>me</name>.<name>szModule</name></name></expr></argument>, <argument><expr><name>KILL_PYTHON_EXE</name></expr></argument>, <argument><expr><name>KILL_PYTHON_EXE_LEN</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+            <continue>continue;</continue></then></if>
+
+        <expr_stmt><expr><name>len</name> = <call><name>wcsnlen_s</name><argument_list>(<argument><expr><name><name>me</name>.<name>szExePath</name></name></expr></argument>, <argument><expr><name>MAX_PATH</name></expr></argument>)</argument_list></call> - <name>KILL_PYTHON_EXE_LEN</name></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>wcsncpy_s</name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr><name>MAX_PATH</name>+1</expr></argument>, <argument><expr><name><name>me</name>.<name>szExePath</name></name></expr></argument>, <argument><expr><name>len</name></expr></argument>)</argument_list></call></expr>;</expr_stmt> 
+
+        <break>break;</break>
+
+    }</block> while <condition>(<expr><call><name>Module32NextW</name><argument_list>(<argument><expr><name>hsm</name></expr></argument>, <argument><expr>&amp;<name>me</name></expr></argument>)</argument_list></call></expr>)</condition>;</do>
+
+    <expr_stmt><expr><call><name>CloseHandle</name><argument_list>(<argument><expr><name>hsm</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <if>if <condition>(<expr><name>path</name> == <name>NULL</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"failed to discern directory of running process\n"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr>1</expr>;</return>
+    }</block></then></if>
+
+    <comment type="block">/*
+     * Take a snapshot of system processes.  Enumerate over the snapshot,
+     * looking for python processes.  When we find one, verify it lives
+     * in the same directory we live in.  If it does, kill it.  If we're
+     * unable to kill it, treat this as a fatal error and return 1.
+     * 
+     * The rationale behind this is that we're called at the start of the 
+     * build process on the basis that we'll take care of killing any
+     * running instances, such that the build won't encounter permission
+     * denied errors during linking. If we can't kill one of the processes,
+     * we can't provide this assurance, and the build shouldn't start.
+     */</comment>
+
+    <expr_stmt><expr><name>hsp</name> = <call><name>CreateToolhelp32Snapshot</name><argument_list>(<argument><expr><name>TH32CS_SNAPPROCESS</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>hsp</name> == <name>INVALID_HANDLE_VALUE</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"CreateToolhelp32Snapshot[2] failed: %d\n"</expr></argument>, <argument><expr><call><name>GetLastError</name><argument_list>()</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr>1</expr>;</return>
+    }</block></then></if>
+
+    <if>if <condition>(<expr>!<call><name>Process32FirstW</name><argument_list>(<argument><expr><name>hsp</name></expr></argument>, <argument><expr>&amp;<name>pe</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"Process32FirstW failed: %d\n"</expr></argument>, <argument><expr><call><name>GetLastError</name><argument_list>()</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>CloseHandle</name><argument_list>(<argument><expr><name>hsp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr>1</expr>;</return>
+    }</block></then></if>
+
+    <expr_stmt><expr><name>dac</name> = <name>PROCESS_QUERY_INFORMATION</name> | <name>PROCESS_VM_READ</name> | <name>PROCESS_TERMINATE</name></expr>;</expr_stmt>
+    <do>do <block>{
+
+        <comment type="block">/*
+         * XXX TODO: if we really wanted to be fancy, we could check the 
+         * modules for all processes (not just the python[_d].exe ones)
+         * and see if any of our DLLs are loaded (i.e. python30[_d].dll),
+         * as that would also inhibit our ability to rebuild the solution.
+         * Not worth loosing sleep over though; for now, a simple check 
+         * for just the python executable should be sufficient.
+         */</comment>
+
+        <if>if <condition>(<expr><call><name>_wcsnicmp</name><argument_list>(<argument><expr><name><name>pe</name>.<name>szExeFile</name></name></expr></argument>, <argument><expr><name>PYTHON_EXE</name></expr></argument>, <argument><expr><name>PYTHON_EXE_LEN</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+            <comment type="block">/* This isn't a python process. */</comment>
+            <continue>continue;</continue></then></if>
+
+        <comment type="block">/* It's a python process, so figure out which directory it's in... */</comment>
+        <expr_stmt><expr><name>hsm</name> = <call><name>CreateToolhelp32Snapshot</name><argument_list>(<argument><expr><name>TH32CS_SNAPMODULE</name></expr></argument>, <argument><expr><name><name>pe</name>.<name>th32ProcessID</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>hsm</name> == <name>INVALID_HANDLE_VALUE</name></expr>)</condition><then>
+            <comment type="block">/* 
+             * If our module snapshot fails (which will happen if we don't own
+             * the process), just ignore it and continue.  (It seems different
+             * versions of Windows return different values for GetLastError()
+             * in this situation; it's easier to just ignore it and move on vs.
+             * stopping the build for what could be a false positive.)
+             */</comment>
+             <continue>continue;</continue></then></if>
+
+        <if>if <condition>(<expr>!<call><name>Module32FirstW</name><argument_list>(<argument><expr><name>hsm</name></expr></argument>, <argument><expr>&amp;<name>me</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"Module32FirstW[2] failed: %d\n"</expr></argument>, <argument><expr><call><name>GetLastError</name><argument_list>()</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>CloseHandle</name><argument_list>(<argument><expr><name>hsp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>CloseHandle</name><argument_list>(<argument><expr><name>hsm</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <return>return <expr>1</expr>;</return>
+        }</block></then></if>
+
+        <do>do <block>{
+            <if>if <condition>(<expr><call><name>_wcsnicmp</name><argument_list>(<argument><expr><name><name>me</name>.<name>szModule</name></name></expr></argument>, <argument><expr><name>PYTHON_EXE</name></expr></argument>, <argument><expr><name>PYTHON_EXE_LEN</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+                <comment type="block">/* Wrong module, we're looking for python[_d].exe... */</comment>
+                <continue>continue;</continue></then></if>
+
+            <if>if <condition>(<expr><call><name>_wcsnicmp</name><argument_list>(<argument><expr><name>path</name></expr></argument>, <argument><expr><name><name>me</name>.<name>szExePath</name></name></expr></argument>, <argument><expr><name>len</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+                <comment type="block">/* Process doesn't live in our directory. */</comment>
+                <break>break;</break></then></if>
+
+            <comment type="block">/* Python process residing in the right directory, kill it!  */</comment>
+            <expr_stmt><expr><name>hp</name> = <call><name>OpenProcess</name><argument_list>(<argument><expr><name>dac</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name><name>pe</name>.<name>th32ProcessID</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <if>if <condition>(<expr>!<name>hp</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"OpenProcess failed: %d\n"</expr></argument>, <argument><expr><call><name>GetLastError</name><argument_list>()</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><call><name>CloseHandle</name><argument_list>(<argument><expr><name>hsp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><call><name>CloseHandle</name><argument_list>(<argument><expr><name>hsm</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <return>return <expr>1</expr>;</return>
+            }</block></then></if>
+
+            <if>if <condition>(<expr>!<call><name>TerminateProcess</name><argument_list>(<argument><expr><name>hp</name></expr></argument>, <argument><expr>1</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+                <expr_stmt><expr><call><name>printf</name><argument_list>(<argument><expr>"TerminateProcess failed: %d\n"</expr></argument>, <argument><expr><call><name>GetLastError</name><argument_list>()</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><call><name>CloseHandle</name><argument_list>(<argument><expr><name>hsp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><call><name>CloseHandle</name><argument_list>(<argument><expr><name>hsm</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><call><name>CloseHandle</name><argument_list>(<argument><expr><name>hp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <return>return <expr>1</expr>;</return>
+            }</block></then></if>
+
+            <expr_stmt><expr><call><name>CloseHandle</name><argument_list>(<argument><expr><name>hp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <break>break;</break>
+
+        }</block> while <condition>(<expr><call><name>Module32NextW</name><argument_list>(<argument><expr><name>hsm</name></expr></argument>, <argument><expr>&amp;<name>me</name></expr></argument>)</argument_list></call></expr>)</condition>;</do>
+
+        <expr_stmt><expr><call><name>CloseHandle</name><argument_list>(<argument><expr><name>hsm</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    }</block> while <condition>(<expr><call><name>Process32NextW</name><argument_list>(<argument><expr><name>hsp</name></expr></argument>, <argument><expr>&amp;<name>pe</name></expr></argument>)</argument_list></call></expr>)</condition>;</do>
+
+    <expr_stmt><expr><call><name>CloseHandle</name><argument_list>(<argument><expr><name>hsp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <return>return <expr>0</expr>;</return>
+}</block></function>
+
+<comment type="block">/* vi: set ts=8 sw=4 sts=4 expandtab */</comment>
+</unit>

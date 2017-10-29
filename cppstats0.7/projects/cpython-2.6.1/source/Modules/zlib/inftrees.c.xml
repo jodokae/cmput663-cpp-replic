@@ -1,0 +1,331 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/cpython-2.6.1/source/Modules/zlib/inftrees.c"><comment type="block">/* inftrees.c -- generate Huffman trees for efficient decoding
+ * Copyright (C) 1995-2005 Mark Adler
+ * For conditions of distribution and use, see copyright notice in zlib.h
+ */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"zutil.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"inftrees.h"</cpp:file></cpp:include>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>MAXBITS</name></cpp:macro> <cpp:value>15</cpp:value></cpp:define>
+
+<decl_stmt><decl><type><specifier>const</specifier> <name>char</name></type> <name><name>inflate_copyright</name><index>[]</index></name> <init>=
+   <expr>" inflate 1.2.3 Copyright 1995-2005 Mark Adler "</expr></init></decl>;</decl_stmt>
+<comment type="block">/*
+  If you use the zlib library in a product, an acknowledgment is welcome
+  in the documentation of your product. If for some reason you cannot
+  include such an acknowledgment, I would appreciate that you keep this
+  copyright string in the executable of your product.
+ */</comment>
+
+<comment type="block">/*
+   Build a set of tables to decode the provided canonical Huffman code.
+   The code lengths are lens[0..codes-1].  The result starts at *table,
+   whose indices are 0..2^bits-1.  work is a writable array of at least
+   lens shorts, which is used as a work area.  type is the type of code
+   to be generated, CODES, LENS, or DISTS.  On return, zero is success,
+   -1 is an invalid code, and +1 means that ENOUGH isn't enough.  table
+   on return points to the next available entry's address.  bits is the
+   requested root table index bits, and on return it is the actual root
+   table index bits.  It will differ if the request is greater than the
+   longest code or if it is less than the shortest code.
+ */</comment>
+<function><type><name>int</name></type> <name>inflate_table</name><parameter_list>(<param><decl><type><name>type</name></type></decl></param>, <param><decl><type><name>lens</name></type></decl></param>, <param><decl><type><name>codes</name></type></decl></param>, <param><decl><type><name>table</name></type></decl></param>, <param><decl><type><name>bits</name></type></decl></param>, <param><decl><type><name>work</name></type></decl></param>)</parameter_list>
+<decl_stmt><decl><type><name>codetype</name></type> <name>type</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>unsigned</name> <name>short</name> <name>FAR</name> *</type><name>lens</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>unsigned</name></type> <name>codes</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>code</name> <name>FAR</name> * <name>FAR</name> *</type><name>table</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>unsigned</name> <name>FAR</name> *</type><name>bits</name></decl>;</decl_stmt>
+<decl_stmt><decl><type><name>unsigned</name> <name>short</name> <name>FAR</name> *</type><name>work</name></decl>;</decl_stmt>
+<block>{
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>len</name></decl>;</decl_stmt>               <comment type="block">/* a code's length in bits */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>sym</name></decl>;</decl_stmt>               <comment type="block">/* index of code symbols */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>min</name></decl>, <decl><type ref="prev"/><name>max</name></decl>;</decl_stmt>          <comment type="block">/* minimum and maximum code lengths */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>root</name></decl>;</decl_stmt>              <comment type="block">/* number of index bits for root table */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>curr</name></decl>;</decl_stmt>              <comment type="block">/* number of index bits for current table */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>drop</name></decl>;</decl_stmt>              <comment type="block">/* code bits to drop for sub-table */</comment>
+    <decl_stmt><decl><type><name>int</name></type> <name>left</name></decl>;</decl_stmt>                   <comment type="block">/* number of prefix codes available */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>used</name></decl>;</decl_stmt>              <comment type="block">/* code entries in table used */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>huff</name></decl>;</decl_stmt>              <comment type="block">/* Huffman code */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>incr</name></decl>;</decl_stmt>              <comment type="block">/* for incrementing code, index */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>fill</name></decl>;</decl_stmt>              <comment type="block">/* index for replicating entries */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>low</name></decl>;</decl_stmt>               <comment type="block">/* low bits for current root entry */</comment>
+    <decl_stmt><decl><type><name>unsigned</name></type> <name>mask</name></decl>;</decl_stmt>              <comment type="block">/* mask for low root bits */</comment>
+    <decl_stmt><decl><type><name>code</name></type> <name>this</name></decl>;</decl_stmt>                  <comment type="block">/* table entry for duplication */</comment>
+    <decl_stmt><decl><type><name>code</name> <name>FAR</name> *</type><name>next</name></decl>;</decl_stmt>             <comment type="block">/* next available space in table */</comment>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>unsigned</name> <name>short</name> <name>FAR</name> *</type><name>base</name></decl>;</decl_stmt>     <comment type="block">/* base value table to use */</comment>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>unsigned</name> <name>short</name> <name>FAR</name> *</type><name>extra</name></decl>;</decl_stmt>    <comment type="block">/* extra bits table to use */</comment>
+    <decl_stmt><decl><type><name>int</name></type> <name>end</name></decl>;</decl_stmt>                    <comment type="block">/* use base and extra for symbol &gt; end */</comment>
+    <decl_stmt><decl><type><name>unsigned</name> <name>short</name></type> <name><name>count</name><index>[<expr><name>MAXBITS</name>+1</expr>]</index></name></decl>;</decl_stmt>    <comment type="block">/* number of codes of each length */</comment>
+    <decl_stmt><decl><type><name>unsigned</name> <name>short</name></type> <name><name>offs</name><index>[<expr><name>MAXBITS</name>+1</expr>]</index></name></decl>;</decl_stmt>     <comment type="block">/* offsets in table for each length */</comment>
+    <decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>unsigned</name> <name>short</name></type> <name><name>lbase</name><index>[<expr>31</expr>]</index></name> <init>= <expr><block>{ <comment type="block">/* Length codes 257..285 base */</comment>
+        <expr>3</expr>, <expr>4</expr>, <expr>5</expr>, <expr>6</expr>, <expr>7</expr>, <expr>8</expr>, <expr>9</expr>, <expr>10</expr>, <expr>11</expr>, <expr>13</expr>, <expr>15</expr>, <expr>17</expr>, <expr>19</expr>, <expr>23</expr>, <expr>27</expr>, <expr>31</expr>,
+        <expr>35</expr>, <expr>43</expr>, <expr>51</expr>, <expr>59</expr>, <expr>67</expr>, <expr>83</expr>, <expr>99</expr>, <expr>115</expr>, <expr>131</expr>, <expr>163</expr>, <expr>195</expr>, <expr>227</expr>, <expr>258</expr>, <expr>0</expr>, <expr>0</expr>}</block></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>unsigned</name> <name>short</name></type> <name><name>lext</name><index>[<expr>31</expr>]</index></name> <init>= <expr><block>{ <comment type="block">/* Length codes 257..285 extra */</comment>
+        <expr>16</expr>, <expr>16</expr>, <expr>16</expr>, <expr>16</expr>, <expr>16</expr>, <expr>16</expr>, <expr>16</expr>, <expr>16</expr>, <expr>17</expr>, <expr>17</expr>, <expr>17</expr>, <expr>17</expr>, <expr>18</expr>, <expr>18</expr>, <expr>18</expr>, <expr>18</expr>,
+        <expr>19</expr>, <expr>19</expr>, <expr>19</expr>, <expr>19</expr>, <expr>20</expr>, <expr>20</expr>, <expr>20</expr>, <expr>20</expr>, <expr>21</expr>, <expr>21</expr>, <expr>21</expr>, <expr>21</expr>, <expr>16</expr>, <expr>201</expr>, <expr>196</expr>}</block></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>unsigned</name> <name>short</name></type> <name><name>dbase</name><index>[<expr>32</expr>]</index></name> <init>= <expr><block>{ <comment type="block">/* Distance codes 0..29 base */</comment>
+        <expr>1</expr>, <expr>2</expr>, <expr>3</expr>, <expr>4</expr>, <expr>5</expr>, <expr>7</expr>, <expr>9</expr>, <expr>13</expr>, <expr>17</expr>, <expr>25</expr>, <expr>33</expr>, <expr>49</expr>, <expr>65</expr>, <expr>97</expr>, <expr>129</expr>, <expr>193</expr>,
+        <expr>257</expr>, <expr>385</expr>, <expr>513</expr>, <expr>769</expr>, <expr>1025</expr>, <expr>1537</expr>, <expr>2049</expr>, <expr>3073</expr>, <expr>4097</expr>, <expr>6145</expr>,
+        <expr>8193</expr>, <expr>12289</expr>, <expr>16385</expr>, <expr>24577</expr>, <expr>0</expr>, <expr>0</expr>}</block></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>unsigned</name> <name>short</name></type> <name><name>dext</name><index>[<expr>32</expr>]</index></name> <init>= <expr><block>{ <comment type="block">/* Distance codes 0..29 extra */</comment>
+        <expr>16</expr>, <expr>16</expr>, <expr>16</expr>, <expr>16</expr>, <expr>17</expr>, <expr>17</expr>, <expr>18</expr>, <expr>18</expr>, <expr>19</expr>, <expr>19</expr>, <expr>20</expr>, <expr>20</expr>, <expr>21</expr>, <expr>21</expr>, <expr>22</expr>, <expr>22</expr>,
+        <expr>23</expr>, <expr>23</expr>, <expr>24</expr>, <expr>24</expr>, <expr>25</expr>, <expr>25</expr>, <expr>26</expr>, <expr>26</expr>, <expr>27</expr>, <expr>27</expr>,
+        <expr>28</expr>, <expr>28</expr>, <expr>29</expr>, <expr>29</expr>, <expr>64</expr>, <expr>64</expr>}</block></expr></init></decl>;</decl_stmt>
+
+    <comment type="block">/*
+       Process a set of code lengths to create a canonical Huffman code.  The
+       code lengths are lens[0..codes-1].  Each length corresponds to the
+       symbols 0..codes-1.  The Huffman code is generated by first sorting the
+       symbols by length from short to long, and retaining the symbol order
+       for codes with equal lengths.  Then the code starts with all zero bits
+       for the first code of the shortest length, and the codes are integer
+       increments for the same length, and zeros are appended as the length
+       increases.  For the deflate format, these bits are stored backwards
+       from their more natural integer increment ordering, and so when the
+       decoding tables are built in the large loop below, the integer codes
+       are incremented backwards.
+
+       This routine assumes, but does not check, that all of the entries in
+       lens[] are in the range 0..MAXBITS.  The caller must assure this.
+       1..MAXBITS is interpreted as that code length.  zero means that that
+       symbol does not occur in this code.
+
+       The codes are sorted by computing a count of codes for each length,
+       creating from that a table of starting indices for each length in the
+       sorted table, and then entering the symbols in order in the sorted
+       table.  The sorted table is work[], with that space being provided by
+       the caller.
+
+       The length counts are used for other purposes as well, i.e. finding
+       the minimum and maximum length codes, determining if there are any
+       codes at all, checking for a valid set of lengths, and looking ahead
+       at length counts to determine sub-table sizes when building the
+       decoding tables.
+     */</comment>
+
+    <comment type="block">/* accumulate lengths for codes (assumes lens[] all in 0..MAXBITS) */</comment>
+    <for>for (<init><expr><name>len</name> = 0</expr>;</init> <condition><expr><name>len</name> &lt;= <name>MAXBITS</name></expr>;</condition> <incr><expr><name>len</name>++</expr></incr>)
+        <expr_stmt><expr><name><name>count</name><index>[<expr><name>len</name></expr>]</index></name> = 0</expr>;</expr_stmt></for>
+    <for>for (<init><expr><name>sym</name> = 0</expr>;</init> <condition><expr><name>sym</name> &lt; <name>codes</name></expr>;</condition> <incr><expr><name>sym</name>++</expr></incr>)
+        <expr_stmt><expr><name><name>count</name><index>[<expr><name><name>lens</name><index>[<expr><name>sym</name></expr>]</index></name></expr>]</index></name>++</expr>;</expr_stmt></for>
+
+    <comment type="block">/* bound code lengths, force root to be within code lengths */</comment>
+    <expr_stmt><expr><name>root</name> = *<name>bits</name></expr>;</expr_stmt>
+    <for>for (<init><expr><name>max</name> = <name>MAXBITS</name></expr>;</init> <condition><expr><name>max</name> &gt;= 1</expr>;</condition> <incr><expr><name>max</name>--</expr></incr>)
+        <if>if <condition>(<expr><name><name>count</name><index>[<expr><name>max</name></expr>]</index></name> != 0</expr>)</condition><then> <break>break;</break></then></if></for>
+    <if>if <condition>(<expr><name>root</name> &gt; <name>max</name></expr>)</condition><then> <expr_stmt><expr><name>root</name> = <name>max</name></expr>;</expr_stmt></then></if>
+    <if>if <condition>(<expr><name>max</name> == 0</expr>)</condition><then> <block>{                     <comment type="block">/* no symbols to code at all */</comment>
+        <expr_stmt><expr><name><name>this</name>.<name>op</name></name> = (<name>unsigned</name> <name>char</name>)64</expr>;</expr_stmt>    <comment type="block">/* invalid code marker */</comment>
+        <expr_stmt><expr><name><name>this</name>.<name>bits</name></name> = (<name>unsigned</name> <name>char</name>)1</expr>;</expr_stmt>
+        <expr_stmt><expr><name><name>this</name>.<name>val</name></name> = (<name>unsigned</name> <name>short</name>)0</expr>;</expr_stmt>
+        <expr_stmt><expr>*(*<name>table</name>)++ = <name>this</name></expr>;</expr_stmt>             <comment type="block">/* make a table to force an error */</comment>
+        <expr_stmt><expr>*(*<name>table</name>)++ = <name>this</name></expr>;</expr_stmt>
+        <expr_stmt><expr>*<name>bits</name> = 1</expr>;</expr_stmt>
+        <return>return <expr>0</expr>;</return>     <comment type="block">/* no symbols, but wait for decoding to report error */</comment>
+    }</block></then></if>
+    <for>for (<init><expr><name>min</name> = 1</expr>;</init> <condition><expr><name>min</name> &lt;= <name>MAXBITS</name></expr>;</condition> <incr><expr><name>min</name>++</expr></incr>)
+        <if>if <condition>(<expr><name><name>count</name><index>[<expr><name>min</name></expr>]</index></name> != 0</expr>)</condition><then> <break>break;</break></then></if></for>
+    <if>if <condition>(<expr><name>root</name> &lt; <name>min</name></expr>)</condition><then> <expr_stmt><expr><name>root</name> = <name>min</name></expr>;</expr_stmt></then></if>
+
+    <comment type="block">/* check for an over-subscribed or incomplete set of lengths */</comment>
+    <expr_stmt><expr><name>left</name> = 1</expr>;</expr_stmt>
+    <for>for (<init><expr><name>len</name> = 1</expr>;</init> <condition><expr><name>len</name> &lt;= <name>MAXBITS</name></expr>;</condition> <incr><expr><name>len</name>++</expr></incr>) <block>{
+        <expr_stmt><expr><name>left</name> &lt;&lt;= 1</expr>;</expr_stmt>
+        <expr_stmt><expr><name>left</name> -= <name><name>count</name><index>[<expr><name>len</name></expr>]</index></name></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>left</name> &lt; 0</expr>)</condition><then> <return>return <expr>-1</expr>;</return></then></if>        <comment type="block">/* over-subscribed */</comment>
+    }</block></for>
+    <if>if <condition>(<expr><name>left</name> &gt; 0 &amp;&amp; (<name>type</name> == <name>CODES</name> || <name>max</name> != 1)</expr>)</condition><then>
+        <return>return <expr>-1</expr>;</return></then></if>                      <comment type="block">/* incomplete set */</comment>
+
+    <comment type="block">/* generate offsets into symbol table for each length for sorting */</comment>
+    <expr_stmt><expr><name><name>offs</name><index>[<expr>1</expr>]</index></name> = 0</expr>;</expr_stmt>
+    <for>for (<init><expr><name>len</name> = 1</expr>;</init> <condition><expr><name>len</name> &lt; <name>MAXBITS</name></expr>;</condition> <incr><expr><name>len</name>++</expr></incr>)
+        <expr_stmt><expr><name><name>offs</name><index>[<expr><name>len</name> + 1</expr>]</index></name> = <name><name>offs</name><index>[<expr><name>len</name></expr>]</index></name> + <name><name>count</name><index>[<expr><name>len</name></expr>]</index></name></expr>;</expr_stmt></for>
+
+    <comment type="block">/* sort symbols by length, by symbol order within each length */</comment>
+    <for>for (<init><expr><name>sym</name> = 0</expr>;</init> <condition><expr><name>sym</name> &lt; <name>codes</name></expr>;</condition> <incr><expr><name>sym</name>++</expr></incr>)
+        <if>if <condition>(<expr><name><name>lens</name><index>[<expr><name>sym</name></expr>]</index></name> != 0</expr>)</condition><then> <expr_stmt><expr><name><name>work</name><index>[<expr><name><name>offs</name><index>[<expr><name><name>lens</name><index>[<expr><name>sym</name></expr>]</index></name></expr>]</index></name>++</expr>]</index></name> = (<name>unsigned</name> <name>short</name>)<name>sym</name></expr>;</expr_stmt></then></if></for>
+
+    <comment type="block">/*
+       Create and fill in decoding tables.  In this loop, the table being
+       filled is at next and has curr index bits.  The code being used is huff
+       with length len.  That code is converted to an index by dropping drop
+       bits off of the bottom.  For codes where len is less than drop + curr,
+       those top drop + curr - len bits are incremented through all values to
+       fill the table with replicated entries.
+
+       root is the number of index bits for the root table.  When len exceeds
+       root, sub-tables are created pointed to by the root entry with an index
+       of the low root bits of huff.  This is saved in low to check for when a
+       new sub-table should be started.  drop is zero when the root table is
+       being filled, and drop is root when sub-tables are being filled.
+
+       When a new sub-table is needed, it is necessary to look ahead in the
+       code lengths to determine what size sub-table is needed.  The length
+       counts are used for this, and so count[] is decremented as codes are
+       entered in the tables.
+
+       used keeps track of how many table entries have been allocated from the
+       provided *table space.  It is checked when a LENS table is being made
+       against the space in *table, ENOUGH, minus the maximum space needed by
+       the worst case distance code, MAXD.  This should never happen, but the
+       sufficiency of ENOUGH has not been proven exhaustively, hence the check.
+       This assumes that when type == LENS, bits == 9.
+
+       sym increments through all symbols, and the loop terminates when
+       all codes of length max, i.e. all codes, have been processed.  This
+       routine permits incomplete codes, so another loop after this one fills
+       in the rest of the decoding tables with invalid code markers.
+     */</comment>
+
+    <comment type="block">/* set up for code type */</comment>
+    <switch>switch <condition>(<expr><name>type</name></expr>)</condition> <block>{
+    <case>case <expr><name>CODES</name></expr>:
+        <expr_stmt><expr><name>base</name> = <name>extra</name> = <name>work</name></expr>;</expr_stmt>    <comment type="block">/* dummy value--not used */</comment>
+        <expr_stmt><expr><name>end</name> = 19</expr>;</expr_stmt>
+        <break>break;</break>
+    </case><case>case <expr><name>LENS</name></expr>:
+        <expr_stmt><expr><name>base</name> = <name>lbase</name></expr>;</expr_stmt>
+        <expr_stmt><expr><name>base</name> -= 257</expr>;</expr_stmt>
+        <expr_stmt><expr><name>extra</name> = <name>lext</name></expr>;</expr_stmt>
+        <expr_stmt><expr><name>extra</name> -= 257</expr>;</expr_stmt>
+        <expr_stmt><expr><name>end</name> = 256</expr>;</expr_stmt>
+        <break>break;</break>
+    </case><default>default:            <comment type="block">/* DISTS */</comment>
+        <expr_stmt><expr><name>base</name> = <name>dbase</name></expr>;</expr_stmt>
+        <expr_stmt><expr><name>extra</name> = <name>dext</name></expr>;</expr_stmt>
+        <expr_stmt><expr><name>end</name> = -1</expr>;</expr_stmt>
+    </default>}</block></switch>
+
+    <comment type="block">/* initialize state for loop */</comment>
+    <expr_stmt><expr><name>huff</name> = 0</expr>;</expr_stmt>                   <comment type="block">/* starting code */</comment>
+    <expr_stmt><expr><name>sym</name> = 0</expr>;</expr_stmt>                    <comment type="block">/* starting code symbol */</comment>
+    <expr_stmt><expr><name>len</name> = <name>min</name></expr>;</expr_stmt>                  <comment type="block">/* starting code length */</comment>
+    <expr_stmt><expr><name>next</name> = *<name>table</name></expr>;</expr_stmt>              <comment type="block">/* current table to fill in */</comment>
+    <expr_stmt><expr><name>curr</name> = <name>root</name></expr>;</expr_stmt>                <comment type="block">/* current table index bits */</comment>
+    <expr_stmt><expr><name>drop</name> = 0</expr>;</expr_stmt>                   <comment type="block">/* current bits to drop from code for index */</comment>
+    <expr_stmt><expr><name>low</name> = <call>(<name>unsigned</name>)<argument_list>(<argument><expr>-1</expr></argument>)</argument_list></call></expr>;</expr_stmt>       <comment type="block">/* trigger new sub-table when len &gt; root */</comment>
+    <expr_stmt><expr><name>used</name> = 1U &lt;&lt; <name>root</name></expr>;</expr_stmt>          <comment type="block">/* use root table entries */</comment>
+    <expr_stmt><expr><name>mask</name> = <name>used</name> - 1</expr>;</expr_stmt>            <comment type="block">/* mask for comparing low */</comment>
+
+    <comment type="block">/* check available table space */</comment>
+    <if>if <condition>(<expr><name>type</name> == <name>LENS</name> &amp;&amp; <name>used</name> &gt;= <name>ENOUGH</name> - <name>MAXD</name></expr>)</condition><then>
+        <return>return <expr>1</expr>;</return></then></if>
+
+    <comment type="block">/* process all codes and make table entries */</comment>
+    <for>for (<init>;</init><condition>;</condition><incr/>) <block>{
+        <comment type="block">/* create table entry */</comment>
+        <expr_stmt><expr><name><name>this</name>.<name>bits</name></name> = <call>(<name>unsigned</name> <name>char</name>)<argument_list>(<argument><expr><name>len</name> - <name>drop</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><call>(<name>int</name>)<argument_list>(<argument><expr><name><name>work</name><index>[<expr><name>sym</name></expr>]</index></name></expr></argument>)</argument_list></call> &lt; <name>end</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name><name>this</name>.<name>op</name></name> = (<name>unsigned</name> <name>char</name>)0</expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>this</name>.<name>val</name></name> = <name><name>work</name><index>[<expr><name>sym</name></expr>]</index></name></expr>;</expr_stmt>
+        }</block></then>
+        <else>else <if>if <condition>(<expr><call>(<name>int</name>)<argument_list>(<argument><expr><name><name>work</name><index>[<expr><name>sym</name></expr>]</index></name></expr></argument>)</argument_list></call> &gt; <name>end</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name><name>this</name>.<name>op</name></name> = <call>(<name>unsigned</name> <name>char</name>)<argument_list>(<argument><expr><name><name>extra</name><index>[<expr><name><name>work</name><index>[<expr><name>sym</name></expr>]</index></name></expr>]</index></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>this</name>.<name>val</name></name> = <name><name>base</name><index>[<expr><name><name>work</name><index>[<expr><name>sym</name></expr>]</index></name></expr>]</index></name></expr>;</expr_stmt>
+        }</block></then>
+        <else>else <block>{
+            <expr_stmt><expr><name><name>this</name>.<name>op</name></name> = <call>(<name>unsigned</name> <name>char</name>)<argument_list>(<argument><expr>32 + 64</expr></argument>)</argument_list></call></expr>;</expr_stmt>         <comment type="block">/* end of block */</comment>
+            <expr_stmt><expr><name><name>this</name>.<name>val</name></name> = 0</expr>;</expr_stmt>
+        }</block></else></if></else></if>
+
+        <comment type="block">/* replicate for those indices with low len bits equal to huff */</comment>
+        <expr_stmt><expr><name>incr</name> = 1U &lt;&lt; (<name>len</name> - <name>drop</name>)</expr>;</expr_stmt>
+        <expr_stmt><expr><name>fill</name> = 1U &lt;&lt; <name>curr</name></expr>;</expr_stmt>
+        <expr_stmt><expr><name>min</name> = <name>fill</name></expr>;</expr_stmt>                 <comment type="block">/* save offset to next table */</comment>
+        <do>do <block>{
+            <expr_stmt><expr><name>fill</name> -= <name>incr</name></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>next</name><index>[<expr>(<name>huff</name> &gt;&gt; <name>drop</name>) + <name>fill</name></expr>]</index></name> = <name>this</name></expr>;</expr_stmt>
+        }</block> while <condition>(<expr><name>fill</name> != 0</expr>)</condition>;</do>
+
+        <comment type="block">/* backwards increment the len-bit code huff */</comment>
+        <expr_stmt><expr><name>incr</name> = 1U &lt;&lt; (<name>len</name> - 1)</expr>;</expr_stmt>
+        <while>while <condition>(<expr><name>huff</name> &amp; <name>incr</name></expr>)</condition>
+            <expr_stmt><expr><name>incr</name> &gt;&gt;= 1</expr>;</expr_stmt></while>
+        <if>if <condition>(<expr><name>incr</name> != 0</expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>huff</name> &amp;= <name>incr</name> - 1</expr>;</expr_stmt>
+            <expr_stmt><expr><name>huff</name> += <name>incr</name></expr>;</expr_stmt>
+        }</block></then>
+        <else>else
+            <expr_stmt><expr><name>huff</name> = 0</expr>;</expr_stmt></else></if>
+
+        <comment type="block">/* go to next symbol, update count, len */</comment>
+        <expr_stmt><expr><name>sym</name>++</expr>;</expr_stmt>
+        <if>if <condition>(<expr>--(<name><name>count</name><index>[<expr><name>len</name></expr>]</index></name>) == 0</expr>)</condition><then> <block>{
+            <if>if <condition>(<expr><name>len</name> == <name>max</name></expr>)</condition><then> <break>break;</break></then></if>
+            <expr_stmt><expr><name>len</name> = <name><name>lens</name><index>[<expr><name><name>work</name><index>[<expr><name>sym</name></expr>]</index></name></expr>]</index></name></expr>;</expr_stmt>
+        }</block></then></if>
+
+        <comment type="block">/* create new sub-table if needed */</comment>
+        <if>if <condition>(<expr><name>len</name> &gt; <name>root</name> &amp;&amp; (<name>huff</name> &amp; <name>mask</name>) != <name>low</name></expr>)</condition><then> <block>{
+            <comment type="block">/* if first time, transition to sub-tables */</comment>
+            <if>if <condition>(<expr><name>drop</name> == 0</expr>)</condition><then>
+                <expr_stmt><expr><name>drop</name> = <name>root</name></expr>;</expr_stmt></then></if>
+
+            <comment type="block">/* increment past last table */</comment>
+            <expr_stmt><expr><name>next</name> += <name>min</name></expr>;</expr_stmt>            <comment type="block">/* here min is 1 &lt;&lt; curr */</comment>
+
+            <comment type="block">/* determine length of next table */</comment>
+            <expr_stmt><expr><name>curr</name> = <name>len</name> - <name>drop</name></expr>;</expr_stmt>
+            <expr_stmt><expr><name>left</name> = <call>(<name>int</name>)<argument_list>(<argument><expr>1 &lt;&lt; <name>curr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <while>while <condition>(<expr><name>curr</name> + <name>drop</name> &lt; <name>max</name></expr>)</condition> <block>{
+                <expr_stmt><expr><name>left</name> -= <name><name>count</name><index>[<expr><name>curr</name> + <name>drop</name></expr>]</index></name></expr>;</expr_stmt>
+                <if>if <condition>(<expr><name>left</name> &lt;= 0</expr>)</condition><then> <break>break;</break></then></if>
+                <expr_stmt><expr><name>curr</name>++</expr>;</expr_stmt>
+                <expr_stmt><expr><name>left</name> &lt;&lt;= 1</expr>;</expr_stmt>
+            }</block></while>
+
+            <comment type="block">/* check for enough space */</comment>
+            <expr_stmt><expr><name>used</name> += 1U &lt;&lt; <name>curr</name></expr>;</expr_stmt>
+            <if>if <condition>(<expr><name>type</name> == <name>LENS</name> &amp;&amp; <name>used</name> &gt;= <name>ENOUGH</name> - <name>MAXD</name></expr>)</condition><then>
+                <return>return <expr>1</expr>;</return></then></if>
+
+            <comment type="block">/* point entry in root table to sub-table */</comment>
+            <expr_stmt><expr><name>low</name> = <name>huff</name> &amp; <name>mask</name></expr>;</expr_stmt>
+            <expr_stmt><expr>(*<name>table</name>)<index>[<expr><name>low</name></expr>]</index>.<name>op</name> = (<name>unsigned</name> <name>char</name>)<name>curr</name></expr>;</expr_stmt>
+            <expr_stmt><expr>(*<name>table</name>)<index>[<expr><name>low</name></expr>]</index>.<name>bits</name> = (<name>unsigned</name> <name>char</name>)<name>root</name></expr>;</expr_stmt>
+            <expr_stmt><expr>(*<name>table</name>)<index>[<expr><name>low</name></expr>]</index>.<name>val</name> = <call>(<name>unsigned</name> <name>short</name>)<argument_list>(<argument><expr><name>next</name> - *<name>table</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+    }</block></for>
+
+    <comment type="block">/*
+       Fill in rest of table for incomplete codes.  This loop is similar to the
+       loop above in incrementing huff for table indices.  It is assumed that
+       len is equal to curr + drop, so there is no loop needed to increment
+       through high index bits.  When the current sub-table is filled, the loop
+       drops back to the root table to fill in any remaining entries there.
+     */</comment>
+    <expr_stmt><expr><name><name>this</name>.<name>op</name></name> = (<name>unsigned</name> <name>char</name>)64</expr>;</expr_stmt>                <comment type="block">/* invalid code marker */</comment>
+    <expr_stmt><expr><name><name>this</name>.<name>bits</name></name> = <call>(<name>unsigned</name> <name>char</name>)<argument_list>(<argument><expr><name>len</name> - <name>drop</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>this</name>.<name>val</name></name> = (<name>unsigned</name> <name>short</name>)0</expr>;</expr_stmt>
+    <while>while <condition>(<expr><name>huff</name> != 0</expr>)</condition> <block>{
+        <comment type="block">/* when done with sub-table, drop back to root table */</comment>
+        <if>if <condition>(<expr><name>drop</name> != 0 &amp;&amp; (<name>huff</name> &amp; <name>mask</name>) != <name>low</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>drop</name> = 0</expr>;</expr_stmt>
+            <expr_stmt><expr><name>len</name> = <name>root</name></expr>;</expr_stmt>
+            <expr_stmt><expr><name>next</name> = *<name>table</name></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>this</name>.<name>bits</name></name> = (<name>unsigned</name> <name>char</name>)<name>len</name></expr>;</expr_stmt>
+        }</block></then></if>
+
+        <comment type="block">/* put invalid code marker in table */</comment>
+        <expr_stmt><expr><name><name>next</name><index>[<expr><name>huff</name> &gt;&gt; <name>drop</name></expr>]</index></name> = <name>this</name></expr>;</expr_stmt>
+
+        <comment type="block">/* backwards increment the len-bit code huff */</comment>
+        <expr_stmt><expr><name>incr</name> = 1U &lt;&lt; (<name>len</name> - 1)</expr>;</expr_stmt>
+        <while>while <condition>(<expr><name>huff</name> &amp; <name>incr</name></expr>)</condition>
+            <expr_stmt><expr><name>incr</name> &gt;&gt;= 1</expr>;</expr_stmt></while>
+        <if>if <condition>(<expr><name>incr</name> != 0</expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>huff</name> &amp;= <name>incr</name> - 1</expr>;</expr_stmt>
+            <expr_stmt><expr><name>huff</name> += <name>incr</name></expr>;</expr_stmt>
+        }</block></then>
+        <else>else
+            <expr_stmt><expr><name>huff</name> = 0</expr>;</expr_stmt></else></if>
+    }</block></while>
+
+    <comment type="block">/* set return parameters */</comment>
+    <expr_stmt><expr>*<name>table</name> += <name>used</name></expr>;</expr_stmt>
+    <expr_stmt><expr>*<name>bits</name> = <name>root</name></expr>;</expr_stmt>
+    <return>return <expr>0</expr>;</return>
+}</block></function>
+</unit>

@@ -1,0 +1,553 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/httpd-2.4.29/modules/lua/lua_vmprep.c"><comment type="block">/**
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */</comment>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"mod_lua.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"http_log.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_uuid.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"lua_config.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"apr_file_info.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"mod_auth.h"</cpp:file></cpp:include>
+
+<expr_stmt><expr><call><name>APLOG_USE_MODULE</name><argument_list>(<argument><expr><name>lua</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>AP_LUA_MODULE_EXT</name></cpp:ifndef>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>NETWARE</name></expr></argument>)</argument_list></call></expr></cpp:if> 
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>AP_LUA_MODULE_EXT</name></cpp:macro> <cpp:value>".nlm"</cpp:value></cpp:define>
+<cpp:elif>#<cpp:directive>elif</cpp:directive> <expr><call><name>defined</name><argument_list>(<argument><expr><name>WIN32</name></expr></argument>)</argument_list></call></expr></cpp:elif>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>AP_LUA_MODULE_EXT</name></cpp:macro> <cpp:value>".dll"</cpp:value></cpp:define>
+<cpp:elif>#<cpp:directive>elif</cpp:directive> <expr>(<call><name>defined</name><argument_list>(<argument><expr><name>__hpux__</name></expr></argument>)</argument_list></call> || <call><name>defined</name><argument_list>(<argument><expr><name>__hpux</name></expr></argument>)</argument_list></call>) &amp;&amp; !<call><name>defined</name><argument_list>(<argument><expr><name>__ia64</name></expr></argument>)</argument_list></call></expr></cpp:elif>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>AP_LUA_MODULE_EXT</name></cpp:macro> <cpp:value>".sl"</cpp:value></cpp:define>
+<cpp:else>#<cpp:directive>else</cpp:directive></cpp:else>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>AP_LUA_MODULE_EXT</name></cpp:macro> <cpp:value>".so"</cpp:value></cpp:define>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_HAS_THREADS</name></expr></cpp:if>
+    <decl_stmt><decl><type><name>apr_thread_mutex_t</name> *</type><name>ap_lua_mutex</name></decl>;</decl_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+<decl_stmt><decl><type><specifier>extern</specifier> <name>apr_global_mutex_t</name> *</type><name>lua_ivm_mutex</name></decl>;</decl_stmt>
+    
+<function><type><name>void</name></type> <name>ap_lua_init_mutex</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>, <param><decl><type><name>server_rec</name> *</type><name>s</name></decl></param>)</parameter_list> 
+<block>{
+    <decl_stmt><decl><type><name>apr_status_t</name></type> <name>rv</name></decl>;</decl_stmt>
+    
+    <comment type="block">/* global IVM mutex */</comment>
+    <expr_stmt><expr><name>rv</name> = <call><name>apr_global_mutex_child_init</name><argument_list>(<argument><expr>&amp;<name>lua_ivm_mutex</name></expr></argument>,
+                                     <argument><expr><call><name>apr_global_mutex_lockfile</name><argument_list>(<argument><expr><name>lua_ivm_mutex</name></expr></argument>)</argument_list></call></expr></argument>,
+                                     <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name>rv</name> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>ap_log_error</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_CRIT</name></expr></argument>, <argument><expr><name>rv</name></expr></argument>, <argument><expr><name>s</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>03016</expr></argument>)</argument_list></call>
+                     "mod_lua: Failed to reopen mutex lua-ivm-shm in child"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>exit</name><argument_list>(<argument><expr>1</expr></argument>)</argument_list></call></expr>;</expr_stmt> <comment type="block">/* bah :( */</comment>
+    }</block></then></if>
+    
+    <comment type="block">/* Server pool mutex */</comment>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_HAS_THREADS</name></expr></cpp:if>
+    <expr_stmt><expr><call><name>apr_thread_mutex_create</name><argument_list>(<argument><expr>&amp;<name>ap_lua_mutex</name></expr></argument>, <argument><expr><name>APR_THREAD_MUTEX_DEFAULT</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+}</block></function>
+
+<comment type="block">/* forward dec'l from this file */</comment>
+
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr>0</expr></cpp:if>
+static void pstack_dump(lua_State *L, apr_pool_t *r, int level,
+                        const char *msg)
+{
+    int i;
+    int top = lua_gettop(L);
+
+    ap_log_perror(APLOG_MARK, level, 0, r, APLOGNO(03211)
+                  "Lua Stack Dump: [%s]", msg);
+
+    for (i = 1; i &lt;= top; i++) {
+        int t = lua_type(L, i);
+        switch (t) {
+        case LUA_TSTRING:{
+                ap_log_perror(APLOG_MARK, level, 0, r, APLOGNO(03212)
+                              "%d:  '%s'", i, lua_tostring(L, i));
+                break;
+            }
+        case LUA_TUSERDATA:{
+                ap_log_perror(APLOG_MARK, level, 0, r, APLOGNO(03213)
+                              "%d:  userdata", i);
+                break;
+            }
+        case LUA_TLIGHTUSERDATA:{
+                ap_log_perror(APLOG_MARK, level, 0, r, APLOGNO(03214)
+                              "%d:  lightuserdata", i);
+                break;
+            }
+        case LUA_TNIL:{
+                ap_log_perror(APLOG_MARK, level, 0, r, APLOGNO(03215)
+                              "%d:  NIL", i);
+                break;
+            }
+        case LUA_TNONE:{
+                ap_log_perror(APLOG_MARK, level, 0, r, APLOGNO(03216)
+                              "%d:  None", i);
+                break;
+            }
+        case LUA_TBOOLEAN:{
+                ap_log_perror(APLOG_MARK, level, 0, r, APLOGNO(03217)
+                              "%d:  %s",
+                              i, lua_toboolean(L, i) ? "true" : "false");
+                break;
+            }
+        case LUA_TNUMBER:{
+                ap_log_perror(APLOG_MARK, level, 0, r, APLOGNO(03218)
+                              "%d:  %g", i, lua_tonumber(L, i));
+                break;
+            }
+        case LUA_TTABLE:{
+                ap_log_perror(APLOG_MARK, level, 0, r, APLOGNO(03219)
+                              "%d:  &lt;table&gt;", i);
+                break;
+            }
+        case LUA_TTHREAD:{
+                ap_log_perror(APLOG_MARK, level, 0, r, APLOGNO(03220)
+                              "%d:  &lt;thread&gt;", i);
+                break;
+            }
+        case LUA_TFUNCTION:{
+                ap_log_perror(APLOG_MARK, level, 0, r, APLOGNO(03221)
+                              "%d:  &lt;function&gt;", i);
+                break;
+            }
+        default:{
+                ap_log_perror(APLOG_MARK, level, 0, r, APLOGNO(03222)
+                              "%d:  unknown: [%s]", i, lua_typename(L, i));
+                break;
+            }
+        }
+    }
+}
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<comment type="block">/* BEGIN modules*/</comment>
+
+<comment type="block">/* BEGIN apache lmodule  */</comment>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>makeintegerfield</name><parameter_list>(<param><type><name>L</name></type></param>, <param><type><name>n</name></type></param>)</parameter_list></cpp:macro> <cpp:value>lua_pushinteger(L, n); lua_setfield(L, -2, #n)</cpp:value></cpp:define>
+
+<function><type><name>void</name></type> <name>ap_lua_load_apache2_lmodule</name><parameter_list>(<param><decl><type><name>lua_State</name> *</type><name>L</name></decl></param>)</parameter_list>
+<block>{
+    <expr_stmt><expr><call><name>lua_getglobal</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr>"package"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lua_getfield</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr>-1</expr></argument>, <argument><expr>"loaded"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lua_newtable</name><argument_list>(<argument><expr><name>L</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lua_setfield</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr>-2</expr></argument>, <argument><expr>"apache2"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lua_setglobal</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr>"apache2"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lua_pop</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr>1</expr></argument>)</argument_list></call></expr>;</expr_stmt>              <comment type="block">/* empty stack */</comment>
+
+    <expr_stmt><expr><call><name>lua_getglobal</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr>"apache2"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>lua_pushstring</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr><call><name>ap_get_server_banner</name><argument_list>()</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lua_setfield</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr>-2</expr></argument>, <argument><expr>"version"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>makeintegerfield</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr><name>OK</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>makeintegerfield</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr><name>DECLINED</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>makeintegerfield</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr><name>DONE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>makeintegerfield</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr><name>HTTP_MOVED_TEMPORARILY</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>makeintegerfield</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr><name>PROXYREQ_NONE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>makeintegerfield</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr><name>PROXYREQ_PROXY</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>makeintegerfield</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr><name>PROXYREQ_REVERSE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>makeintegerfield</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr><name>PROXYREQ_RESPONSE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>makeintegerfield</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr><name>PROXYREQ_RESPONSE</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>makeintegerfield</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr><name>AUTHZ_DENIED</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>makeintegerfield</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr><name>AUTHZ_GRANTED</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>makeintegerfield</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr><name>AUTHZ_NEUTRAL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>makeintegerfield</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr><name>AUTHZ_GENERAL_ERROR</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>makeintegerfield</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr><name>AUTHZ_DENIED_NO_USER</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    
+    <comment type="block">/*
+       makeintegerfield(L, HTTP_CONTINUE);
+       makeintegerfield(L, HTTP_SWITCHING_PROTOCOLS);
+       makeintegerfield(L, HTTP_PROCESSING);
+       makeintegerfield(L, HTTP_OK);
+       makeintegerfield(L, HTTP_CREATED);
+       makeintegerfield(L, HTTP_ACCEPTED);
+       makeintegerfield(L, HTTP_NON_AUTHORITATIVE);
+       makeintegerfield(L, HTTP_NO_CONTENT);
+       makeintegerfield(L, HTTP_RESET_CONTENT);
+       makeintegerfield(L, HTTP_PARTIAL_CONTENT);
+       makeintegerfield(L, HTTP_MULTI_STATUS);
+       makeintegerfield(L, HTTP_ALREADY_REPORTED);
+       makeintegerfield(L, HTTP_IM_USED);
+       makeintegerfield(L, HTTP_MULTIPLE_CHOICES);
+       makeintegerfield(L, HTTP_MOVED_PERMANENTLY);
+       makeintegerfield(L, HTTP_MOVED_TEMPORARILY);
+       makeintegerfield(L, HTTP_SEE_OTHER);
+       makeintegerfield(L, HTTP_NOT_MODIFIED);
+       makeintegerfield(L, HTTP_USE_PROXY);
+       makeintegerfield(L, HTTP_TEMPORARY_REDIRECT);
+       makeintegerfield(L, HTTP_PERMANENT_REDIRECT);
+       makeintegerfield(L, HTTP_BAD_REQUEST);
+       makeintegerfield(L, HTTP_UNAUTHORIZED);
+       makeintegerfield(L, HTTP_PAYMENT_REQUIRED);
+       makeintegerfield(L, HTTP_FORBIDDEN);
+       makeintegerfield(L, HTTP_NOT_FOUND);
+       makeintegerfield(L, HTTP_METHOD_NOT_ALLOWED);
+       makeintegerfield(L, HTTP_NOT_ACCEPTABLE);
+       makeintegerfield(L, HTTP_PROXY_AUTHENTICATION_REQUIRED);
+       makeintegerfield(L, HTTP_REQUEST_TIME_OUT);
+       makeintegerfield(L, HTTP_CONFLICT);
+       makeintegerfield(L, HTTP_GONE);
+       makeintegerfield(L, HTTP_LENGTH_REQUIRED);
+       makeintegerfield(L, HTTP_PRECONDITION_FAILED);
+       makeintegerfield(L, HTTP_REQUEST_ENTITY_TOO_LARGE);
+       makeintegerfield(L, HTTP_REQUEST_URI_TOO_LARGE);
+       makeintegerfield(L, HTTP_UNSUPPORTED_MEDIA_TYPE);
+       makeintegerfield(L, HTTP_RANGE_NOT_SATISFIABLE);
+       makeintegerfield(L, HTTP_EXPECTATION_FAILED);
+       makeintegerfield(L, HTTP_UNPROCESSABLE_ENTITY);
+       makeintegerfield(L, HTTP_LOCKED);
+       makeintegerfield(L, HTTP_FAILED_DEPENDENCY);
+       makeintegerfield(L, HTTP_UPGRADE_REQUIRED);
+       makeintegerfield(L, HTTP_PRECONDITION_REQUIRED);
+       makeintegerfield(L, HTTP_TOO_MANY_REQUESTS);
+       makeintegerfield(L, HTTP_REQUEST_HEADER_FIELDS_TOO_LARGE);
+       makeintegerfield(L, HTTP_INTERNAL_SERVER_ERROR);
+       makeintegerfield(L, HTTP_NOT_IMPLEMENTED);
+       makeintegerfield(L, HTTP_BAD_GATEWAY);
+       makeintegerfield(L, HTTP_SERVICE_UNAVAILABLE);
+       makeintegerfield(L, HTTP_GATEWAY_TIME_OUT);
+       makeintegerfield(L, HTTP_VERSION_NOT_SUPPORTED);
+       makeintegerfield(L, HTTP_VARIANT_ALSO_VARIES);
+       makeintegerfield(L, HTTP_INSUFFICIENT_STORAGE);
+       makeintegerfield(L, HTTP_LOOP_DETECTED);
+       makeintegerfield(L, HTTP_NOT_EXTENDED);
+       makeintegerfield(L, HTTP_NETWORK_AUTHENTICATION_REQUIRED);
+     */</comment>
+}</block></function>
+
+<comment type="block">/* END apache2 lmodule */</comment>
+
+<comment type="block">/*  END library functions */</comment>
+
+<comment type="block">/* callback for cleaning up a lua vm when pool is closed */</comment>
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>cleanup_lua</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>l</name></decl></param>)</parameter_list>
+<block>{
+    <expr_stmt><expr><call><name>AP_DEBUG_ASSERT</name><argument_list>(<argument><expr><name>l</name> != <name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lua_close</name><argument_list>(<argument><expr>(<name>lua_State</name> *) <name>l</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>server_cleanup_lua</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>resource</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>ap_lua_server_spec</name>*</type> <name>spec</name> <init>= <expr>(<name>ap_lua_server_spec</name>*) <name>resource</name></expr></init></decl>;</decl_stmt>
+    <expr_stmt><expr><call><name>AP_DEBUG_ASSERT</name><argument_list>(<argument><expr><name>spec</name> != <name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name><name>spec</name>-&gt;<name>L</name></name> != <name>NULL</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>lua_close</name><argument_list>(<argument><expr>(<name>lua_State</name> *) <name><name>spec</name>-&gt;<name>L</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+    <return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/*
+        munge_path(L, 
+                   "path", 
+                   "?.lua", 
+                   "./?.lua", 
+                   lifecycle_pool,
+                   spec-&gt;package_paths, 
+                   spec-&gt;file);
+*/</comment>
+<comment type="block">/**
+ * field -&gt; "path" or "cpath"
+ * sub_pat -&gt; "?.lua"
+ * rep_pat -&gt; "./?.lua"
+ * pool -&gt; lifecycle pool for allocations
+ * paths -&gt; things to add
+ * file -&gt; ???
+ */</comment>
+<function><type><specifier>static</specifier> <name>void</name></type> <name>munge_path</name><parameter_list>(<param><decl><type><name>lua_State</name> *</type><name>L</name></decl></param>,
+                       <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>field</name></decl></param>,
+                       <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>sub_pat</name></decl></param>,
+                       <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>rep_pat</name></decl></param>,
+                       <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>,
+                       <param><decl><type><name>apr_array_header_t</name> *</type><name>paths</name></decl></param>,
+                       <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>file</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>current</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>parent_dir</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>pattern</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>modified</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>char</name> *</type><name>part</name></decl>;</decl_stmt>
+
+    <expr_stmt><expr><call><name>lua_getglobal</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr>"package"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lua_getfield</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr>-1</expr></argument>, <argument><expr><name>field</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    
+    <expr_stmt><expr><name>current</name> = <call><name>lua_tostring</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr>-1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>parent_dir</name> = <call><name>ap_make_dirstr_parent</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>file</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+ 
+    <expr_stmt><expr><name>pattern</name> = <call><name>apr_pstrcat</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>parent_dir</name></expr></argument>, <argument><expr><name>sub_pat</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>luaL_gsub</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr><name>current</name></expr></argument>, <argument><expr><name>rep_pat</name></expr></argument>, <argument><expr><name>pattern</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lua_setfield</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr>-3</expr></argument>, <argument><expr><name>field</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lua_getfield</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr>-2</expr></argument>, <argument><expr><name>field</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name>modified</name> = <call><name>lua_tostring</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr>-1</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+
+    <expr_stmt><expr><call><name>lua_pop</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr>2</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><name>part</name> = <call><name>apr_pstrcat</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>modified</name></expr></argument>, <argument><expr>";"</expr></argument>, <argument><expr><call><name>apr_array_pstrcat</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>paths</name></expr></argument>, <argument><expr>';'</expr></argument>)</argument_list></call></expr></argument>,
+                       <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+    <expr_stmt><expr><call><name>lua_pushstring</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr><name>part</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lua_setfield</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr>-2</expr></argument>, <argument><expr><name>field</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lua_pop</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr>1</expr></argument>)</argument_list></call></expr>;</expr_stmt>              <comment type="block">/* pop "package" off the stack     */</comment>
+}</block></function>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>AP_ENABLE_LUAJIT</name></cpp:ifdef>
+<function><type><specifier>static</specifier> <name>int</name></type> <name>loadjitmodule</name><parameter_list>(<param><decl><type><name>lua_State</name> *</type><name>L</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>lifecycle_pool</name></decl></param>)</parameter_list> <block>{
+    <expr_stmt><expr><call><name>lua_getglobal</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr>"require"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lua_pushliteral</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr>"jit."</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lua_pushvalue</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr>-3</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lua_concat</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr>2</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><call><name>lua_pcall</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr>1</expr></argument>, <argument><expr>1</expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+        <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>msg</name> <init>= <expr><call><name>lua_tostring</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr>-1</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+        <expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_DEBUG</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>lifecycle_pool</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>01480</expr></argument>)</argument_list></call>
+                      "Failed to init LuaJIT: %s"</expr></argument>, <argument><expr><name>msg</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <return>return <expr>1</expr>;</return>
+    }</block></then></if>
+    <expr_stmt><expr><call><name>lua_getfield</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr>-1</expr></argument>, <argument><expr>"start"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lua_remove</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr>-2</expr></argument>)</argument_list></call></expr>;</expr_stmt>  <comment type="block">/* drop module table */</comment>
+    <return>return <expr>0</expr>;</return>
+}</block></function>
+
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>vm_construct</name><parameter_list>(<param><decl><type><name>lua_State</name> **</type><name>vm</name></decl></param>, <param><decl><type><name>void</name> *</type><name>params</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>lifecycle_pool</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>lua_State</name>*</type> <name>L</name></decl>;</decl_stmt>
+
+    <decl_stmt><decl><type><name>ap_lua_vm_spec</name> *</type><name>spec</name> <init>= <expr><name>params</name></expr></init></decl>;</decl_stmt>
+
+    <expr_stmt><expr><name>L</name> = <call><name>luaL_newstate</name><argument_list>()</argument_list></call></expr>;</expr_stmt>
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>AP_ENABLE_LUAJIT</name></cpp:ifdef>
+    <expr_stmt><expr><call><name>luaopen_jit</name><argument_list>(<argument><expr><name>L</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+    <expr_stmt><expr><call><name>luaL_openlibs</name><argument_list>(<argument><expr><name>L</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <if>if <condition>(<expr><name><name>spec</name>-&gt;<name>package_paths</name></name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>munge_path</name><argument_list>(<argument><expr><name>L</name></expr></argument>, 
+                   <argument><expr>"path"</expr></argument>, <argument><expr>"?.lua"</expr></argument>, <argument><expr>"./?.lua"</expr></argument>, 
+                   <argument><expr><name>lifecycle_pool</name></expr></argument>,
+                   <argument><expr><name><name>spec</name>-&gt;<name>package_paths</name></name></expr></argument>, 
+                   <argument><expr><name><name>spec</name>-&gt;<name>file</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+    <if>if <condition>(<expr><name><name>spec</name>-&gt;<name>package_cpaths</name></name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>munge_path</name><argument_list>(<argument><expr><name>L</name></expr></argument>,
+                   <argument><expr>"cpath"</expr></argument>, <argument><expr>"?" <name>AP_LUA_MODULE_EXT</name></expr></argument>, <argument><expr>"./?" <name>AP_LUA_MODULE_EXT</name></expr></argument>,
+                   <argument><expr><name>lifecycle_pool</name></expr></argument>,
+                   <argument><expr><name><name>spec</name>-&gt;<name>package_cpaths</name></name></expr></argument>,
+                   <argument><expr><name><name>spec</name>-&gt;<name>file</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <if>if <condition>(<expr><name><name>spec</name>-&gt;<name>cb</name></name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name><name>spec</name>-&gt;<name>cb</name></name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr><name>lifecycle_pool</name></expr></argument>, <argument><expr><name><name>spec</name>-&gt;<name>cb_arg</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+
+    <if>if <condition>(<expr><name><name>spec</name>-&gt;<name>bytecode</name></name> &amp;&amp; <name><name>spec</name>-&gt;<name>bytecode_len</name></name> &gt; 0</expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>luaL_loadbuffer</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr><name><name>spec</name>-&gt;<name>bytecode</name></name></expr></argument>, <argument><expr><name><name>spec</name>-&gt;<name>bytecode_len</name></name></expr></argument>, <argument><expr><name><name>spec</name>-&gt;<name>file</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><call><name>lua_pcall</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>LUA_MULTRET</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+    <else>else <block>{
+        <decl_stmt><decl><type><name>int</name></type> <name>rc</name></decl>;</decl_stmt>
+        <expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_DEBUG</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>lifecycle_pool</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>01481</expr></argument>)</argument_list></call>
+            "loading lua file %s"</expr></argument>, <argument><expr><name><name>spec</name>-&gt;<name>file</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><name>rc</name> = <call><name>luaL_loadfile</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr><name><name>spec</name>-&gt;<name>file</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>rc</name> != 0</expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_ERR</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>lifecycle_pool</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>01482</expr></argument>)</argument_list></call>
+                          "Error loading %s: %s"</expr></argument>, <argument><expr><name><name>spec</name>-&gt;<name>file</name></name></expr></argument>,
+                          <argument><expr><name>rc</name> == <name>LUA_ERRMEM</name> ? "memory allocation error"
+                                           : <call><name>lua_tostring</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <return>return <expr><name>APR_EBADF</name></expr>;</return>
+        }</block></then></if>
+        <if>if <condition>( <expr><call><name>lua_pcall</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>LUA_MULTRET</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call> == <name>LUA_ERRRUN</name></expr> )</condition><then> <block>{
+            <expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_ERR</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>lifecycle_pool</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>02613</expr></argument>)</argument_list></call>
+                          "Error loading %s: %s"</expr></argument>, <argument><expr><name><name>spec</name>-&gt;<name>file</name></name></expr></argument>,
+                            <argument><expr><call><name>lua_tostring</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr>-1</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <return>return <expr><name>APR_EBADF</name></expr>;</return>
+        }</block></then></if>
+    }</block></else></if>
+
+<cpp:ifdef>#<cpp:directive>ifdef</cpp:directive> <name>AP_ENABLE_LUAJIT</name></cpp:ifdef>
+    <expr_stmt><expr><call><name>loadjitmodule</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr><name>lifecycle_pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+    <expr_stmt><expr><call><name>lua_pushlightuserdata</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr><name>lifecycle_pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><call><name>lua_setfield</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr><name>LUA_REGISTRYINDEX</name></expr></argument>, <argument><expr>"Apache2.Wombat.pool"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr>*<name>vm</name> = <name>L</name></expr>;</expr_stmt>
+
+    <return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>ap_lua_vm_spec</name>*</type> <name>copy_vm_spec</name><parameter_list>(<param><decl><type><name>apr_pool_t</name>*</type> <name>pool</name></decl></param>, <param><decl><type><name>ap_lua_vm_spec</name>*</type> <name>spec</name></decl></param>)</parameter_list> 
+<block>{
+    <decl_stmt><decl><type><name>ap_lua_vm_spec</name>*</type> <name>copied_spec</name> <init>= <expr><call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>ap_lua_vm_spec</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <expr_stmt><expr><name><name>copied_spec</name>-&gt;<name>bytecode_len</name></name> = <name><name>spec</name>-&gt;<name>bytecode_len</name></name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>copied_spec</name>-&gt;<name>bytecode</name></name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name><name>spec</name>-&gt;<name>bytecode</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>copied_spec</name>-&gt;<name>cb</name></name> = <name><name>spec</name>-&gt;<name>cb</name></name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>copied_spec</name>-&gt;<name>cb_arg</name></name> = <name>NULL</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>copied_spec</name>-&gt;<name>file</name></name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name><name>spec</name>-&gt;<name>file</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>copied_spec</name>-&gt;<name>package_cpaths</name></name> = <call><name>apr_array_copy</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name><name>spec</name>-&gt;<name>package_cpaths</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>copied_spec</name>-&gt;<name>package_paths</name></name> = <call><name>apr_array_copy</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name><name>spec</name>-&gt;<name>package_paths</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>copied_spec</name>-&gt;<name>pool</name></name> = <name>pool</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>copied_spec</name>-&gt;<name>scope</name></name> = <name>AP_LUA_SCOPE_SERVER</name></expr>;</expr_stmt>
+    <expr_stmt><expr><name><name>copied_spec</name>-&gt;<name>codecache</name></name> = <name><name>spec</name>-&gt;<name>codecache</name></name></expr>;</expr_stmt>
+    <return>return <expr><name>copied_spec</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type> <name>server_vm_construct</name><parameter_list>(<param><decl><type><name>lua_State</name> **</type><name>resource</name></decl></param>, <param><decl><type><name>void</name> *</type><name>params</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>lua_State</name>*</type> <name>L</name></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>ap_lua_server_spec</name>*</type> <name>spec</name> <init>= <expr><call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>ap_lua_server_spec</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+    <expr_stmt><expr>*<name>resource</name> = <name>NULL</name></expr>;</expr_stmt>
+    <if>if <condition>(<expr><call><name>vm_construct</name><argument_list>(<argument><expr>&amp;<name>L</name></expr></argument>, <argument><expr><name>params</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call> == <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><name><name>spec</name>-&gt;<name>finfo</name></name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>ap_lua_finfo</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>L</name> != <name>NULL</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name><name>spec</name>-&gt;<name>L</name></name> = <name>L</name></expr>;</expr_stmt>
+            <expr_stmt><expr>*<name>resource</name> = (<name>void</name>*) <name>spec</name></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>lua_pushlightuserdata</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr><name>spec</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>lua_setfield</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr><name>LUA_REGISTRYINDEX</name></expr></argument>, <argument><expr>"Apache2.Lua.server_spec"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+        }</block></then></if>
+    }</block></then></if>
+    <return>return <expr><name>APR_EGENERAL</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/**
+ * Function used to create a lua_State instance bound into the web
+ * server in the appropriate scope.
+ */</comment>
+<function><type><name>lua_State</name> *</type><name>ap_lua_get_lua_state</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>lifecycle_pool</name></decl></param>,
+                                               <param><decl><type><name>ap_lua_vm_spec</name> *</type><name>spec</name></decl></param>, <param><decl><type><name>request_rec</name>*</type> <name>r</name></decl></param>)</parameter_list>
+<block>{
+    <decl_stmt><decl><type><name>lua_State</name> *</type><name>L</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>ap_lua_finfo</name> *</type><name>cache_info</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+    <decl_stmt><decl><type><name>int</name></type> <name>tryCache</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+    
+    <if>if <condition>(<expr><name><name>spec</name>-&gt;<name>scope</name></name> == <name>AP_LUA_SCOPE_SERVER</name></expr>)</condition><then> <block>{
+        <decl_stmt><decl><type><name>char</name> *</type><name>hash</name></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>apr_reslist_t</name>*</type> <name>reslist</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+        <decl_stmt><decl><type><name>ap_lua_server_spec</name>*</type> <name>sspec</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+        <expr_stmt><expr><name>hash</name> = <call><name>apr_psprintf</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>"reslist:%s"</expr></argument>, <argument><expr><name><name>spec</name>-&gt;<name>file</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_HAS_THREADS</name></expr></cpp:if>
+        <expr_stmt><expr><call><name>apr_thread_mutex_lock</name><argument_list>(<argument><expr><name>ap_lua_mutex</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+        <if>if <condition>(<expr><call><name>apr_pool_userdata_get</name><argument_list>(<argument><expr>(<name>void</name> **)&amp;<name>reslist</name></expr></argument>, <argument><expr><name>hash</name></expr></argument>,
+                                  <argument><expr><name><name>r</name>-&gt;<name>server</name>-&gt;<name>process</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call> == <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+            <if>if <condition>(<expr><name>reslist</name> != <name>NULL</name></expr>)</condition><then> <block>{
+                <if>if <condition>(<expr><call><name>apr_reslist_acquire</name><argument_list>(<argument><expr><name>reslist</name></expr></argument>, <argument><expr>(<name>void</name>**) &amp;<name>sspec</name></expr></argument>)</argument_list></call> == <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+                    <expr_stmt><expr><name>L</name> = <name><name>sspec</name>-&gt;<name>L</name></name></expr>;</expr_stmt>
+                    <expr_stmt><expr><name>cache_info</name> = <name><name>sspec</name>-&gt;<name>finfo</name></name></expr>;</expr_stmt>
+                }</block></then></if>
+            }</block></then></if>
+        }</block></then></if>
+        <if>if <condition>(<expr><name>L</name> == <name>NULL</name></expr>)</condition><then> <block>{
+            <decl_stmt><decl><type><name>ap_lua_vm_spec</name>*</type> <name>server_spec</name> <init>= <expr><call><name>copy_vm_spec</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>server</name>-&gt;<name>process</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name>spec</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+            <if>if <condition>(
+                    <expr><call><name>apr_reslist_create</name><argument_list>(<argument><expr>&amp;<name>reslist</name></expr></argument>, <argument><expr><name><name>spec</name>-&gt;<name>vm_min</name></name></expr></argument>, <argument><expr><name><name>spec</name>-&gt;<name>vm_max</name></name></expr></argument>, <argument><expr><name><name>spec</name>-&gt;<name>vm_max</name></name></expr></argument>, <argument><expr>0</expr></argument>, 
+                                <argument><expr>(<name>apr_reslist_constructor</name>) <name>server_vm_construct</name></expr></argument>, 
+                                <argument><expr>(<name>apr_reslist_destructor</name>) <name>server_cleanup_lua</name></expr></argument>, 
+                                <argument><expr><name>server_spec</name></expr></argument>, <argument><expr><name><name>r</name>-&gt;<name>server</name>-&gt;<name>process</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call>
+                    == <name>APR_SUCCESS</name> &amp;&amp; <name>reslist</name> != <name>NULL</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><call><name>apr_pool_userdata_set</name><argument_list>(<argument><expr><name>reslist</name></expr></argument>, <argument><expr><name>hash</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                            <argument><expr><name><name>r</name>-&gt;<name>server</name>-&gt;<name>process</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <if>if <condition>(<expr><call><name>apr_reslist_acquire</name><argument_list>(<argument><expr><name>reslist</name></expr></argument>, <argument><expr>(<name>void</name>**) &amp;<name>sspec</name></expr></argument>)</argument_list></call> == <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+                    <expr_stmt><expr><name>L</name> = <name><name>sspec</name>-&gt;<name>L</name></name></expr>;</expr_stmt>
+                    <expr_stmt><expr><name>cache_info</name> = <name><name>sspec</name>-&gt;<name>finfo</name></name></expr>;</expr_stmt>
+                }</block></then>
+                <else>else <block>{
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_HAS_THREADS</name></expr></cpp:if>
+                    <expr_stmt><expr><call><name>apr_thread_mutex_unlock</name><argument_list>(<argument><expr><name>ap_lua_mutex</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+                    <return>return <expr><name>NULL</name></expr>;</return>
+                }</block></else></if>
+            }</block></then></if>
+        }</block></then></if>
+<cpp:if>#<cpp:directive>if</cpp:directive> <expr><name>APR_HAS_THREADS</name></expr></cpp:if>
+        <expr_stmt><expr><call><name>apr_thread_mutex_unlock</name><argument_list>(<argument><expr><name>ap_lua_mutex</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+    }</block></then>
+    <else>else <block>{
+        <if>if <condition>(<expr><call><name>apr_pool_userdata_get</name><argument_list>(<argument><expr>(<name>void</name> **)&amp;<name>L</name></expr></argument>, <argument><expr><name><name>spec</name>-&gt;<name>file</name></name></expr></argument>,
+                              <argument><expr><name>lifecycle_pool</name></expr></argument>)</argument_list></call> != <name>APR_SUCCESS</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>L</name> = <name>NULL</name></expr>;</expr_stmt>
+        }</block></then></if>
+    }</block></else></if>
+    <if>if <condition>(<expr><name>L</name> == <name>NULL</name></expr>)</condition><then> <block>{
+        <expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_DEBUG</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>lifecycle_pool</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>01483</expr></argument>)</argument_list></call>
+                        "creating lua_State with file %s"</expr></argument>, <argument><expr><name><name>spec</name>-&gt;<name>file</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <comment type="block">/* not available, so create */</comment>
+
+        <if>if <condition>(<expr>!<call><name>vm_construct</name><argument_list>(<argument><expr>&amp;<name>L</name></expr></argument>, <argument><expr><name>spec</name></expr></argument>, <argument><expr><name>lifecycle_pool</name></expr></argument>)</argument_list></call></expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>AP_DEBUG_ASSERT</name><argument_list>(<argument><expr><name>L</name> != <name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>apr_pool_userdata_set</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr><name><name>spec</name>-&gt;<name>file</name></name></expr></argument>, <argument><expr><name>cleanup_lua</name></expr></argument>, <argument><expr><name>lifecycle_pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></then></if>
+    }</block></then></if>
+
+    <if>if <condition>(<expr><name><name>spec</name>-&gt;<name>codecache</name></name> == <name>AP_LUA_CACHE_FOREVER</name> || (<name><name>spec</name>-&gt;<name>bytecode</name></name> &amp;&amp; <name><name>spec</name>-&gt;<name>bytecode_len</name></name> &gt; 0)</expr>)</condition><then> <block>{
+        <expr_stmt><expr><name>tryCache</name> = 1</expr>;</expr_stmt>
+    }</block></then>
+    <else>else <block>{
+        <decl_stmt><decl><type><name>char</name>*</type> <name>mkey</name></decl>;</decl_stmt>
+        <if>if <condition>(<expr><name><name>spec</name>-&gt;<name>scope</name></name> != <name>AP_LUA_SCOPE_SERVER</name></expr>)</condition><then> <block>{
+            <expr_stmt><expr><name>mkey</name> = <call><name>apr_psprintf</name><argument_list>(<argument><expr><name><name>r</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr>"ap_lua_modified:%s"</expr></argument>, <argument><expr><name><name>spec</name>-&gt;<name>file</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <expr_stmt><expr><call><name>apr_pool_userdata_get</name><argument_list>(<argument><expr>(<name>void</name> **)&amp;<name>cache_info</name></expr></argument>, <argument><expr><name>mkey</name></expr></argument>, <argument><expr><name>lifecycle_pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <if>if <condition>(<expr><name>cache_info</name> == <name>NULL</name></expr>)</condition><then> <block>{
+                <expr_stmt><expr><name>cache_info</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>lifecycle_pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>ap_lua_finfo</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+                <expr_stmt><expr><call><name>apr_pool_userdata_set</name><argument_list>(<argument><expr>(<name>void</name>*) <name>cache_info</name></expr></argument>, <argument><expr><name>mkey</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>lifecycle_pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></then></if>
+        }</block></then></if>
+        <if>if <condition>(<expr><name><name>spec</name>-&gt;<name>codecache</name></name> == <name>AP_LUA_CACHE_STAT</name></expr>)</condition><then> <block>{
+            <decl_stmt><decl><type><name>apr_finfo_t</name></type> <name>lua_finfo</name></decl>;</decl_stmt>
+            <expr_stmt><expr><call><name>apr_stat</name><argument_list>(<argument><expr>&amp;<name>lua_finfo</name></expr></argument>, <argument><expr><name><name>spec</name>-&gt;<name>file</name></name></expr></argument>, <argument><expr><name>APR_FINFO_MTIME</name>|<name>APR_FINFO_SIZE</name></expr></argument>, <argument><expr><name>lifecycle_pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+            <comment type="block">/* On first visit, modified will be zero, but that's fine - The file is 
+            loaded in the vm_construct function.
+            */</comment>
+            <if>if <condition>(<expr>(<name><name>cache_info</name>-&gt;<name>modified</name></name> == <name><name>lua_finfo</name>.<name>mtime</name></name> &amp;&amp; <name><name>cache_info</name>-&gt;<name>size</name></name> == <name><name>lua_finfo</name>.<name>size</name></name>)
+                    || <name><name>cache_info</name>-&gt;<name>modified</name></name> == 0</expr>)</condition><then> <block>{
+                <expr_stmt><expr><name>tryCache</name> = 1</expr>;</expr_stmt>
+            }</block></then></if>
+            <expr_stmt><expr><name><name>cache_info</name>-&gt;<name>modified</name></name> = <name><name>lua_finfo</name>.<name>mtime</name></name></expr>;</expr_stmt>
+            <expr_stmt><expr><name><name>cache_info</name>-&gt;<name>size</name></name> = <name><name>lua_finfo</name>.<name>size</name></name></expr>;</expr_stmt>
+        }</block></then>
+        <else>else <if>if <condition>(<expr><name><name>spec</name>-&gt;<name>codecache</name></name> == <name>AP_LUA_CACHE_NEVER</name></expr>)</condition><then> <block>{
+            <if>if <condition>(<expr><name><name>cache_info</name>-&gt;<name>runs</name></name> == 0</expr>)</condition><then>
+                <expr_stmt><expr><name>tryCache</name> = 1</expr>;</expr_stmt></then></if>
+        }</block></then></if></else></if>
+        <expr_stmt><expr><name><name>cache_info</name>-&gt;<name>runs</name></name>++</expr>;</expr_stmt>
+    }</block></else></if>
+    <if>if <condition>(<expr><name>tryCache</name> == 0 &amp;&amp; <name><name>spec</name>-&gt;<name>scope</name></name> != <name>AP_LUA_SCOPE_ONCE</name></expr>)</condition><then> <block>{
+        <decl_stmt><decl><type><name>int</name></type> <name>rc</name></decl>;</decl_stmt>
+        <expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_DEBUG</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>lifecycle_pool</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>02332</expr></argument>)</argument_list></call>
+            "(re)loading lua file %s"</expr></argument>, <argument><expr><name><name>spec</name>-&gt;<name>file</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <expr_stmt><expr><name>rc</name> = <call><name>luaL_loadfile</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr><name><name>spec</name>-&gt;<name>file</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        <if>if <condition>(<expr><name>rc</name> != 0</expr>)</condition><then> <block>{
+            <expr_stmt><expr><call><name>ap_log_perror</name><argument_list>(<argument><expr><name>APLOG_MARK</name></expr></argument>, <argument><expr><name>APLOG_ERR</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>lifecycle_pool</name></expr></argument>, <argument><expr><call><name>APLOGNO</name><argument_list>(<argument><expr>02333</expr></argument>)</argument_list></call>
+                          "Error loading %s: %s"</expr></argument>, <argument><expr><name><name>spec</name>-&gt;<name>file</name></name></expr></argument>,
+                          <argument><expr><name>rc</name> == <name>LUA_ERRMEM</name> ? "memory allocation error"
+                                           : <call><name>lua_tostring</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            <return>return <expr>0</expr>;</return>
+        }</block></then></if>
+        <expr_stmt><expr><call><name>lua_pcall</name><argument_list>(<argument><expr><name>L</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><name>LUA_MULTRET</name></expr></argument>, <argument><expr>0</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+    <return>return <expr><name>L</name></expr>;</return>
+}</block></function>
+</unit>

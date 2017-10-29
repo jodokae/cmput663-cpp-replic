@@ -1,0 +1,1475 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/subversion-1.5.1/source/subversion/libsvn_ra_local/ra_plugin.c"><comment type="block">/*
+ * ra_plugin.c : the main RA module for local repository access
+ *
+ * ====================================================================
+ * Copyright (c) 2000-2008 CollabNet.  All rights reserved.
+ *
+ * This software is licensed as described in the file COPYING, which
+ * you should have received as part of this distribution.  The terms
+ * are also available at http://subversion.tigris.org/license-1.html.
+ * If newer versions of this license are posted there, you may use a
+ * newer version instead, at your option.
+ *
+ * This software consists of voluntary contributions made by many
+ * individuals.  For exact contribution history, see the revision
+ * history and logs, available at http://subversion.tigris.org/.
+ * ====================================================================
+ */</comment>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"ra_local.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_ra.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_fs.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_delta.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_repos.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_pools.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_time.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_props.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_mergeinfo.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_path.h"</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"svn_private_config.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"../libsvn_ra/ra_loader.h"</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"private/svn_mergeinfo_private.h"</cpp:file></cpp:include>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>APR_WANT_STRFUNC</name></cpp:macro></cpp:define>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;apr_want.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;assert.h&gt;</cpp:file></cpp:include>
+
+
+<comment type="block">/*----------------------------------------------------------------*/</comment>
+<escape char="0xc"/>
+<comment type="block">/*** Miscellaneous helper functions ***/</comment>
+
+
+<comment type="block">/* Pool cleanup handler: ensure that the access descriptor of the
+   filesystem (svn_fs_t *) DATA is set to NULL. */</comment>
+<function><type><specifier>static</specifier> <name>apr_status_t</name></type>
+<name>cleanup_access</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>data</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>serr</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_fs_t</name> *</type><name>fs</name> <init>= <expr><name>data</name></expr></init></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name>serr</name> = <call><name>svn_fs_set_access</name><argument_list>(<argument><expr><name>fs</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name>serr</name></expr>)</condition><then>
+    <block>{
+      <decl_stmt><decl><type><name>apr_status_t</name></type> <name>apr_err</name> <init>= <expr><name><name>serr</name>-&gt;<name>apr_err</name></name></expr></init></decl>;</decl_stmt>
+      <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>serr</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <return>return <expr><name>apr_err</name></expr>;</return>
+    }</block></then></if>
+
+  <return>return <expr><name>APR_SUCCESS</name></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* Fetch a username for use with SESS. */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>get_username</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+             <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_local__session_baton_t</name> *</type><name>sess</name> <init>= <expr><name><name>session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_auth_iterstate_t</name> *</type><name>iterstate</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_fs_access_t</name> *</type><name>access_ctx</name></decl>;</decl_stmt>
+
+  <comment type="block">/* If we've already found the username don't ask for it again. */</comment>
+  <if>if <condition>(<expr>! <name><name>sess</name>-&gt;<name>username</name></name></expr>)</condition><then>
+    <block>{
+      <comment type="block">/* Get a username somehow, so we have some svn:author property to
+         attach to a commit. */</comment>
+      <if>if <condition>(<expr><name><name>sess</name>-&gt;<name>callbacks</name>-&gt;<name>auth_baton</name></name></expr>)</condition><then>
+        <block>{
+          <decl_stmt><decl><type><name>void</name> *</type><name>creds</name></decl>;</decl_stmt>
+          <decl_stmt><decl><type><name>svn_auth_cred_username_t</name> *</type><name>username_creds</name></decl>;</decl_stmt>
+          <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_auth_first_credentials</name><argument_list>(<argument><expr>&amp;<name>creds</name></expr></argument>, <argument><expr>&amp;<name>iterstate</name></expr></argument>,
+                                             <argument><expr><name>SVN_AUTH_CRED_USERNAME</name></expr></argument>,
+                                             <argument><expr><name><name>sess</name>-&gt;<name>uuid</name></name></expr></argument>, <comment type="block">/* realmstring */</comment>
+                                             <argument><expr><name><name>sess</name>-&gt;<name>callbacks</name>-&gt;<name>auth_baton</name></name></expr></argument>,
+                                             <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+          <comment type="block">/* No point in calling next_creds(), since that assumes that the
+             first_creds() somehow failed to authenticate.  But there's no
+             challenge going on, so we use whatever creds we get back on
+             the first try. */</comment>
+          <expr_stmt><expr><name>username_creds</name> = <name>creds</name></expr>;</expr_stmt>
+          <if>if <condition>(<expr><name>username_creds</name> &amp;&amp; <name><name>username_creds</name>-&gt;<name>username</name></name></expr>)</condition><then>
+            <block>{
+              <expr_stmt><expr><name><name>sess</name>-&gt;<name>username</name></name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name><name>session</name>-&gt;<name>pool</name></name></expr></argument>,
+                                           <argument><expr><name><name>username_creds</name>-&gt;<name>username</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+              <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><call><name>svn_auth_save_credentials</name><argument_list>(<argument><expr><name>iterstate</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></then>
+          <else>else
+            <expr_stmt><expr><name><name>sess</name>-&gt;<name>username</name></name> = ""</expr>;</expr_stmt></else></if>
+        }</block></then>
+      <else>else
+        <expr_stmt><expr><name><name>sess</name>-&gt;<name>username</name></name> = ""</expr>;</expr_stmt></else></if>
+    }</block></then></if>
+
+  <comment type="block">/* If we have a real username, attach it to the filesystem so that it can
+     be used to validate locks.  Even if there already is a user context
+     associated, it may contain irrelevant lock tokens, so always create a new.
+  */</comment>
+  <if>if <condition>(<expr>*<name><name>sess</name>-&gt;<name>username</name></name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_create_access</name><argument_list>(<argument><expr>&amp;<name>access_ctx</name></expr></argument>, <argument><expr><name><name>sess</name>-&gt;<name>username</name></name></expr></argument>,
+                                   <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_set_access</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>fs</name></name></expr></argument>, <argument><expr><name>access_ctx</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <comment type="block">/* Make sure this context is disassociated when the pool gets
+         destroyed. */</comment>
+      <expr_stmt><expr><call><name>apr_pool_cleanup_register</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name><name>sess</name>-&gt;<name>fs</name></name></expr></argument>, <argument><expr><name>cleanup_access</name></expr></argument>,
+                                <argument><expr><name>apr_pool_cleanup_null</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/*----------------------------------------------------------------*/</comment>
+<escape char="0xc"/>
+<comment type="block">/*** The reporter vtable needed by do_update() and friends ***/</comment>
+
+<typedef>typedef <type><struct>struct <name>reporter_baton_t</name>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_local__session_baton_t</name> *</type><name>sess</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>void</name> *</type><name>report_baton</name></decl>;</decl_stmt>
+
+}</block></struct></type> <name>reporter_baton_t</name>;</typedef>
+
+
+<function><type><specifier>static</specifier> <name>void</name> *</type>
+<name>make_reporter_baton</name><parameter_list>(<param><decl><type><name>svn_ra_local__session_baton_t</name> *</type><name>sess</name></decl></param>,
+                    <param><decl><type><name>void</name> *</type><name>report_baton</name></decl></param>,
+                    <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>reporter_baton_t</name> *</type><name>rbaton</name> <init>= <expr><call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>rbaton</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <expr_stmt><expr><name><name>rbaton</name>-&gt;<name>sess</name></name> = <name>sess</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>rbaton</name>-&gt;<name>report_baton</name></name> = <name>report_baton</name></expr>;</expr_stmt>
+  <return>return <expr><name>rbaton</name></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>reporter_set_path</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>reporter_baton</name></decl></param>,
+                  <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+                  <param><decl><type><name>svn_revnum_t</name></type> <name>revision</name></decl></param>,
+                  <param><decl><type><name>svn_depth_t</name></type> <name>depth</name></decl></param>,
+                  <param><decl><type><name>svn_boolean_t</name></type> <name>start_empty</name></decl></param>,
+                  <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>lock_token</name></decl></param>,
+                  <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>reporter_baton_t</name> *</type><name>rbaton</name> <init>= <expr><name>reporter_baton</name></expr></init></decl>;</decl_stmt>
+  <return>return <expr><call><name>svn_repos_set_path3</name><argument_list>(<argument><expr><name><name>rbaton</name>-&gt;<name>report_baton</name></name></expr></argument>, <argument><expr><name>path</name></expr></argument>,
+                             <argument><expr><name>revision</name></expr></argument>, <argument><expr><name>depth</name></expr></argument>, <argument><expr><name>start_empty</name></expr></argument>, <argument><expr><name>lock_token</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>reporter_delete_path</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>reporter_baton</name></decl></param>,
+                     <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+                     <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>reporter_baton_t</name> *</type><name>rbaton</name> <init>= <expr><name>reporter_baton</name></expr></init></decl>;</decl_stmt>
+  <return>return <expr><call><name>svn_repos_delete_path</name><argument_list>(<argument><expr><name><name>rbaton</name>-&gt;<name>report_baton</name></name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>reporter_link_path</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>reporter_baton</name></decl></param>,
+                   <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+                   <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>url</name></decl></param>,
+                   <param><decl><type><name>svn_revnum_t</name></type> <name>revision</name></decl></param>,
+                   <param><decl><type><name>svn_depth_t</name></type> <name>depth</name></decl></param>,
+                   <param><decl><type><name>svn_boolean_t</name></type> <name>start_empty</name></decl></param>,
+                   <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>lock_token</name></decl></param>,
+                   <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>reporter_baton_t</name> *</type><name>rbaton</name> <init>= <expr><name>reporter_baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>fs_path</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>repos_url_decoded</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>repos_url_len</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name>url</name> = <call><name>svn_path_uri_decode</name><argument_list>(<argument><expr><name>url</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>repos_url_decoded</name> = <call><name>svn_path_uri_decode</name><argument_list>(<argument><expr><name><name>rbaton</name>-&gt;<name>sess</name>-&gt;<name>repos_url</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name>repos_url_len</name> = <call><name>strlen</name><argument_list>(<argument><expr><name>repos_url_decoded</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><call><name>strncmp</name><argument_list>(<argument><expr><name>url</name></expr></argument>, <argument><expr><name>repos_url_decoded</name></expr></argument>, <argument><expr><name>repos_url_len</name></expr></argument>)</argument_list></call> != 0</expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_RA_ILLEGAL_URL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                             <argument><expr><call><name>_</name><argument_list>(<argument><expr>"'%s'\n"
+                               "is not the same repository as\n"
+                               "'%s'"</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>url</name></expr></argument>, <argument><expr><name><name>rbaton</name>-&gt;<name>sess</name>-&gt;<name>repos_url</name></name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+  <expr_stmt><expr><name>fs_path</name> = <name>url</name> + <name>repos_url_len</name></expr>;</expr_stmt>
+  <return>return <expr><call><name>svn_repos_link_path3</name><argument_list>(<argument><expr><name><name>rbaton</name>-&gt;<name>report_baton</name></name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>fs_path</name></expr></argument>, <argument><expr><name>revision</name></expr></argument>,
+                              <argument><expr><name>depth</name></expr></argument>, <argument><expr><name>start_empty</name></expr></argument>, <argument><expr><name>lock_token</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>reporter_finish_report</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>reporter_baton</name></decl></param>,
+                       <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>reporter_baton_t</name> *</type><name>rbaton</name> <init>= <expr><name>reporter_baton</name></expr></init></decl>;</decl_stmt>
+  <return>return <expr><call><name>svn_repos_finish_report</name><argument_list>(<argument><expr><name><name>rbaton</name>-&gt;<name>report_baton</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>reporter_abort_report</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>reporter_baton</name></decl></param>,
+                      <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>reporter_baton_t</name> *</type><name>rbaton</name> <init>= <expr><name>reporter_baton</name></expr></init></decl>;</decl_stmt>
+  <return>return <expr><call><name>svn_repos_abort_report</name><argument_list>(<argument><expr><name><name>rbaton</name>-&gt;<name>report_baton</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+<decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>svn_ra_reporter3_t</name></type> <name>ra_local_reporter</name> <init>=
+<expr><block>{
+  <expr><name>reporter_set_path</name></expr>,
+  <expr><name>reporter_delete_path</name></expr>,
+  <expr><name>reporter_link_path</name></expr>,
+  <expr><name>reporter_finish_report</name></expr>,
+  <expr><name>reporter_abort_report</name></expr>
+}</block></expr></init></decl>;</decl_stmt>
+
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>make_reporter</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+              <param><decl><type><specifier>const</specifier> <name>svn_ra_reporter3_t</name> **</type><name>reporter</name></decl></param>,
+              <param><decl><type><name>void</name> **</type><name>report_baton</name></decl></param>,
+              <param><decl><type><name>svn_revnum_t</name></type> <name>revision</name></decl></param>,
+              <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>target</name></decl></param>,
+              <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>other_url</name></decl></param>,
+              <param><decl><type><name>svn_boolean_t</name></type> <name>text_deltas</name></decl></param>,
+              <param><decl><type><name>svn_depth_t</name></type> <name>depth</name></decl></param>,
+              <param><decl><type><name>svn_boolean_t</name></type> <name>send_copyfrom_args</name></decl></param>,
+              <param><decl><type><name>svn_boolean_t</name></type> <name>ignore_ancestry</name></decl></param>,
+              <param><decl><type><specifier>const</specifier> <name>svn_delta_editor_t</name> *</type><name>editor</name></decl></param>,
+              <param><decl><type><name>void</name> *</type><name>edit_baton</name></decl></param>,
+              <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_local__session_baton_t</name> *</type><name>sess</name> <init>= <expr><name><name>session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>void</name> *</type><name>rbaton</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>repos_url_len</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>other_fs_path</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>repos_url_decoded</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Get the HEAD revision if one is not supplied. */</comment>
+  <if>if <condition>(<expr>! <call><name>SVN_IS_VALID_REVNUM</name><argument_list>(<argument><expr><name>revision</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_youngest_rev</name><argument_list>(<argument><expr>&amp;<name>revision</name></expr></argument>, <argument><expr><name><name>sess</name>-&gt;<name>fs</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <comment type="block">/* If OTHER_URL was provided, validate it and convert it into a
+     regular filesystem path. */</comment>
+  <if>if <condition>(<expr><name>other_url</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><name>other_url</name> = <call><name>svn_path_uri_decode</name><argument_list>(<argument><expr><name>other_url</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name>repos_url_decoded</name> = <call><name>svn_path_uri_decode</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>repos_url</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name>repos_url_len</name> = <call><name>strlen</name><argument_list>(<argument><expr><name>repos_url_decoded</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <comment type="block">/* Sanity check:  the other_url better be in the same repository as
+         the original session url! */</comment>
+      <if>if <condition>(<expr><call><name>strncmp</name><argument_list>(<argument><expr><name>other_url</name></expr></argument>, <argument><expr><name>repos_url_decoded</name></expr></argument>, <argument><expr><name>repos_url_len</name></expr></argument>)</argument_list></call> != 0</expr>)</condition><then>
+        <return>return <expr><call><name>svn_error_createf</name>
+          <argument_list>(<argument><expr><name>SVN_ERR_RA_ILLEGAL_URL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+           <argument><expr><call><name>_</name><argument_list>(<argument><expr>"'%s'\n"
+             "is not the same repository as\n"
+             "'%s'"</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>other_url</name></expr></argument>, <argument><expr><name><name>sess</name>-&gt;<name>repos_url</name></name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+      <expr_stmt><expr><name>other_fs_path</name> = <name>other_url</name> + <name>repos_url_len</name></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <comment type="block">/* Pass back our reporter */</comment>
+  <expr_stmt><expr>*<name>reporter</name> = &amp;<name>ra_local_reporter</name></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>get_username</name><argument_list>(<argument><expr><name>session</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <if>if <condition>(<expr><name><name>sess</name>-&gt;<name>callbacks</name></name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_delta_get_cancellation_editor</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>callbacks</name>-&gt;<name>cancel_func</name></name></expr></argument>,
+                                              <argument><expr><name><name>sess</name>-&gt;<name>callback_baton</name></name></expr></argument>,
+                                              <argument><expr><name>editor</name></expr></argument>,
+                                              <argument><expr><name>edit_baton</name></expr></argument>,
+                                              <argument><expr>&amp;<name>editor</name></expr></argument>,
+                                              <argument><expr>&amp;<name>edit_baton</name></expr></argument>,
+                                              <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <comment type="block">/* Build a reporter baton. */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_repos_begin_report2</name><argument_list>(<argument><expr>&amp;<name>rbaton</name></expr></argument>,
+                                  <argument><expr><name>revision</name></expr></argument>,
+                                  <argument><expr><name><name>sess</name>-&gt;<name>repos</name></name></expr></argument>,
+                                  <argument><expr><name><name>sess</name>-&gt;<name>fs_path</name>-&gt;<name>data</name></name></expr></argument>,
+                                  <argument><expr><name>target</name></expr></argument>,
+                                  <argument><expr><name>other_fs_path</name></expr></argument>,
+                                  <argument><expr><name>text_deltas</name></expr></argument>,
+                                  <argument><expr><name>depth</name></expr></argument>,
+                                  <argument><expr><name>ignore_ancestry</name></expr></argument>,
+                                  <argument><expr><name>send_copyfrom_args</name></expr></argument>,
+                                  <argument><expr><name>editor</name></expr></argument>,
+                                  <argument><expr><name>edit_baton</name></expr></argument>,
+                                  <argument><expr><name>NULL</name></expr></argument>,
+                                  <argument><expr><name>NULL</name></expr></argument>,
+                                  <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Wrap the report baton given us by the repos layer with our own
+     reporter baton. */</comment>
+  <expr_stmt><expr>*<name>report_baton</name> = <call><name>make_reporter_baton</name><argument_list>(<argument><expr><name>sess</name></expr></argument>, <argument><expr><name>rbaton</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/*----------------------------------------------------------------*/</comment>
+<escape char="0xc"/>
+<comment type="block">/*** Deltification stuff for get_commit_editor() ***/</comment>
+
+<struct>struct <name>deltify_etc_baton</name>
+<block>{
+  <decl_stmt><decl><type><name>svn_fs_t</name> *</type><name>fs</name></decl>;</decl_stmt>                     <comment type="block">/* the fs to deltify in */</comment>
+  <decl_stmt><decl><type><name>svn_repos_t</name> *</type><name>repos</name></decl>;</decl_stmt>               <comment type="block">/* repos for unlocking */</comment>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>fs_path</name></decl>;</decl_stmt>              <comment type="block">/* fs-path part of split session URL */</comment>
+  <decl_stmt><decl><type><name>apr_hash_t</name> *</type><name>lock_tokens</name></decl>;</decl_stmt>          <comment type="block">/* tokens to unlock, if any */</comment>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl>;</decl_stmt>                 <comment type="block">/* pool for scratch work */</comment>
+  <decl_stmt><decl><type><name>svn_commit_callback2_t</name></type> <name>callback</name></decl>;</decl_stmt>  <comment type="block">/* the original callback */</comment>
+  <decl_stmt><decl><type><name>void</name> *</type><name>callback_baton</name></decl>;</decl_stmt>             <comment type="block">/* the original callback's baton */</comment>
+}</block>;</struct>
+
+<comment type="block">/* This implements 'svn_commit_callback_t'.  Its invokes the original
+   (wrapped) callback, but also does deltification on the new revision and
+   possibly unlocks committed paths.
+   BATON is 'struct deltify_etc_baton *'. */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>deltify_etc</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>svn_commit_info_t</name> *</type><name>commit_info</name></decl></param>,
+            <param><decl><type><name>void</name> *</type><name>baton</name></decl></param>, <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>deltify_etc_baton</name> *</type><name>db</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err1</name></decl>, *<decl><type ref="prev"/><name>err2</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_hash_index_t</name> *</type><name>hi</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>iterpool</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Invoke the original callback first, in case someone's waiting to
+     know the revision number so they can go off and annotate an
+     issue or something. */</comment>
+  <expr_stmt><expr><name>err1</name> = <call>(*<name><name>db</name>-&gt;<name>callback</name></name>)<argument_list>(<argument><expr><name>commit_info</name></expr></argument>, <argument><expr><name><name>db</name>-&gt;<name>callback_baton</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Maybe unlock the paths. */</comment>
+  <if>if <condition>(<expr><name><name>db</name>-&gt;<name>lock_tokens</name></name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><name>iterpool</name> = <call><name>svn_pool_create</name><argument_list>(<argument><expr><name><name>db</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <for>for (<init><expr><name>hi</name> = <call><name>apr_hash_first</name><argument_list>(<argument><expr><name><name>db</name>-&gt;<name>pool</name></name></expr></argument>, <argument><expr><name><name>db</name>-&gt;<name>lock_tokens</name></name></expr></argument>)</argument_list></call></expr>;</init> <condition><expr><name>hi</name></expr>;</condition>
+           <incr><expr><name>hi</name> = <call><name>apr_hash_next</name><argument_list>(<argument><expr><name>hi</name></expr></argument>)</argument_list></call></expr></incr>)
+        <block>{
+          <decl_stmt><decl><type><specifier>const</specifier> <name>void</name> *</type><name>rel_path</name></decl>;</decl_stmt>
+          <decl_stmt><decl><type><name>void</name> *</type><name>val</name></decl>;</decl_stmt>
+          <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>abs_path</name></decl>, *<decl><type ref="prev"/><name>token</name></decl>;</decl_stmt>
+
+          <expr_stmt><expr><call><name>svn_pool_clear</name><argument_list>(<argument><expr><name>iterpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><call><name>apr_hash_this</name><argument_list>(<argument><expr><name>hi</name></expr></argument>, <argument><expr>&amp;<name>rel_path</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr>&amp;<name>val</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><name>token</name> = <name>val</name></expr>;</expr_stmt>
+          <expr_stmt><expr><name>abs_path</name> = <call><name>svn_path_join</name><argument_list>(<argument><expr><name><name>db</name>-&gt;<name>fs_path</name></name></expr></argument>, <argument><expr><name>rel_path</name></expr></argument>, <argument><expr><name>iterpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <comment type="block">/* We may get errors here if the lock was broken or stolen
+             after the commit succeeded.  This is fine and should be
+             ignored. */</comment>
+          <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><call><name>svn_repos_fs_unlock</name><argument_list>(<argument><expr><name><name>db</name>-&gt;<name>repos</name></name></expr></argument>, <argument><expr><name>abs_path</name></expr></argument>, <argument><expr><name>token</name></expr></argument>,
+                                              <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>iterpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></for>
+      <expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name>iterpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <comment type="block">/* But, deltification shouldn't be stopped just because someone's
+     random callback failed, so proceed unconditionally on to
+     deltification. */</comment>
+  <expr_stmt><expr><name>err2</name> = <call><name>svn_fs_deltify_revision</name><argument_list>(<argument><expr><name><name>db</name>-&gt;<name>fs</name></name></expr></argument>, <argument><expr><name><name>commit_info</name>-&gt;<name>revision</name></name></expr></argument>, <argument><expr><name><name>db</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* It's more interesting if the original callback failed, so let
+     that one dominate. */</comment>
+  <if>if <condition>(<expr><name>err1</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err2</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <return>return <expr><name>err1</name></expr>;</return>
+    }</block></then></if>
+
+  <return>return <expr><name>err2</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/*----------------------------------------------------------------*/</comment>
+<escape char="0xc"/>
+<comment type="block">/*** The RA vtable routines ***/</comment>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>RA_LOCAL_DESCRIPTION</name></cpp:macro> \
+        <cpp:value>N_("Module for accessing a repository on local disk.")</cpp:value></cpp:define>
+
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *</type>
+<name>svn_ra_local__get_description</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>
+<block>{
+  <return>return <expr><call><name>_</name><argument_list>(<argument><expr><name>RA_LOCAL_DESCRIPTION</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> * <specifier>const</specifier> *</type>
+<name>svn_ra_local__get_schemes</name><parameter_list>(<param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>char</name> *</type><name><name>schemes</name><index>[]</index></name> <init>= <expr><block>{ <expr>"file"</expr>, <expr><name>NULL</name></expr> }</block></expr></init></decl>;</decl_stmt>
+
+  <return>return <expr><name>schemes</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>svn_ra_local__open</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                   <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>repos_URL</name></decl></param>,
+                   <param><decl><type><specifier>const</specifier> <name>svn_ra_callbacks2_t</name> *</type><name>callbacks</name></decl></param>,
+                   <param><decl><type><name>void</name> *</type><name>callback_baton</name></decl></param>,
+                   <param><decl><type><name>apr_hash_t</name> *</type><name>config</name></decl></param>,
+                   <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_local__session_baton_t</name> *</type><name>sess</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>fs_path</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Allocate and stash the session_sess args we have already. */</comment>
+  <expr_stmt><expr><name>sess</name> = <call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>sess</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>sess</name>-&gt;<name>callbacks</name></name> = <name>callbacks</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>sess</name>-&gt;<name>callback_baton</name></name> = <name>callback_baton</name></expr>;</expr_stmt>
+
+  <comment type="block">/* Look through the URL, figure out which part points to the
+     repository, and which part is the path *within* the
+     repository. */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR_W</name><argument_list>(<argument><expr><call><name>svn_ra_local__split_URL</name><argument_list>(<argument><expr>&amp;(<name><name>sess</name>-&gt;<name>repos</name></name>)</expr></argument>,
+                                    <argument><expr>&amp;(<name><name>sess</name>-&gt;<name>repos_url</name></name>)</expr></argument>,
+                                    <argument><expr>&amp;<name>fs_path</name></expr></argument>,
+                                    <argument><expr><name>repos_URL</name></expr></argument>,
+                                    <argument><expr><name><name>session</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr></argument>,
+            <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Unable to open an ra_local session to URL"</expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>sess</name>-&gt;<name>fs_path</name></name> = <call><name>svn_stringbuf_create</name><argument_list>(<argument><expr><name>fs_path</name></expr></argument>, <argument><expr><name><name>session</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Cache the filesystem object from the repos here for
+     convenience. */</comment>
+  <expr_stmt><expr><name><name>sess</name>-&gt;<name>fs</name></name> = <call><name>svn_repos_fs</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>repos</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Cache the repository UUID as well */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_get_uuid</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>fs</name></name></expr></argument>, <argument><expr>&amp;<name><name>sess</name>-&gt;<name>uuid</name></name></expr></argument>, <argument><expr><name><name>session</name>-&gt;<name>pool</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Be sure username is NULL so we know to look it up / ask for it */</comment>
+  <expr_stmt><expr><name><name>sess</name>-&gt;<name>username</name></name> = <name>NULL</name></expr>;</expr_stmt>
+
+  <expr_stmt><expr><name><name>session</name>-&gt;<name>priv</name></name> = <name>sess</name></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>svn_ra_local__reparent</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                       <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>url</name></decl></param>,
+                       <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_local__session_baton_t</name> *</type><name>sess</name> <init>= <expr><name><name>session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>relpath</name> <init>= <expr>""</expr></init></decl>;</decl_stmt>
+
+  <comment type="block">/* If the new URL isn't the same as our repository root URL, then
+     let's ensure that it's some child of it. */</comment>
+  <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>url</name></expr></argument>, <argument><expr><name><name>sess</name>-&gt;<name>repos_url</name></name></expr></argument>)</argument_list></call> != 0</expr>)</condition><then>
+    <expr_stmt><expr><name>relpath</name> = <call><name>svn_path_is_child</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>repos_url</name></name></expr></argument>, <argument><expr><name>url</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+  <if>if <condition>(<expr>! <name>relpath</name></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_createf</name>
+      <argument_list>(<argument><expr><name>SVN_ERR_RA_ILLEGAL_URL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+       <argument><expr><call><name>_</name><argument_list>(<argument><expr>"URL '%s' is not a child of the session's repository root "
+         "URL '%s'"</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>url</name></expr></argument>, <argument><expr><name><name>sess</name>-&gt;<name>repos_url</name></name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <comment type="block">/* Update our FS_PATH sess member to point to our new
+     relative-URL-turned-absolute-filesystem-path. */</comment>
+  <expr_stmt><expr><name>relpath</name> = <call><name>apr_pstrcat</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>"/"</expr></argument>, <argument><expr><call><name>svn_path_uri_decode</name><argument_list>(<argument><expr><name>relpath</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>svn_stringbuf_set</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>fs_path</name></name></expr></argument>, <argument><expr><name>relpath</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>svn_ra_local__get_session_url</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                              <param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>url</name></decl></param>,
+                              <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_local__session_baton_t</name> *</type><name>sess</name> <init>= <expr><name><name>session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <expr_stmt><expr>*<name>url</name> = <call><name>svn_path_join</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>repos_url</name></name></expr></argument>,
+                       <argument><expr><call><name>svn_path_uri_encode</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>fs_path</name>-&gt;<name>data</name></name> + 1</expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>,
+                       <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>svn_ra_local__get_latest_revnum</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                                <param><decl><type><name>svn_revnum_t</name> *</type><name>latest_revnum</name></decl></param>,
+                                <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_local__session_baton_t</name> *</type><name>sess</name> <init>= <expr><name><name>session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <return>return <expr><call><name>svn_fs_youngest_rev</name><argument_list>(<argument><expr><name>latest_revnum</name></expr></argument>, <argument><expr><name><name>sess</name>-&gt;<name>fs</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>svn_ra_local__get_file_revs</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                            <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+                            <param><decl><type><name>svn_revnum_t</name></type> <name>start</name></decl></param>,
+                            <param><decl><type><name>svn_revnum_t</name></type> <name>end</name></decl></param>,
+                            <param><decl><type><name>svn_boolean_t</name></type> <name>include_merged_revisions</name></decl></param>,
+                            <param><decl><type><name>svn_file_rev_handler_t</name></type> <name>handler</name></decl></param>,
+                            <param><decl><type><name>void</name> *</type><name>handler_baton</name></decl></param>,
+                            <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_local__session_baton_t</name> *</type><name>sess</name> <init>= <expr><name><name>session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>abs_path</name> <init>= <expr><call><name>svn_path_join</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>fs_path</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <return>return <expr><call><name>svn_repos_get_file_revs2</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>repos</name></name></expr></argument>, <argument><expr><name>abs_path</name></expr></argument>, <argument><expr><name>start</name></expr></argument>, <argument><expr><name>end</name></expr></argument>,
+                                  <argument><expr><name>include_merged_revisions</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                  <argument><expr><name>handler</name></expr></argument>, <argument><expr><name>handler_baton</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>svn_ra_local__get_dated_revision</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                                 <param><decl><type><name>svn_revnum_t</name> *</type><name>revision</name></decl></param>,
+                                 <param><decl><type><name>apr_time_t</name></type> <name>tm</name></decl></param>,
+                                 <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_local__session_baton_t</name> *</type><name>sess</name> <init>= <expr><name><name>session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <return>return <expr><call><name>svn_repos_dated_revision</name><argument_list>(<argument><expr><name>revision</name></expr></argument>, <argument><expr><name><name>sess</name>-&gt;<name>repos</name></name></expr></argument>, <argument><expr><name>tm</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>svn_ra_local__change_rev_prop</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                              <param><decl><type><name>svn_revnum_t</name></type> <name>rev</name></decl></param>,
+                              <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>name</name></decl></param>,
+                              <param><decl><type><specifier>const</specifier> <name>svn_string_t</name> *</type><name>value</name></decl></param>,
+                              <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_local__session_baton_t</name> *</type><name>sess</name> <init>= <expr><name><name>session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>get_username</name><argument_list>(<argument><expr><name>session</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_repos_fs_change_rev_prop3</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>repos</name></name></expr></argument>, <argument><expr><name>rev</name></expr></argument>, <argument><expr><name><name>sess</name>-&gt;<name>username</name></name></expr></argument>,
+                                        <argument><expr><name>name</name></expr></argument>, <argument><expr><name>value</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                                        <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>svn_ra_local__get_uuid</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                       <param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>uuid</name></decl></param>,
+                       <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_local__session_baton_t</name> *</type><name>sess</name> <init>= <expr><name><name>session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <expr_stmt><expr>*<name>uuid</name> = <name><name>sess</name>-&gt;<name>uuid</name></name></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>svn_ra_local__get_repos_root</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                             <param><decl><type><specifier>const</specifier> <name>char</name> **</type><name>url</name></decl></param>,
+                             <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_local__session_baton_t</name> *</type><name>sess</name> <init>= <expr><name><name>session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <expr_stmt><expr>*<name>url</name> = <name><name>sess</name>-&gt;<name>repos_url</name></name></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>svn_ra_local__rev_proplist</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                           <param><decl><type><name>svn_revnum_t</name></type> <name>rev</name></decl></param>,
+                           <param><decl><type><name>apr_hash_t</name> **</type><name>props</name></decl></param>,
+                           <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_local__session_baton_t</name> *</type><name>sess</name> <init>= <expr><name><name>session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <return>return <expr><call><name>svn_repos_fs_revision_proplist</name><argument_list>(<argument><expr><name>props</name></expr></argument>, <argument><expr><name><name>sess</name>-&gt;<name>repos</name></name></expr></argument>, <argument><expr><name>rev</name></expr></argument>,
+                                        <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>svn_ra_local__rev_prop</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                       <param><decl><type><name>svn_revnum_t</name></type> <name>rev</name></decl></param>,
+                       <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>name</name></decl></param>,
+                       <param><decl><type><name>svn_string_t</name> **</type><name>value</name></decl></param>,
+                       <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_local__session_baton_t</name> *</type><name>sess</name> <init>= <expr><name><name>session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <return>return <expr><call><name>svn_repos_fs_revision_prop</name><argument_list>(<argument><expr><name>value</name></expr></argument>, <argument><expr><name><name>sess</name>-&gt;<name>repos</name></name></expr></argument>, <argument><expr><name>rev</name></expr></argument>, <argument><expr><name>name</name></expr></argument>,
+                                    <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>svn_ra_local__get_commit_editor</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                                <param><decl><type><specifier>const</specifier> <name>svn_delta_editor_t</name> **</type><name>editor</name></decl></param>,
+                                <param><decl><type><name>void</name> **</type><name>edit_baton</name></decl></param>,
+                                <param><decl><type><name>apr_hash_t</name> *</type><name>revprop_table</name></decl></param>,
+                                <param><decl><type><name>svn_commit_callback2_t</name></type> <name>callback</name></decl></param>,
+                                <param><decl><type><name>void</name> *</type><name>callback_baton</name></decl></param>,
+                                <param><decl><type><name>apr_hash_t</name> *</type><name>lock_tokens</name></decl></param>,
+                                <param><decl><type><name>svn_boolean_t</name></type> <name>keep_locks</name></decl></param>,
+                                <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_local__session_baton_t</name> *</type><name>sess</name> <init>= <expr><name><name>session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type>struct <name>deltify_etc_baton</name> *</type><name>db</name> <init>= <expr><call><name>apr_palloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>db</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_hash_index_t</name> *</type><name>hi</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_fs_access_t</name> *</type><name>fs_access</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><name><name>db</name>-&gt;<name>fs</name></name> = <name><name>sess</name>-&gt;<name>fs</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>db</name>-&gt;<name>repos</name></name> = <name><name>sess</name>-&gt;<name>repos</name></name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>db</name>-&gt;<name>fs_path</name></name> = <name><name>sess</name>-&gt;<name>fs_path</name>-&gt;<name>data</name></name></expr>;</expr_stmt>
+  <if>if <condition>(<expr>! <name>keep_locks</name></expr>)</condition><then>
+    <expr_stmt><expr><name><name>db</name>-&gt;<name>lock_tokens</name></name> = <name>lock_tokens</name></expr>;</expr_stmt></then>
+  <else>else
+    <expr_stmt><expr><name><name>db</name>-&gt;<name>lock_tokens</name></name> = <name>NULL</name></expr>;</expr_stmt></else></if>
+  <expr_stmt><expr><name><name>db</name>-&gt;<name>pool</name></name> = <name>pool</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>db</name>-&gt;<name>callback</name></name> = <name>callback</name></expr>;</expr_stmt>
+  <expr_stmt><expr><name><name>db</name>-&gt;<name>callback_baton</name></name> = <name>callback_baton</name></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>get_username</name><argument_list>(<argument><expr><name>session</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* If there are lock tokens to add, do so. */</comment>
+  <if>if <condition>(<expr><name>lock_tokens</name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_get_access</name><argument_list>(<argument><expr>&amp;<name>fs_access</name></expr></argument>, <argument><expr><name><name>sess</name>-&gt;<name>fs</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <comment type="block">/* If there is no access context, the filesystem will scream if a
+         lock is needed. */</comment>
+      <if>if <condition>(<expr><name>fs_access</name></expr>)</condition><then>
+        <block>{
+          <for>for (<init><expr><name>hi</name> = <call><name>apr_hash_first</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>lock_tokens</name></expr></argument>)</argument_list></call></expr>;</init> <condition><expr><name>hi</name></expr>;</condition>
+               <incr><expr><name>hi</name> = <call><name>apr_hash_next</name><argument_list>(<argument><expr><name>hi</name></expr></argument>)</argument_list></call></expr></incr>)
+            <block>{
+              <decl_stmt><decl><type><name>void</name> *</type><name>val</name></decl>;</decl_stmt>
+              <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>token</name></decl>;</decl_stmt>
+
+              <expr_stmt><expr><call><name>apr_hash_this</name><argument_list>(<argument><expr><name>hi</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr>&amp;<name>val</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+              <expr_stmt><expr><name>token</name> = <name>val</name></expr>;</expr_stmt>
+              <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_access_add_lock_token</name><argument_list>(<argument><expr><name>fs_access</name></expr></argument>, <argument><expr><name>token</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+            }</block></for>
+        }</block></then></if>
+    }</block></then></if>
+
+  <comment type="block">/* Copy the revprops table so we can add the username. */</comment>
+  <expr_stmt><expr><name>revprop_table</name> = <call><name>apr_hash_copy</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>revprop_table</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr><name>revprop_table</name></expr></argument>, <argument><expr><name>SVN_PROP_REVISION_AUTHOR</name></expr></argument>, <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>,
+               <argument><expr><call><name>svn_string_create</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>username</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Get the repos commit-editor */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_repos_get_commit_editor5</name>
+          <argument_list>(<argument><expr><name>editor</name></expr></argument>, <argument><expr><name>edit_baton</name></expr></argument>, <argument><expr><name><name>sess</name>-&gt;<name>repos</name></name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, 
+           <argument><expr><call><name>svn_path_uri_decode</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>repos_url</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name><name>sess</name>-&gt;<name>fs_path</name>-&gt;<name>data</name></name></expr></argument>, 
+           <argument><expr><name>revprop_table</name></expr></argument>, <argument><expr><name>deltify_etc</name></expr></argument>, <argument><expr><name>db</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>svn_ra_local__get_mergeinfo</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                            <param><decl><type><name>svn_mergeinfo_catalog_t</name> *</type><name>catalog</name></decl></param>,
+                            <param><decl><type><specifier>const</specifier> <name>apr_array_header_t</name> *</type><name>paths</name></decl></param>,
+                            <param><decl><type><name>svn_revnum_t</name></type> <name>revision</name></decl></param>,
+                            <param><decl><type><name>svn_mergeinfo_inheritance_t</name></type> <name>inherit</name></decl></param>,
+                            <param><decl><type><name>svn_boolean_t</name></type> <name>include_descendants</name></decl></param>,
+                            <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_local__session_baton_t</name> *</type><name>sess</name> <init>= <expr><name><name>session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_mergeinfo_catalog_t</name></type> <name>tmp_catalog</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>abs_paths</name> <init>= 
+    <expr><call><name>apr_array_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>const <name>char</name> *</expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name><name>paths</name>-&gt;<name>nelts</name></name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>)
+    <block>{
+      <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>relative_path</name> <init>= <expr><call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>paths</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr>const <name>char</name> *</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+      <expr_stmt><expr><call><name>APR_ARRAY_PUSH</name><argument_list>(<argument><expr><name>abs_paths</name></expr></argument>, <argument><expr>const <name>char</name> *</expr></argument>)</argument_list></call> = 
+        <call><name>svn_path_join</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>fs_path</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name>relative_path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></for>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_repos_fs_get_mergeinfo</name><argument_list>(<argument><expr>&amp;<name>tmp_catalog</name></expr></argument>, <argument><expr><name><name>sess</name>-&gt;<name>repos</name></name></expr></argument>, <argument><expr><name>abs_paths</name></expr></argument>,
+                                     <argument><expr><name>revision</name></expr></argument>, <argument><expr><name>inherit</name></expr></argument>, <argument><expr><name>include_descendants</name></expr></argument>,
+                                     <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <if>if <condition>(<expr><call><name>apr_hash_count</name><argument_list>(<argument><expr><name>tmp_catalog</name></expr></argument>)</argument_list></call> &gt; 0</expr>)</condition><then>
+    <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_mergeinfo__remove_prefix_from_catalog</name><argument_list>(<argument><expr><name>catalog</name></expr></argument>,
+                                                      <argument><expr><name>tmp_catalog</name></expr></argument>,
+                                                      <argument><expr><name><name>sess</name>-&gt;<name>fs_path</name>-&gt;<name>data</name></name></expr></argument>,
+                                                      <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then>
+  <else>else
+    <expr_stmt><expr>*<name>catalog</name> = <name>NULL</name></expr>;</expr_stmt></else></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>svn_ra_local__do_update</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                        <param><decl><type><specifier>const</specifier> <name>svn_ra_reporter3_t</name> **</type><name>reporter</name></decl></param>,
+                        <param><decl><type><name>void</name> **</type><name>report_baton</name></decl></param>,
+                        <param><decl><type><name>svn_revnum_t</name></type> <name>update_revision</name></decl></param>,
+                        <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>update_target</name></decl></param>,
+                        <param><decl><type><name>svn_depth_t</name></type> <name>depth</name></decl></param>,
+                        <param><decl><type><name>svn_boolean_t</name></type> <name>send_copyfrom_args</name></decl></param>,
+                        <param><decl><type><specifier>const</specifier> <name>svn_delta_editor_t</name> *</type><name>update_editor</name></decl></param>,
+                        <param><decl><type><name>void</name> *</type><name>update_baton</name></decl></param>,
+                        <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <return>return <expr><call><name>make_reporter</name><argument_list>(<argument><expr><name>session</name></expr></argument>,
+                       <argument><expr><name>reporter</name></expr></argument>,
+                       <argument><expr><name>report_baton</name></expr></argument>,
+                       <argument><expr><name>update_revision</name></expr></argument>,
+                       <argument><expr><name>update_target</name></expr></argument>,
+                       <argument><expr><name>NULL</name></expr></argument>,
+                       <argument><expr><name>TRUE</name></expr></argument>,
+                       <argument><expr><name>depth</name></expr></argument>,
+                       <argument><expr><name>send_copyfrom_args</name></expr></argument>,
+                       <argument><expr><name>FALSE</name></expr></argument>,
+                       <argument><expr><name>update_editor</name></expr></argument>,
+                       <argument><expr><name>update_baton</name></expr></argument>,
+                       <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>svn_ra_local__do_switch</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                        <param><decl><type><specifier>const</specifier> <name>svn_ra_reporter3_t</name> **</type><name>reporter</name></decl></param>,
+                        <param><decl><type><name>void</name> **</type><name>report_baton</name></decl></param>,
+                        <param><decl><type><name>svn_revnum_t</name></type> <name>update_revision</name></decl></param>,
+                        <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>update_target</name></decl></param>,
+                        <param><decl><type><name>svn_depth_t</name></type> <name>depth</name></decl></param>,
+                        <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>switch_url</name></decl></param>,
+                        <param><decl><type><specifier>const</specifier> <name>svn_delta_editor_t</name> *</type><name>update_editor</name></decl></param>,
+                        <param><decl><type><name>void</name> *</type><name>update_baton</name></decl></param>,
+                        <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <return>return <expr><call><name>make_reporter</name><argument_list>(<argument><expr><name>session</name></expr></argument>,
+                       <argument><expr><name>reporter</name></expr></argument>,
+                       <argument><expr><name>report_baton</name></expr></argument>,
+                       <argument><expr><name>update_revision</name></expr></argument>,
+                       <argument><expr><name>update_target</name></expr></argument>,
+                       <argument><expr><name>switch_url</name></expr></argument>,
+                       <argument><expr><name>TRUE</name></expr></argument>,
+                       <argument><expr><name>depth</name></expr></argument>,
+                       <argument><expr><name>FALSE</name></expr></argument>,   <comment type="block">/* ### TODO(sussman): take new arg */</comment>
+                       <argument><expr><name>TRUE</name></expr></argument>,
+                       <argument><expr><name>update_editor</name></expr></argument>,
+                       <argument><expr><name>update_baton</name></expr></argument>,
+                       <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>svn_ra_local__do_status</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                        <param><decl><type><specifier>const</specifier> <name>svn_ra_reporter3_t</name> **</type><name>reporter</name></decl></param>,
+                        <param><decl><type><name>void</name> **</type><name>report_baton</name></decl></param>,
+                        <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>status_target</name></decl></param>,
+                        <param><decl><type><name>svn_revnum_t</name></type> <name>revision</name></decl></param>,
+                        <param><decl><type><name>svn_depth_t</name></type> <name>depth</name></decl></param>,
+                        <param><decl><type><specifier>const</specifier> <name>svn_delta_editor_t</name> *</type><name>status_editor</name></decl></param>,
+                        <param><decl><type><name>void</name> *</type><name>status_baton</name></decl></param>,
+                        <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <return>return <expr><call><name>make_reporter</name><argument_list>(<argument><expr><name>session</name></expr></argument>,
+                       <argument><expr><name>reporter</name></expr></argument>,
+                       <argument><expr><name>report_baton</name></expr></argument>,
+                       <argument><expr><name>revision</name></expr></argument>,
+                       <argument><expr><name>status_target</name></expr></argument>,
+                       <argument><expr><name>NULL</name></expr></argument>,
+                       <argument><expr><name>FALSE</name></expr></argument>,
+                       <argument><expr><name>depth</name></expr></argument>,
+                       <argument><expr><name>FALSE</name></expr></argument>,
+                       <argument><expr><name>FALSE</name></expr></argument>,
+                       <argument><expr><name>status_editor</name></expr></argument>,
+                       <argument><expr><name>status_baton</name></expr></argument>,
+                       <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>svn_ra_local__do_diff</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                      <param><decl><type><specifier>const</specifier> <name>svn_ra_reporter3_t</name> **</type><name>reporter</name></decl></param>,
+                      <param><decl><type><name>void</name> **</type><name>report_baton</name></decl></param>,
+                      <param><decl><type><name>svn_revnum_t</name></type> <name>update_revision</name></decl></param>,
+                      <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>update_target</name></decl></param>,
+                      <param><decl><type><name>svn_depth_t</name></type> <name>depth</name></decl></param>,
+                      <param><decl><type><name>svn_boolean_t</name></type> <name>ignore_ancestry</name></decl></param>,
+                      <param><decl><type><name>svn_boolean_t</name></type> <name>text_deltas</name></decl></param>,
+                      <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>switch_url</name></decl></param>,
+                      <param><decl><type><specifier>const</specifier> <name>svn_delta_editor_t</name> *</type><name>update_editor</name></decl></param>,
+                      <param><decl><type><name>void</name> *</type><name>update_baton</name></decl></param>,
+                      <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <return>return <expr><call><name>make_reporter</name><argument_list>(<argument><expr><name>session</name></expr></argument>,
+                       <argument><expr><name>reporter</name></expr></argument>,
+                       <argument><expr><name>report_baton</name></expr></argument>,
+                       <argument><expr><name>update_revision</name></expr></argument>,
+                       <argument><expr><name>update_target</name></expr></argument>,
+                       <argument><expr><name>switch_url</name></expr></argument>,
+                       <argument><expr><name>text_deltas</name></expr></argument>,
+                       <argument><expr><name>depth</name></expr></argument>,
+                       <argument><expr><name>FALSE</name></expr></argument>,
+                       <argument><expr><name>ignore_ancestry</name></expr></argument>,
+                       <argument><expr><name>update_editor</name></expr></argument>,
+                       <argument><expr><name>update_baton</name></expr></argument>,
+                       <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+<struct>struct <name>log_baton</name>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_local__session_baton_t</name> *</type><name>sess</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_log_entry_receiver_t</name></type> <name>real_cb</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>void</name> *</type><name>real_baton</name></decl>;</decl_stmt>
+}</block>;</struct>
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>cancellation_log_receiver</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>baton</name></decl></param>,
+                          <param><decl><type><name>svn_log_entry_t</name> *</type><name>log_entry</name></decl></param>,
+                          <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type>struct <name>log_baton</name> *</type><name>b</name> <init>= <expr><name>baton</name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_ra_local__session_baton_t</name> *</type><name>sess</name> <init>= <expr><name><name>b</name>-&gt;<name>sess</name></name></expr></init></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call>(<name><name>sess</name>-&gt;<name>callbacks</name>-&gt;<name>cancel_func</name></name>)<argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>callback_baton</name></name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><call><name><name>b</name>-&gt;<name>real_cb</name></name><argument_list>(<argument><expr><name><name>b</name>-&gt;<name>real_baton</name></name></expr></argument>, <argument><expr><name>log_entry</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>svn_ra_local__get_log</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                      <param><decl><type><specifier>const</specifier> <name>apr_array_header_t</name> *</type><name>paths</name></decl></param>,
+                      <param><decl><type><name>svn_revnum_t</name></type> <name>start</name></decl></param>,
+                      <param><decl><type><name>svn_revnum_t</name></type> <name>end</name></decl></param>,
+                      <param><decl><type><name>int</name></type> <name>limit</name></decl></param>,
+                      <param><decl><type><name>svn_boolean_t</name></type> <name>discover_changed_paths</name></decl></param>,
+                      <param><decl><type><name>svn_boolean_t</name></type> <name>strict_node_history</name></decl></param>,
+                      <param><decl><type><name>svn_boolean_t</name></type> <name>include_merged_revisions</name></decl></param>,
+                      <param><decl><type><specifier>const</specifier> <name>apr_array_header_t</name> *</type><name>revprops</name></decl></param>,
+                      <param><decl><type><name>svn_log_entry_receiver_t</name></type> <name>receiver</name></decl></param>,
+                      <param><decl><type><name>void</name> *</type><name>receiver_baton</name></decl></param>,
+                      <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_local__session_baton_t</name> *</type><name>sess</name> <init>= <expr><name><name>session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>int</name></type> <name>i</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type>struct <name>log_baton</name></type> <name>lb</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_array_header_t</name> *</type><name>abs_paths</name> <init>= 
+    <expr><call><name>apr_array_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>0</expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>const <name>char</name> *</expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr><name>paths</name></expr>)</condition><then>
+    <block>{
+      <for>for (<init><expr><name>i</name> = 0</expr>;</init> <condition><expr><name>i</name> &lt; <name><name>paths</name>-&gt;<name>nelts</name></name></expr>;</condition> <incr><expr><name>i</name>++</expr></incr>)
+        <block>{
+          <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>relative_path</name> <init>= <expr><call><name>APR_ARRAY_IDX</name><argument_list>(<argument><expr><name>paths</name></expr></argument>, <argument><expr><name>i</name></expr></argument>, <argument><expr>const <name>char</name> *</expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+          <expr_stmt><expr><call><name>APR_ARRAY_PUSH</name><argument_list>(<argument><expr><name>abs_paths</name></expr></argument>, <argument><expr>const <name>char</name> *</expr></argument>)</argument_list></call> = 
+            <call><name>svn_path_join</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>fs_path</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name>relative_path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></for>
+    }</block></then></if>
+
+  <if>if <condition>(<expr><name><name>sess</name>-&gt;<name>callbacks</name></name> &amp;&amp;
+      <name><name>sess</name>-&gt;<name>callbacks</name>-&gt;<name>cancel_func</name></name></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><name><name>lb</name>.<name>real_cb</name></name> = <name>receiver</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>lb</name>.<name>real_baton</name></name> = <name>receiver_baton</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name><name>lb</name>.<name>sess</name></name> = <name>sess</name></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name>receiver</name> = <name>cancellation_log_receiver</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name>receiver_baton</name> = &amp;<name>lb</name></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <return>return <expr><call><name>svn_repos_get_logs4</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>repos</name></name></expr></argument>,
+                             <argument><expr><name>abs_paths</name></expr></argument>,
+                             <argument><expr><name>start</name></expr></argument>,
+                             <argument><expr><name>end</name></expr></argument>,
+                             <argument><expr><name>limit</name></expr></argument>,
+                             <argument><expr><name>discover_changed_paths</name></expr></argument>,
+                             <argument><expr><name>strict_node_history</name></expr></argument>,
+                             <argument><expr><name>include_merged_revisions</name></expr></argument>,
+                             <argument><expr><name>revprops</name></expr></argument>,
+                             <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                             <argument><expr><name>receiver</name></expr></argument>,
+                             <argument><expr><name>receiver_baton</name></expr></argument>,
+                             <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>svn_ra_local__do_check_path</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                            <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+                            <param><decl><type><name>svn_revnum_t</name></type> <name>revision</name></decl></param>,
+                            <param><decl><type><name>svn_node_kind_t</name> *</type><name>kind</name></decl></param>,
+                            <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_local__session_baton_t</name> *</type><name>sess</name> <init>= <expr><name><name>session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_fs_root_t</name> *</type><name>root</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>abs_path</name> <init>= <expr><call><name>svn_path_join</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>fs_path</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr>! <call><name>SVN_IS_VALID_REVNUM</name><argument_list>(<argument><expr><name>revision</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_youngest_rev</name><argument_list>(<argument><expr>&amp;<name>revision</name></expr></argument>, <argument><expr><name><name>sess</name>-&gt;<name>fs</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_revision_root</name><argument_list>(<argument><expr>&amp;<name>root</name></expr></argument>, <argument><expr><name><name>sess</name>-&gt;<name>fs</name></name></expr></argument>, <argument><expr><name>revision</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_check_path</name><argument_list>(<argument><expr><name>kind</name></expr></argument>, <argument><expr><name>root</name></expr></argument>, <argument><expr><name>abs_path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>svn_ra_local__stat</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                   <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+                   <param><decl><type><name>svn_revnum_t</name></type> <name>revision</name></decl></param>,
+                   <param><decl><type><name>svn_dirent_t</name> **</type><name>dirent</name></decl></param>,
+                   <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_local__session_baton_t</name> *</type><name>sess</name> <init>= <expr><name><name>session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_fs_root_t</name> *</type><name>root</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>abs_path</name> <init>= <expr><call><name>svn_path_join</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>fs_path</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr>! <call><name>SVN_IS_VALID_REVNUM</name><argument_list>(<argument><expr><name>revision</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_youngest_rev</name><argument_list>(<argument><expr>&amp;<name>revision</name></expr></argument>, <argument><expr><name><name>sess</name>-&gt;<name>fs</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_revision_root</name><argument_list>(<argument><expr>&amp;<name>root</name></expr></argument>, <argument><expr><name><name>sess</name>-&gt;<name>fs</name></name></expr></argument>, <argument><expr><name>revision</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_repos_stat</name><argument_list>(<argument><expr><name>dirent</name></expr></argument>, <argument><expr><name>root</name></expr></argument>, <argument><expr><name>abs_path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+
+<escape char="0xc"/>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>get_node_props</name><parameter_list>(<param><decl><type><name>apr_hash_t</name> **</type><name>props</name></decl></param>,
+               <param><decl><type><name>svn_ra_local__session_baton_t</name> *</type><name>sess</name></decl></param>,
+               <param><decl><type><name>svn_fs_root_t</name> *</type><name>root</name></decl></param>,
+               <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+               <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_revnum_t</name></type> <name>cmt_rev</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>cmt_date</name></decl>, *<decl><type ref="prev"/><name>cmt_author</name></decl>;</decl_stmt>
+
+  <comment type="block">/* Create a hash with props attached to the fs node. */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_node_proplist</name><argument_list>(<argument><expr><name>props</name></expr></argument>, <argument><expr><name>root</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* Now add some non-tweakable metadata to the hash as well... */</comment>
+
+  <comment type="block">/* The so-called 'entryprops' with info about CR &amp; friends. */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_repos_get_committed_info</name><argument_list>(<argument><expr>&amp;<name>cmt_rev</name></expr></argument>, <argument><expr>&amp;<name>cmt_date</name></expr></argument>,
+                                       <argument><expr>&amp;<name>cmt_author</name></expr></argument>, <argument><expr><name>root</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr>*<name>props</name></expr></argument>,
+               <argument><expr><name>SVN_PROP_ENTRY_COMMITTED_REV</name></expr></argument>,
+               <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>,
+               <argument><expr><call><name>svn_string_createf</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr>"%ld"</expr></argument>, <argument><expr><name>cmt_rev</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr>*<name>props</name></expr></argument>,
+               <argument><expr><name>SVN_PROP_ENTRY_COMMITTED_DATE</name></expr></argument>,
+               <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>,
+               <argument><expr><name>cmt_date</name> ? <call><name>svn_string_create</name><argument_list>(<argument><expr><name>cmt_date</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call> : <name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr>*<name>props</name></expr></argument>,
+               <argument><expr><name>SVN_PROP_ENTRY_LAST_AUTHOR</name></expr></argument>,
+               <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>,
+               <argument><expr><name>cmt_author</name> ? <call><name>svn_string_create</name><argument_list>(<argument><expr><name>cmt_author</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call> : <name>NULL</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr>*<name>props</name></expr></argument>,
+               <argument><expr><name>SVN_PROP_ENTRY_UUID</name></expr></argument>,
+               <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>,
+               <argument><expr><call><name>svn_string_create</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>uuid</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <comment type="block">/* We have no 'wcprops' in ra_local, but might someday. */</comment>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<comment type="block">/* Getting just one file. */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>svn_ra_local__get_file</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                       <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+                       <param><decl><type><name>svn_revnum_t</name></type> <name>revision</name></decl></param>,
+                       <param><decl><type><name>svn_stream_t</name> *</type><name>stream</name></decl></param>,
+                       <param><decl><type><name>svn_revnum_t</name> *</type><name>fetched_rev</name></decl></param>,
+                       <param><decl><type><name>apr_hash_t</name> **</type><name>props</name></decl></param>,
+                       <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_fs_root_t</name> *</type><name>root</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_stream_t</name> *</type><name>contents</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_revnum_t</name></type> <name>youngest_rev</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_ra_local__session_baton_t</name> *</type><name>sess</name> <init>= <expr><name><name>session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>abs_path</name> <init>= <expr><call><name>svn_path_join</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>fs_path</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <comment type="block">/* Open the revision's root. */</comment>
+  <if>if <condition>(<expr>! <call><name>SVN_IS_VALID_REVNUM</name><argument_list>(<argument><expr><name>revision</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_youngest_rev</name><argument_list>(<argument><expr>&amp;<name>youngest_rev</name></expr></argument>, <argument><expr><name><name>sess</name>-&gt;<name>fs</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_revision_root</name><argument_list>(<argument><expr>&amp;<name>root</name></expr></argument>, <argument><expr><name><name>sess</name>-&gt;<name>fs</name></name></expr></argument>, <argument><expr><name>youngest_rev</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>fetched_rev</name> != <name>NULL</name></expr>)</condition><then>
+        <expr_stmt><expr>*<name>fetched_rev</name> = <name>youngest_rev</name></expr>;</expr_stmt></then></if>
+    }</block></then>
+  <else>else
+    <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_revision_root</name><argument_list>(<argument><expr>&amp;<name>root</name></expr></argument>, <argument><expr><name><name>sess</name>-&gt;<name>fs</name></name></expr></argument>, <argument><expr><name>revision</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+
+  <if>if <condition>(<expr><name>stream</name></expr>)</condition><then>
+    <block>{
+      <comment type="block">/* Get a stream representing the file's contents. */</comment>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_file_contents</name><argument_list>(<argument><expr>&amp;<name>contents</name></expr></argument>, <argument><expr><name>root</name></expr></argument>, <argument><expr><name>abs_path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <comment type="block">/* Now push data from the fs stream back at the caller's stream.
+         Note that this particular RA layer does not computing a
+         checksum as we go, and confirming it against the repository's
+         checksum when done.  That's because it calls
+         svn_fs_file_contents() directly, which already checks the
+         stored checksum, and all we're doing here is writing bytes in
+         a loop.  Truly, Nothing Can Go Wrong :-).  But RA layers that
+         go over a network should confirm the checksum. */</comment>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_stream_copy2</name><argument_list>(<argument><expr><name>contents</name></expr></argument>, <argument><expr><name>stream</name></expr></argument>,
+                               <argument><expr><name><name>sess</name>-&gt;<name>callbacks</name></name>
+                               ? <name><name>sess</name>-&gt;<name>callbacks</name>-&gt;<name>cancel_func</name></name> : <name>NULL</name></expr></argument>,
+                               <argument><expr><name><name>sess</name>-&gt;<name>callback_baton</name></name></expr></argument>,
+                               <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <comment type="block">/* Handle props if requested. */</comment>
+  <if>if <condition>(<expr><name>props</name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>get_node_props</name><argument_list>(<argument><expr><name>props</name></expr></argument>, <argument><expr><name>sess</name></expr></argument>, <argument><expr><name>root</name></expr></argument>, <argument><expr><name>abs_path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+
+<comment type="block">/* Getting a directory's entries */</comment>
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>svn_ra_local__get_dir</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                      <param><decl><type><name>apr_hash_t</name> **</type><name>dirents</name></decl></param>,
+                      <param><decl><type><name>svn_revnum_t</name> *</type><name>fetched_rev</name></decl></param>,
+                      <param><decl><type><name>apr_hash_t</name> **</type><name>props</name></decl></param>,
+                      <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+                      <param><decl><type><name>svn_revnum_t</name></type> <name>revision</name></decl></param>,
+                      <param><decl><type><name>apr_uint32_t</name></type> <name>dirent_fields</name></decl></param>,
+                      <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_fs_root_t</name> *</type><name>root</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_revnum_t</name></type> <name>youngest_rev</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_hash_t</name> *</type><name>entries</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_hash_index_t</name> *</type><name>hi</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_ra_local__session_baton_t</name> *</type><name>sess</name> <init>= <expr><name><name>session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>subpool</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>abs_path</name> <init>= <expr><call><name>svn_path_join</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>fs_path</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <comment type="block">/* Open the revision's root. */</comment>
+  <if>if <condition>(<expr>! <call><name>SVN_IS_VALID_REVNUM</name><argument_list>(<argument><expr><name>revision</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_youngest_rev</name><argument_list>(<argument><expr>&amp;<name>youngest_rev</name></expr></argument>, <argument><expr><name><name>sess</name>-&gt;<name>fs</name></name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_revision_root</name><argument_list>(<argument><expr>&amp;<name>root</name></expr></argument>, <argument><expr><name><name>sess</name>-&gt;<name>fs</name></name></expr></argument>, <argument><expr><name>youngest_rev</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <if>if <condition>(<expr><name>fetched_rev</name> != <name>NULL</name></expr>)</condition><then>
+        <expr_stmt><expr>*<name>fetched_rev</name> = <name>youngest_rev</name></expr>;</expr_stmt></then></if>
+    }</block></then>
+  <else>else
+    <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_revision_root</name><argument_list>(<argument><expr>&amp;<name>root</name></expr></argument>, <argument><expr><name><name>sess</name>-&gt;<name>fs</name></name></expr></argument>, <argument><expr><name>revision</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+
+  <if>if <condition>(<expr><name>dirents</name></expr>)</condition><then>
+    <block>{
+      <comment type="block">/* Get the dir's entries. */</comment>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_dir_entries</name><argument_list>(<argument><expr>&amp;<name>entries</name></expr></argument>, <argument><expr><name>root</name></expr></argument>, <argument><expr><name>abs_path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <comment type="block">/* Loop over the fs dirents, and build a hash of general
+         svn_dirent_t's. */</comment>
+      <expr_stmt><expr>*<name>dirents</name> = <call><name>apr_hash_make</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name>subpool</name> = <call><name>svn_pool_create</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <for>for (<init><expr><name>hi</name> = <call><name>apr_hash_first</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>entries</name></expr></argument>)</argument_list></call></expr>;</init> <condition><expr><name>hi</name></expr>;</condition> <incr><expr><name>hi</name> = <call><name>apr_hash_next</name><argument_list>(<argument><expr><name>hi</name></expr></argument>)</argument_list></call></expr></incr>)
+        <block>{
+          <decl_stmt><decl><type><specifier>const</specifier> <name>void</name> *</type><name>key</name></decl>;</decl_stmt>
+          <decl_stmt><decl><type><name>void</name> *</type><name>val</name></decl>;</decl_stmt>
+          <decl_stmt><decl><type><name>apr_hash_t</name> *</type><name>prophash</name></decl>;</decl_stmt>
+          <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>datestring</name></decl>, *<decl><type ref="prev"/><name>entryname</name></decl>, *<decl><type ref="prev"/><name>fullpath</name></decl>;</decl_stmt>
+          <decl_stmt><decl><type><name>svn_fs_dirent_t</name> *</type><name>fs_entry</name></decl>;</decl_stmt>
+          <decl_stmt><decl><type><name>svn_dirent_t</name> *</type><name>entry</name> <init>= <expr><call><name>apr_pcalloc</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr>*<name>entry</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+          <expr_stmt><expr><call><name>svn_pool_clear</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+          <expr_stmt><expr><call><name>apr_hash_this</name><argument_list>(<argument><expr><name>hi</name></expr></argument>, <argument><expr>&amp;<name>key</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr>&amp;<name>val</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+          <expr_stmt><expr><name>entryname</name> = (const <name>char</name> *) <name>key</name></expr>;</expr_stmt>
+          <expr_stmt><expr><name>fs_entry</name> = (<name>svn_fs_dirent_t</name> *) <name>val</name></expr>;</expr_stmt>
+
+          <expr_stmt><expr><name>fullpath</name> = <call><name>svn_path_join</name><argument_list>(<argument><expr><name>abs_path</name></expr></argument>, <argument><expr><name>entryname</name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+          <if>if <condition>(<expr><name>dirent_fields</name> &amp; <name>SVN_DIRENT_KIND</name></expr>)</condition><then>
+            <block>{
+              <comment type="block">/* node kind */</comment>
+              <expr_stmt><expr><name><name>entry</name>-&gt;<name>kind</name></name> = <name><name>fs_entry</name>-&gt;<name>kind</name></name></expr>;</expr_stmt>
+            }</block></then></if>
+
+          <if>if <condition>(<expr><name>dirent_fields</name> &amp; <name>SVN_DIRENT_SIZE</name></expr>)</condition><then>
+            <block>{
+              <comment type="block">/* size  */</comment>
+              <if>if <condition>(<expr><name><name>entry</name>-&gt;<name>kind</name></name> == <name>svn_node_dir</name></expr>)</condition><then>
+                <expr_stmt><expr><name><name>entry</name>-&gt;<name>size</name></name> = 0</expr>;</expr_stmt></then>
+              <else>else
+                <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_file_length</name><argument_list>(<argument><expr>&amp;(<name><name>entry</name>-&gt;<name>size</name></name>)</expr></argument>, <argument><expr><name>root</name></expr></argument>,
+                                           <argument><expr><name>fullpath</name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></else></if>
+            }</block></then></if>
+
+          <if>if <condition>(<expr><name>dirent_fields</name> &amp; <name>SVN_DIRENT_HAS_PROPS</name></expr>)</condition><then>
+            <block>{
+              <comment type="block">/* has_props? */</comment>
+              <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_node_proplist</name><argument_list>(<argument><expr>&amp;<name>prophash</name></expr></argument>, <argument><expr><name>root</name></expr></argument>, <argument><expr><name>fullpath</name></expr></argument>,
+                                           <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+              <expr_stmt><expr><name><name>entry</name>-&gt;<name>has_props</name></name> = (<call><name>apr_hash_count</name><argument_list>(<argument><expr><name>prophash</name></expr></argument>)</argument_list></call>) ? <name>TRUE</name> : <name>FALSE</name></expr>;</expr_stmt>
+            }</block></then></if>
+
+          <if>if <condition>(<expr>(<name>dirent_fields</name> &amp; <name>SVN_DIRENT_TIME</name>)
+              || (<name>dirent_fields</name> &amp; <name>SVN_DIRENT_LAST_AUTHOR</name>)
+              || (<name>dirent_fields</name> &amp; <name>SVN_DIRENT_CREATED_REV</name>)</expr>)</condition><then>
+            <block>{
+              <comment type="block">/* created_rev &amp; friends */</comment>
+              <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_repos_get_committed_info</name><argument_list>(<argument><expr>&amp;(<name><name>entry</name>-&gt;<name>created_rev</name></name>)</expr></argument>,
+                                                   <argument><expr>&amp;<name>datestring</name></expr></argument>,
+                                                   <argument><expr>&amp;(<name><name>entry</name>-&gt;<name>last_author</name></name>)</expr></argument>,
+                                                   <argument><expr><name>root</name></expr></argument>, <argument><expr><name>fullpath</name></expr></argument>, <argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+              <if>if <condition>(<expr><name>datestring</name></expr>)</condition><then>
+                <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_time_from_cstring</name><argument_list>(<argument><expr>&amp;(<name><name>entry</name>-&gt;<name>time</name></name>)</expr></argument>, <argument><expr><name>datestring</name></expr></argument>,
+                                              <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+              <if>if <condition>(<expr><name><name>entry</name>-&gt;<name>last_author</name></name></expr>)</condition><then>
+                <expr_stmt><expr><name><name>entry</name>-&gt;<name>last_author</name></name> = <call><name>apr_pstrdup</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name><name>entry</name>-&gt;<name>last_author</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+            }</block></then></if>
+
+          <comment type="block">/* Store. */</comment>
+          <expr_stmt><expr><call><name>apr_hash_set</name><argument_list>(<argument><expr>*<name>dirents</name></expr></argument>, <argument><expr><name>entryname</name></expr></argument>, <argument><expr><name>APR_HASH_KEY_STRING</name></expr></argument>, <argument><expr><name>entry</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+        }</block></for>
+      <expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name>subpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then></if>
+
+  <comment type="block">/* Handle props if requested. */</comment>
+  <if>if <condition>(<expr><name>props</name></expr>)</condition><then>
+    <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>get_node_props</name><argument_list>(<argument><expr><name>props</name></expr></argument>, <argument><expr><name>sess</name></expr></argument>, <argument><expr><name>root</name></expr></argument>, <argument><expr><name>abs_path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>svn_ra_local__get_locations</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                            <param><decl><type><name>apr_hash_t</name> **</type><name>locations</name></decl></param>,
+                            <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+                            <param><decl><type><name>svn_revnum_t</name></type> <name>peg_revision</name></decl></param>,
+                            <param><decl><type><name>apr_array_header_t</name> *</type><name>location_revisions</name></decl></param>,
+                            <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_local__session_baton_t</name> *</type><name>sess</name> <init>= <expr><name><name>session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>abs_path</name> <init>= <expr><call><name>svn_path_join</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>fs_path</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <return>return <expr><call><name>svn_repos_trace_node_locations</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>fs</name></name></expr></argument>, <argument><expr><name>locations</name></expr></argument>, <argument><expr><name>abs_path</name></expr></argument>,
+                                        <argument><expr><name>peg_revision</name></expr></argument>, <argument><expr><name>location_revisions</name></expr></argument>,
+                                        <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>svn_ra_local__get_location_segments</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                                    <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+                                    <param><decl><type><name>svn_revnum_t</name></type> <name>peg_revision</name></decl></param>,
+                                    <param><decl><type><name>svn_revnum_t</name></type> <name>start_rev</name></decl></param>,
+                                    <param><decl><type><name>svn_revnum_t</name></type> <name>end_rev</name></decl></param>,
+                                    <param><decl><type><name>svn_location_segment_receiver_t</name></type> <name>receiver</name></decl></param>,
+                                    <param><decl><type><name>void</name> *</type><name>receiver_baton</name></decl></param>,
+                                    <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_local__session_baton_t</name> *</type><name>sess</name> <init>= <expr><name><name>session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>abs_path</name> <init>= <expr><call><name>svn_path_join</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>fs_path</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <return>return <expr><call><name>svn_repos_node_location_segments</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>repos</name></name></expr></argument>, <argument><expr><name>abs_path</name></expr></argument>,
+                                          <argument><expr><name>peg_revision</name></expr></argument>, <argument><expr><name>start_rev</name></expr></argument>, <argument><expr><name>end_rev</name></expr></argument>,
+                                          <argument><expr><name>receiver</name></expr></argument>, <argument><expr><name>receiver_baton</name></expr></argument>,
+                                          <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>svn_ra_local__lock</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                   <param><decl><type><name>apr_hash_t</name> *</type><name>path_revs</name></decl></param>,
+                   <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>comment</name></decl></param>,
+                   <param><decl><type><name>svn_boolean_t</name></type> <name>force</name></decl></param>,
+                   <param><decl><type><name>svn_ra_lock_callback_t</name></type> <name>lock_func</name></decl></param>,
+                   <param><decl><type><name>void</name> *</type><name>lock_baton</name></decl></param>,
+                   <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_local__session_baton_t</name> *</type><name>sess</name> <init>= <expr><name><name>session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_hash_index_t</name> *</type><name>hi</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>iterpool</name> <init>= <expr><call><name>svn_pool_create</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <comment type="block">/* A username is absolutely required to lock a path. */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>get_username</name><argument_list>(<argument><expr><name>session</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <for>for (<init><expr><name>hi</name> = <call><name>apr_hash_first</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>path_revs</name></expr></argument>)</argument_list></call></expr>;</init> <condition><expr><name>hi</name></expr>;</condition> <incr><expr><name>hi</name> = <call><name>apr_hash_next</name><argument_list>(<argument><expr><name>hi</name></expr></argument>)</argument_list></call></expr></incr>)
+    <block>{
+      <decl_stmt><decl><type><name>svn_lock_t</name> *</type><name>lock</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><specifier>const</specifier> <name>void</name> *</type><name>key</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>void</name> *</type><name>val</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>svn_revnum_t</name> *</type><name>revnum</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>abs_path</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name></decl>, *<decl><type ref="prev"/><name>callback_err</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+
+      <expr_stmt><expr><call><name>svn_pool_clear</name><argument_list>(<argument><expr><name>iterpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>apr_hash_this</name><argument_list>(<argument><expr><name>hi</name></expr></argument>, <argument><expr>&amp;<name>key</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr>&amp;<name>val</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name>path</name> = <name>key</name></expr>;</expr_stmt>
+      <expr_stmt><expr><name>revnum</name> = <name>val</name></expr>;</expr_stmt>
+
+      <expr_stmt><expr><name>abs_path</name> = <call><name>svn_path_join</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>fs_path</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>iterpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <comment type="block">/* This wrapper will call pre- and post-lock hooks. */</comment>
+      <expr_stmt><expr><name>err</name> = <call><name>svn_repos_fs_lock</name><argument_list>(<argument><expr>&amp;<name>lock</name></expr></argument>, <argument><expr><name><name>sess</name>-&gt;<name>repos</name></name></expr></argument>, <argument><expr><name>abs_path</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>comment</name></expr></argument>,
+                              <argument><expr><name>FALSE</name></expr></argument> <comment type="block">/* not DAV comment */</comment>,
+                              <argument><expr>0</expr></argument> <comment type="block">/* no expiration */</comment>, <argument><expr>*<name>revnum</name></expr></argument>, <argument><expr><name>force</name></expr></argument>,
+                              <argument><expr><name>iterpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <if>if <condition>(<expr><name>err</name> &amp;&amp; !<call><name>SVN_ERR_IS_LOCK_ERROR</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+        <return>return <expr><name>err</name></expr>;</return></then></if>
+
+      <if>if <condition>(<expr><name>lock_func</name></expr>)</condition><then>
+        <expr_stmt><expr><name>callback_err</name> = <call><name>lock_func</name><argument_list>(<argument><expr><name>lock_baton</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>TRUE</name></expr></argument>, <argument><expr><name>err</name> ? <name>NULL</name> : <name>lock</name></expr></argument>,
+                                 <argument><expr><name>err</name></expr></argument>, <argument><expr><name>iterpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+      <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <if>if <condition>(<expr><name>callback_err</name></expr>)</condition><then>
+        <return>return <expr><name>callback_err</name></expr>;</return></then></if>
+    }</block></for>
+
+  <expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name>iterpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>svn_ra_local__unlock</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                     <param><decl><type><name>apr_hash_t</name> *</type><name>path_tokens</name></decl></param>,
+                     <param><decl><type><name>svn_boolean_t</name></type> <name>force</name></decl></param>,
+                     <param><decl><type><name>svn_ra_lock_callback_t</name></type> <name>lock_func</name></decl></param>,
+                     <param><decl><type><name>void</name> *</type><name>lock_baton</name></decl></param>,
+                     <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_local__session_baton_t</name> *</type><name>sess</name> <init>= <expr><name><name>session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_hash_index_t</name> *</type><name>hi</name></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>apr_pool_t</name> *</type><name>iterpool</name> <init>= <expr><call><name>svn_pool_create</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <comment type="block">/* A username is absolutely required to unlock a path. */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>get_username</name><argument_list>(<argument><expr><name>session</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <for>for (<init><expr><name>hi</name> = <call><name>apr_hash_first</name><argument_list>(<argument><expr><name>pool</name></expr></argument>, <argument><expr><name>path_tokens</name></expr></argument>)</argument_list></call></expr>;</init> <condition><expr><name>hi</name></expr>;</condition> <incr><expr><name>hi</name> = <call><name>apr_hash_next</name><argument_list>(<argument><expr><name>hi</name></expr></argument>)</argument_list></call></expr></incr>)
+    <block>{
+      <decl_stmt><decl><type><specifier>const</specifier> <name>void</name> *</type><name>key</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>void</name> *</type><name>val</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>abs_path</name></decl>, *<decl><type ref="prev"/><name>token</name></decl>;</decl_stmt>
+      <decl_stmt><decl><type><name>svn_error_t</name> *</type><name>err</name></decl>, *<decl><type ref="prev"/><name>callback_err</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>
+
+      <expr_stmt><expr><call><name>svn_pool_clear</name><argument_list>(<argument><expr><name>iterpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><call><name>apr_hash_this</name><argument_list>(<argument><expr><name>hi</name></expr></argument>, <argument><expr>&amp;<name>key</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr>&amp;<name>val</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+      <expr_stmt><expr><name>path</name> = <name>key</name></expr>;</expr_stmt>
+      <comment type="block">/* Since we can't store NULL values in a hash, we turn "" to
+         NULL here. */</comment>
+      <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>val</name></expr></argument>, <argument><expr>""</expr></argument>)</argument_list></call> != 0</expr>)</condition><then>
+        <expr_stmt><expr><name>token</name> = <name>val</name></expr>;</expr_stmt></then>
+      <else>else
+        <expr_stmt><expr><name>token</name> = <name>NULL</name></expr>;</expr_stmt></else></if>
+
+      <expr_stmt><expr><name>abs_path</name> = <call><name>svn_path_join</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>fs_path</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>iterpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <comment type="block">/* This wrapper will call pre- and post-unlock hooks. */</comment>
+      <expr_stmt><expr><name>err</name> = <call><name>svn_repos_fs_unlock</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>repos</name></name></expr></argument>, <argument><expr><name>abs_path</name></expr></argument>, <argument><expr><name>token</name></expr></argument>, <argument><expr><name>force</name></expr></argument>,
+                                <argument><expr><name>iterpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <if>if <condition>(<expr><name>err</name> &amp;&amp; !<call><name>SVN_ERR_IS_UNLOCK_ERROR</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>)</condition><then>
+        <return>return <expr><name>err</name></expr>;</return></then></if>
+
+      <if>if <condition>(<expr><name>lock_func</name></expr>)</condition><then>
+        <expr_stmt><expr><name>callback_err</name> = <call><name>lock_func</name><argument_list>(<argument><expr><name>lock_baton</name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>FALSE</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>err</name></expr></argument>, <argument><expr><name>iterpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+      <expr_stmt><expr><call><name>svn_error_clear</name><argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+      <if>if <condition>(<expr><name>callback_err</name></expr>)</condition><then>
+        <return>return <expr><name>callback_err</name></expr>;</return></then></if>
+    }</block></for>
+
+  <expr_stmt><expr><call><name>svn_pool_destroy</name><argument_list>(<argument><expr><name>iterpool</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>svn_ra_local__get_lock</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                       <param><decl><type><name>svn_lock_t</name> **</type><name>lock</name></decl></param>,
+                       <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+                       <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_local__session_baton_t</name> *</type><name>sess</name> <init>= <expr><name><name>session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>abs_path</name> <init>= <expr><call><name>svn_path_join</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>fs_path</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+  <return>return <expr><call><name>svn_fs_get_lock</name><argument_list>(<argument><expr><name>lock</name></expr></argument>, <argument><expr><name><name>sess</name>-&gt;<name>fs</name></name></expr></argument>, <argument><expr><name>abs_path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>svn_ra_local__get_locks</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                        <param><decl><type><name>apr_hash_t</name> **</type><name>locks</name></decl></param>,
+                        <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>path</name></decl></param>,
+                        <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_local__session_baton_t</name> *</type><name>sess</name> <init>= <expr><name><name>session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><specifier>const</specifier> <name>char</name> *</type><name>abs_path</name> <init>= <expr><call><name>svn_path_join</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>fs_path</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name>path</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+  <comment type="block">/* Kinda silly to call the repos wrapper, since we have no authz
+     func to give it.  But heck, why not. */</comment>
+  <return>return <expr><call><name>svn_repos_fs_get_locks</name><argument_list>(<argument><expr><name>locks</name></expr></argument>, <argument><expr><name><name>sess</name>-&gt;<name>repos</name></name></expr></argument>, <argument><expr><name>abs_path</name></expr></argument>,
+                                <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>svn_ra_local__replay</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                     <param><decl><type><name>svn_revnum_t</name></type> <name>revision</name></decl></param>,
+                     <param><decl><type><name>svn_revnum_t</name></type> <name>low_water_mark</name></decl></param>,
+                     <param><decl><type><name>svn_boolean_t</name></type> <name>send_deltas</name></decl></param>,
+                     <param><decl><type><specifier>const</specifier> <name>svn_delta_editor_t</name> *</type><name>editor</name></decl></param>,
+                     <param><decl><type><name>void</name> *</type><name>edit_baton</name></decl></param>,
+                     <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_local__session_baton_t</name> *</type><name>sess</name> <init>= <expr><name><name>session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+  <decl_stmt><decl><type><name>svn_fs_root_t</name> *</type><name>root</name></decl>;</decl_stmt>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_revision_root</name><argument_list>(<argument><expr>&amp;<name>root</name></expr></argument>, <argument><expr><call><name>svn_repos_fs</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>repos</name></name></expr></argument>)</argument_list></call></expr></argument>,
+                               <argument><expr><name>revision</name></expr></argument>, <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_repos_replay2</name><argument_list>(<argument><expr><name>root</name></expr></argument>, <argument><expr><name><name>sess</name>-&gt;<name>fs_path</name>-&gt;<name>data</name></name></expr></argument>, <argument><expr><name>low_water_mark</name></expr></argument>,
+                            <argument><expr><name>send_deltas</name></expr></argument>, <argument><expr><name>editor</name></expr></argument>, <argument><expr><name>edit_baton</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                            <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>svn_ra_local__replay_range</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                           <param><decl><type><name>svn_revnum_t</name></type> <name>start_revision</name></decl></param>,
+                           <param><decl><type><name>svn_revnum_t</name></type> <name>end_revision</name></decl></param>,
+                           <param><decl><type><name>svn_revnum_t</name></type> <name>low_water_mark</name></decl></param>,
+                           <param><decl><type><name>svn_boolean_t</name></type> <name>send_deltas</name></decl></param>,
+                           <param><decl><type><name>svn_ra_replay_revstart_callback_t</name></type> <name>revstart_func</name></decl></param>,
+                           <param><decl><type><name>svn_ra_replay_revfinish_callback_t</name></type> <name>revfinish_func</name></decl></param>,
+                           <param><decl><type><name>void</name> *</type><name>replay_baton</name></decl></param>,
+                           <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <return>return <expr><call><name>svn_error_create</name><argument_list>(<argument><expr><name>SVN_ERR_RA_NOT_IMPLEMENTED</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>)</argument_list></call></expr>;</return>
+}</block></function>
+
+
+<function><type><specifier>static</specifier> <name>svn_error_t</name> *</type>
+<name>svn_ra_local__has_capability</name><parameter_list>(<param><decl><type><name>svn_ra_session_t</name> *</type><name>session</name></decl></param>,
+                             <param><decl><type><name>svn_boolean_t</name> *</type><name>has</name></decl></param>,
+                             <param><decl><type><specifier>const</specifier> <name>char</name> *</type><name>capability</name></decl></param>,
+                             <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><name>svn_ra_local__session_baton_t</name> *</type><name>sess</name> <init>= <expr><name><name>session</name>-&gt;<name>priv</name></name></expr></init></decl>;</decl_stmt>
+
+  <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>capability</name></expr></argument>, <argument><expr><name>SVN_RA_CAPABILITY_DEPTH</name></expr></argument>)</argument_list></call> == 0
+      || <call><name>strcmp</name><argument_list>(<argument><expr><name>capability</name></expr></argument>, <argument><expr><name>SVN_RA_CAPABILITY_LOG_REVPROPS</name></expr></argument>)</argument_list></call> == 0
+      || <call><name>strcmp</name><argument_list>(<argument><expr><name>capability</name></expr></argument>, <argument><expr><name>SVN_RA_CAPABILITY_PARTIAL_REPLAY</name></expr></argument>)</argument_list></call> == 0
+      || <call><name>strcmp</name><argument_list>(<argument><expr><name>capability</name></expr></argument>, <argument><expr><name>SVN_RA_CAPABILITY_COMMIT_REVPROPS</name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+    <block>{
+      <expr_stmt><expr>*<name>has</name> = <name>TRUE</name></expr>;</expr_stmt>
+    }</block></then>
+  <else>else <if>if <condition>(<expr><call><name>strcmp</name><argument_list>(<argument><expr><name>capability</name></expr></argument>, <argument><expr><name>SVN_RA_CAPABILITY_MERGEINFO</name></expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+    <block>{
+      <comment type="block">/* With mergeinfo, the code's capabilities may not reflect the
+         repository's, so inquire further. */</comment>
+      <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_repos_has_capability</name><argument_list>(<argument><expr><name><name>sess</name>-&gt;<name>repos</name></name></expr></argument>, <argument><expr><name>has</name></expr></argument>,
+                                       <argument><expr><name>SVN_REPOS_CAPABILITY_MERGEINFO</name></expr></argument>,
+                                       <argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+    }</block></then>
+  <else>else  <comment type="block">/* Don't know any other capabilities, so error. */</comment>
+    <block>{
+      <return>return <expr><call><name>svn_error_createf</name>
+        <argument_list>(<argument><expr><name>SVN_ERR_UNKNOWN_CAPABILITY</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+         <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Don't know anything about capability '%s'"</expr></argument>)</argument_list></call></expr></argument>, <argument><expr><name>capability</name></expr></argument>)</argument_list></call></expr>;</return>
+    }</block></else></if></else></if>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/*----------------------------------------------------------------*/</comment>
+<escape char="0xc"/>
+<function><type><specifier>static</specifier> <specifier>const</specifier> <name>svn_version_t</name> *</type>
+<name>ra_local_version</name><parameter_list>(<param><decl><type><name>void</name></type></decl></param>)</parameter_list>
+<block>{
+  <expr_stmt><expr><name>SVN_VERSION_BODY</name></expr>;</expr_stmt>
+}</block></function>
+
+<comment type="block">/** The ra_vtable **/</comment>
+
+<decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>svn_ra__vtable_t</name></type> <name>ra_local_vtable</name> <init>=
+<expr><block>{
+  <expr><name>ra_local_version</name></expr>,
+  <expr><name>svn_ra_local__get_description</name></expr>,
+  <expr><name>svn_ra_local__get_schemes</name></expr>,
+  <expr><name>svn_ra_local__open</name></expr>,
+  <expr><name>svn_ra_local__reparent</name></expr>,
+  <expr><name>svn_ra_local__get_session_url</name></expr>,
+  <expr><name>svn_ra_local__get_latest_revnum</name></expr>,
+  <expr><name>svn_ra_local__get_dated_revision</name></expr>,
+  <expr><name>svn_ra_local__change_rev_prop</name></expr>,
+  <expr><name>svn_ra_local__rev_proplist</name></expr>,
+  <expr><name>svn_ra_local__rev_prop</name></expr>,
+  <expr><name>svn_ra_local__get_commit_editor</name></expr>,
+  <expr><name>svn_ra_local__get_file</name></expr>,
+  <expr><name>svn_ra_local__get_dir</name></expr>,
+  <expr><name>svn_ra_local__get_mergeinfo</name></expr>,
+  <expr><name>svn_ra_local__do_update</name></expr>,
+  <expr><name>svn_ra_local__do_switch</name></expr>,
+  <expr><name>svn_ra_local__do_status</name></expr>,
+  <expr><name>svn_ra_local__do_diff</name></expr>,
+  <expr><name>svn_ra_local__get_log</name></expr>,
+  <expr><name>svn_ra_local__do_check_path</name></expr>,
+  <expr><name>svn_ra_local__stat</name></expr>,
+  <expr><name>svn_ra_local__get_uuid</name></expr>,
+  <expr><name>svn_ra_local__get_repos_root</name></expr>,
+  <expr><name>svn_ra_local__get_locations</name></expr>,
+  <expr><name>svn_ra_local__get_location_segments</name></expr>,
+  <expr><name>svn_ra_local__get_file_revs</name></expr>,
+  <expr><name>svn_ra_local__lock</name></expr>,
+  <expr><name>svn_ra_local__unlock</name></expr>,
+  <expr><name>svn_ra_local__get_lock</name></expr>,
+  <expr><name>svn_ra_local__get_locks</name></expr>,
+  <expr><name>svn_ra_local__replay</name></expr>,
+  <expr><name>svn_ra_local__has_capability</name></expr>,
+  <expr><name>svn_ra_local__replay_range</name></expr>
+}</block></expr></init></decl>;</decl_stmt>
+
+
+<comment type="block">/*----------------------------------------------------------------*/</comment>
+<escape char="0xc"/>
+<comment type="block">/** The One Public Routine, called by libsvn_ra **/</comment>
+
+<function><type><name>svn_error_t</name> *</type>
+<name>svn_ra_local__init</name><parameter_list>(<param><decl><type><specifier>const</specifier> <name>svn_version_t</name> *</type><name>loader_version</name></decl></param>,
+                   <param><decl><type><specifier>const</specifier> <name>svn_ra__vtable_t</name> **</type><name>vtable</name></decl></param>,
+                   <param><decl><type><name>apr_pool_t</name> *</type><name>pool</name></decl></param>)</parameter_list>
+<block>{
+  <decl_stmt><decl><type><specifier>static</specifier> <specifier>const</specifier> <name>svn_version_checklist_t</name></type> <name><name>checklist</name><index>[]</index></name> <init>=
+    <expr><block>{
+      <expr><block>{ <expr>"svn_subr"</expr>,  <expr><name>svn_subr_version</name></expr> }</block></expr>,
+      <expr><block>{ <expr>"svn_delta"</expr>, <expr><name>svn_delta_version</name></expr> }</block></expr>,
+      <expr><block>{ <expr>"svn_repos"</expr>, <expr><name>svn_repos_version</name></expr> }</block></expr>,
+      <expr><block>{ <expr>"svn_fs"</expr>,    <expr><name>svn_fs_version</name></expr> }</block></expr>,
+      <expr><block>{ <expr><name>NULL</name></expr>, <expr><name>NULL</name></expr> }</block></expr>
+    }</block></expr></init></decl>;</decl_stmt>
+
+
+  <comment type="block">/* Simplified version check to make sure we can safely use the
+     VTABLE parameter. The RA loader does a more exhaustive check. */</comment>
+  <if>if <condition>(<expr><name><name>loader_version</name>-&gt;<name>major</name></name> != <name>SVN_VER_MAJOR</name></expr>)</condition><then>
+    <return>return <expr><call><name>svn_error_createf</name><argument_list>(<argument><expr><name>SVN_ERR_VERSION_MISMATCH</name></expr></argument>, <argument><expr><name>NULL</name></expr></argument>,
+                             <argument><expr><call><name>_</name><argument_list>(<argument><expr>"Unsupported RA loader version (%d) for "
+                               "ra_local"</expr></argument>)</argument_list></call></expr></argument>,
+                             <argument><expr><name><name>loader_version</name>-&gt;<name>major</name></name></expr></argument>)</argument_list></call></expr>;</return></then></if>
+
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_ver_check_list</name><argument_list>(<argument><expr><call><name>ra_local_version</name><argument_list>()</argument_list></call></expr></argument>, <argument><expr><name>checklist</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+
+<cpp:ifndef>#<cpp:directive>ifndef</cpp:directive> <name>SVN_LIBSVN_CLIENT_LINKS_RA_LOCAL</name></cpp:ifndef>
+  <comment type="block">/* This assumes that POOL was the pool used to load the dso. */</comment>
+  <expr_stmt><expr><call><name>SVN_ERR</name><argument_list>(<argument><expr><call><name>svn_fs_initialize</name><argument_list>(<argument><expr><name>pool</name></expr></argument>)</argument_list></call></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+<cpp:endif>#<cpp:directive>endif</cpp:directive></cpp:endif>
+
+  <expr_stmt><expr>*<name>vtable</name> = &amp;<name>ra_local_vtable</name></expr>;</expr_stmt>
+
+  <return>return <expr><name>SVN_NO_ERROR</name></expr>;</return>
+}</block></function>
+<escape char="0xc"/>
+<comment type="block">/* Compatibility wrapper for the 1.1 and before API. */</comment>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>NAME</name></cpp:macro> <cpp:value>"ra_local"</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>DESCRIPTION</name></cpp:macro> <cpp:value>RA_LOCAL_DESCRIPTION</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>VTBL</name></cpp:macro> <cpp:value>ra_local_vtable</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>INITFUNC</name></cpp:macro> <cpp:value>svn_ra_local__init</cpp:value></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>COMPAT_INITFUNC</name></cpp:macro> <cpp:value>svn_ra_local_init</cpp:value></cpp:define>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>"../libsvn_ra/wrapper_template.h"</cpp:file></cpp:include>
+</unit>

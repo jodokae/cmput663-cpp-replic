@@ -1,0 +1,225 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<unit xmlns="http://www.sdml.info/srcML/src" xmlns:cpp="http://www.sdml.info/srcML/cpp" language="C" filename="projects/cpython-2.6.1/source/PC/os2emx/dlfcn.c"><comment type="block">/* -*- C -*- ***********************************************
+Copyright 1991-1995 by Stichting Mathematisch Centrum, Amsterdam,
+The Netherlands.
+
+                        All Rights Reserved
+
+Permission to use, copy, modify, and distribute this software and its
+documentation for any purpose and without fee is hereby granted,
+provided that the above copyright notice appear in all copies and that
+both that copyright notice and this permission notice appear in
+supporting documentation, and that the names of Stichting Mathematisch
+Centrum or CWI or Corporation for National Research Initiatives or
+CNRI not be used in advertising or publicity pertaining to
+distribution of the software without specific, written prior
+permission.
+
+While CWI is the initial source for this software, a modified version
+is made available by the Corporation for National Research Initiatives
+(CNRI) at the Internet address ftp://ftp.python.org.
+
+STICHTING MATHEMATISCH CENTRUM AND CNRI DISCLAIM ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS, IN NO EVENT SHALL STICHTING MATHEMATISCH
+CENTRUM OR CNRI BE LIABLE FOR ANY SPECIAL, INDIRECT OR CONSEQUENTIAL
+DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR
+PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THIS SOFTWARE.
+
+******************************************************************/</comment>
+
+<comment type="block">/* This library implements dlopen() - Unix-like dynamic linking
+ * emulation functions for OS/2 using DosLoadModule() and company.
+ */</comment>
+
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>INCL_DOS</name></cpp:macro></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>INCL_DOSERRORS</name></cpp:macro></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>INCL_DOSSESMGR</name></cpp:macro></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>INCL_WINPROGRAMLIST</name></cpp:macro></cpp:define>
+<cpp:define>#<cpp:directive>define</cpp:directive> <cpp:macro><name>INCL_WINFRAMEMGR</name></cpp:macro></cpp:define>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;os2.h&gt;</cpp:file></cpp:include>
+
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;stdio.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;stdlib.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;string.h&gt;</cpp:file></cpp:include>
+<cpp:include>#<cpp:directive>include</cpp:directive> <cpp:file>&lt;malloc.h&gt;</cpp:file></cpp:include>
+
+<typedef>typedef <type><struct>struct <name>_track_rec</name> <block>{
+	<decl_stmt><decl><type><name>char</name> *</type><name>name</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>HMODULE</name></type> <name>handle</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>void</name> *</type><name>id</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type>struct <name>_track_rec</name> *</type><name>next</name></decl>;</decl_stmt>
+}</block></struct></type> <name>tDLLchain</name>, *<name>DLLchain</name>;</typedef>
+
+<decl_stmt><decl><type><specifier>static</specifier> <name>DLLchain</name></type> <name>dlload</name> <init>= <expr><name>NULL</name></expr></init></decl>;</decl_stmt>	<comment type="block">/* A simple chained list of DLL names */</comment>
+<decl_stmt><decl><type><specifier>static</specifier> <name>char</name></type> <name><name>dlerr</name> <index>[<expr>256</expr>]</index></name></decl>;</decl_stmt>	<comment type="block">/* last error text string */</comment>
+<decl_stmt><decl><type><specifier>static</specifier> <name>void</name> *</type><name>last_id</name></decl>;</decl_stmt>
+
+<function><type><specifier>static</specifier> <name>DLLchain</name></type> <name>find_id</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>id</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>DLLchain</name></type> <name>tmp</name></decl>;</decl_stmt>
+
+	<for>for (<init><expr><name>tmp</name> = <name>dlload</name></expr>;</init> <condition><expr><name>tmp</name></expr>;</condition> <incr><expr><name>tmp</name> = <name><name>tmp</name>-&gt;<name>next</name></name></expr></incr>)
+		<if>if <condition>(<expr><name>id</name> == <name><name>tmp</name>-&gt;<name>id</name></name></expr>)</condition><then>
+			<return>return <expr><name>tmp</name></expr>;</return></then></if></for>
+
+	<return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* load a dynamic-link library and return handle */</comment>
+<function><type><name>void</name> *</type><name>dlopen</name><parameter_list>(<param><decl><type><name>char</name> *</type><name>filename</name></decl></param>, <param><decl><type><name>int</name></type> <name>flags</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>HMODULE</name></type> <name>hm</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>DLLchain</name></type> <name>tmp</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>char</name></type> <name><name>err</name><index>[<expr>256</expr>]</index></name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>char</name> *</type><name>errtxt</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>rc</name> <init>= <expr>0</expr></init>, <name>set_chain</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+
+	<for>for (<init><expr><name>tmp</name> = <name>dlload</name></expr>;</init> <condition><expr><name>tmp</name></expr>;</condition> <incr><expr><name>tmp</name> = <name><name>tmp</name>-&gt;<name>next</name></name></expr></incr>)
+		<if>if <condition>(<expr><call><name>strnicmp</name><argument_list>(<argument><expr><name><name>tmp</name>-&gt;<name>name</name></name></expr></argument>, <argument><expr><name>filename</name></expr></argument>, <argument><expr>999</expr></argument>)</argument_list></call> == 0</expr>)</condition><then>
+			<break>break;</break></then></if></for>
+
+	<if>if <condition>(<expr>!<name>tmp</name></expr>)</condition><then>
+	<block>{
+		<expr_stmt><expr><name>tmp</name> = (<name>DLLchain</name>) <call><name>malloc</name><argument_list>(<argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>tDLLchain</name></expr></argument>)</argument_list></sizeof></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<if>if <condition>(<expr>!<name>tmp</name></expr>)</condition><then>
+			<goto>goto <name>nomem</name>;</goto></then></if>
+		<expr_stmt><expr><name><name>tmp</name>-&gt;<name>name</name></name> = <call><name>strdup</name><argument_list>(<argument><expr><name>filename</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+		<expr_stmt><expr><name><name>tmp</name>-&gt;<name>next</name></name> = <name>dlload</name></expr>;</expr_stmt>
+		<expr_stmt><expr><name>set_chain</name> = 1</expr>;</expr_stmt>
+	}</block></then></if>
+
+	<switch>switch <condition>(<expr><name>rc</name> = <call><name>DosLoadModule</name><argument_list>(<argument><expr>(<name>PSZ</name>)&amp;<name>err</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>err</name></expr></argument>)</argument_list></sizeof></expr></argument>, <argument><expr><name>filename</name></expr></argument>, <argument><expr>&amp;<name>hm</name></expr></argument>)</argument_list></call></expr>)</condition>
+	<block>{
+		<case>case <expr><name>NO_ERROR</name></expr>:
+			<expr_stmt><expr><name><name>tmp</name>-&gt;<name>handle</name></name> = <name>hm</name></expr>;</expr_stmt>
+			<if>if <condition>(<expr><name>set_chain</name></expr>)</condition><then>
+			<block>{
+				<do>do
+					<expr_stmt><expr><name>last_id</name>++</expr>;</expr_stmt>
+				while <condition>(<expr>(<name>last_id</name> == 0) || (<call><name>find_id</name><argument_list>(<argument><expr><name>last_id</name></expr></argument>)</argument_list></call>)</expr>)</condition>;</do>
+				<expr_stmt><expr><name><name>tmp</name>-&gt;<name>id</name></name> = <name>last_id</name></expr>;</expr_stmt>
+				<expr_stmt><expr><name>dlload</name> = <name>tmp</name></expr>;</expr_stmt>
+			}</block></then></if>
+			<return>return <expr><name><name>tmp</name>-&gt;<name>id</name></name></expr>;</return>
+		</case><case>case <expr><name>ERROR_FILE_NOT_FOUND</name></expr>:
+		</case><case>case <expr><name>ERROR_PATH_NOT_FOUND</name></expr>:
+			<expr_stmt><expr><name>errtxt</name> = "module `%s' not found"</expr>;</expr_stmt>
+			<break>break;</break>
+		</case><case>case <expr><name>ERROR_TOO_MANY_OPEN_FILES</name></expr>:
+		</case><case>case <expr><name>ERROR_NOT_ENOUGH_MEMORY</name></expr>:
+		</case><case>case <expr><name>ERROR_SHARING_BUFFER_EXCEEDED</name></expr>:
+<label><name>nomem</name>:</label>
+			<expr_stmt><expr><name>errtxt</name> = "out of system resources"</expr>;</expr_stmt>
+			<break>break;</break>
+		</case><case>case <expr><name>ERROR_ACCESS_DENIED</name></expr>:
+			<expr_stmt><expr><name>errtxt</name> = "access denied"</expr>;</expr_stmt>
+			<break>break;</break>
+		</case><case>case <expr><name>ERROR_BAD_FORMAT</name></expr>:
+		</case><case>case <expr><name>ERROR_INVALID_SEGMENT_NUMBER</name></expr>:
+		</case><case>case <expr><name>ERROR_INVALID_ORDINAL</name></expr>:
+		</case><case>case <expr><name>ERROR_INVALID_MODULETYPE</name></expr>:
+		</case><case>case <expr><name>ERROR_INVALID_EXE_SIGNATURE</name></expr>:
+		</case><case>case <expr><name>ERROR_EXE_MARKED_INVALID</name></expr>:
+		</case><case>case <expr><name>ERROR_ITERATED_DATA_EXCEEDS_64K</name></expr>:
+		</case><case>case <expr><name>ERROR_INVALID_MINALLOCSIZE</name></expr>:
+		</case><case>case <expr><name>ERROR_INVALID_SEGDPL</name></expr>:
+		</case><case>case <expr><name>ERROR_AUTODATASEG_EXCEEDS_64K</name></expr>:
+		</case><case>case <expr><name>ERROR_RELOCSRC_CHAIN_EXCEEDS_SEGLIMIT</name></expr>:
+			<expr_stmt><expr><name>errtxt</name> = "invalid module format"</expr>;</expr_stmt>
+			<break>break;</break>
+		</case><case>case <expr><name>ERROR_INVALID_NAME</name></expr>:
+			<expr_stmt><expr><name>errtxt</name> = "filename doesn't match module name"</expr>;</expr_stmt>
+			<break>break;</break>
+		</case><case>case <expr><name>ERROR_SHARING_VIOLATION</name></expr>:
+		</case><case>case <expr><name>ERROR_LOCK_VIOLATION</name></expr>:
+			<expr_stmt><expr><name>errtxt</name> = "sharing violation"</expr>;</expr_stmt>
+			<break>break;</break>
+		</case><case>case <expr><name>ERROR_INIT_ROUTINE_FAILED</name></expr>:
+			<expr_stmt><expr><name>errtxt</name> = "module initialization failed"</expr>;</expr_stmt>
+			<break>break;</break>
+		</case><default>default:
+			<expr_stmt><expr><name>errtxt</name> = "cause `%s', error code = %d"</expr>;</expr_stmt>
+			<break>break;</break>
+	</default>}</block></switch>
+	<expr_stmt><expr><call><name>snprintf</name><argument_list>(<argument><expr><name>dlerr</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>dlerr</name></expr></argument>)</argument_list></sizeof></expr></argument>, <argument><expr><name>errtxt</name></expr></argument>, <argument><expr>&amp;<name>err</name></expr></argument>, <argument><expr><name>rc</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<if>if <condition>(<expr><name>tmp</name></expr>)</condition><then>
+	<block>{
+		<if>if <condition>(<expr><name><name>tmp</name>-&gt;<name>name</name></name></expr>)</condition><then>
+			<expr_stmt><expr><call><name>free</name><argument_list>(<argument><expr><name><name>tmp</name>-&gt;<name>name</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+		<expr_stmt><expr><call><name>free</name><argument_list>(<argument><expr><name>tmp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	}</block></then></if>
+	<return>return <expr>0</expr>;</return>
+}</block></function>
+
+<comment type="block">/* return a pointer to the `symbol' in DLL */</comment>
+<function><type><name>void</name> *</type><name>dlsym</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>handle</name></decl></param>, <param><decl><type><name>char</name> *</type><name>symbol</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>int</name></type> <name>rc</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>PFN</name></type> <name>addr</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>char</name> *</type><name>errtxt</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>int</name></type> <name>symord</name> <init>= <expr>0</expr></init></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>DLLchain</name></type> <name>tmp</name> <init>= <expr><call><name>find_id</name><argument_list>(<argument><expr><name>handle</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+	<if>if <condition>(<expr>!<name>tmp</name></expr>)</condition><then>
+		<goto>goto <name>inv_handle</name>;</goto></then></if>
+
+	<if>if <condition>(<expr>*<name>symbol</name> == '#'</expr>)</condition><then>
+		<expr_stmt><expr><name>symord</name> = <call><name>atoi</name><argument_list>(<argument><expr><name>symbol</name> + 1</expr></argument>)</argument_list></call></expr>;</expr_stmt></then></if>
+
+	<switch>switch <condition>(<expr><name>rc</name> = <call><name>DosQueryProcAddr</name><argument_list>(<argument><expr><name><name>tmp</name>-&gt;<name>handle</name></name></expr></argument>, <argument><expr><name>symord</name></expr></argument>, <argument><expr><name>symbol</name></expr></argument>, <argument><expr>&amp;<name>addr</name></expr></argument>)</argument_list></call></expr>)</condition>
+	<block>{
+		<case>case <expr><name>NO_ERROR</name></expr>:
+			<return>return <expr>(<name>void</name> *)<name>addr</name></expr>;</return>
+		</case><case>case <expr><name>ERROR_INVALID_HANDLE</name></expr>:
+<label><name>inv_handle</name>:</label>
+			<expr_stmt><expr><name>errtxt</name> = "invalid module handle"</expr>;</expr_stmt>
+			<break>break;</break>
+		</case><case>case <expr><name>ERROR_PROC_NOT_FOUND</name></expr>:
+		</case><case>case <expr><name>ERROR_INVALID_NAME</name></expr>:
+			<expr_stmt><expr><name>errtxt</name> = "no symbol `%s' in module"</expr>;</expr_stmt>
+			<break>break;</break>
+		</case><default>default:
+			<expr_stmt><expr><name>errtxt</name> = "symbol `%s', error code = %d"</expr>;</expr_stmt>
+			<break>break;</break>
+	</default>}</block></switch>
+	<expr_stmt><expr><call><name>snprintf</name><argument_list>(<argument><expr><name>dlerr</name></expr></argument>, <argument><expr><sizeof>sizeof<argument_list>(<argument><expr><name>dlerr</name></expr></argument>)</argument_list></sizeof></expr></argument>, <argument><expr><name>errtxt</name></expr></argument>, <argument><expr><name>symbol</name></expr></argument>, <argument><expr><name>rc</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+	<return>return <expr><name>NULL</name></expr>;</return>
+}</block></function>
+
+<comment type="block">/* free dynamicaly-linked library */</comment>
+<function><type><name>int</name></type> <name>dlclose</name><parameter_list>(<param><decl><type><name>void</name> *</type><name>handle</name></decl></param>)</parameter_list>
+<block>{
+	<decl_stmt><decl><type><name>int</name></type> <name>rc</name></decl>;</decl_stmt>
+	<decl_stmt><decl><type><name>DLLchain</name></type> <name>tmp</name> <init>= <expr><call><name>find_id</name><argument_list>(<argument><expr><name>handle</name></expr></argument>)</argument_list></call></expr></init></decl>;</decl_stmt>
+
+	<if>if <condition>(<expr>!<name>tmp</name></expr>)</condition><then>
+		<goto>goto <name>inv_handle</name>;</goto></then></if>
+
+	<switch>switch <condition>(<expr><name>rc</name> = <call><name>DosFreeModule</name><argument_list>(<argument><expr><name><name>tmp</name>-&gt;<name>handle</name></name></expr></argument>)</argument_list></call></expr>)</condition>
+	<block>{
+		<case>case <expr><name>NO_ERROR</name></expr>:
+			<expr_stmt><expr><call><name>free</name><argument_list>(<argument><expr><name><name>tmp</name>-&gt;<name>name</name></name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<expr_stmt><expr><name>dlload</name> = <name><name>tmp</name>-&gt;<name>next</name></name></expr>;</expr_stmt>
+			<expr_stmt><expr><call><name>free</name><argument_list>(<argument><expr><name>tmp</name></expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr>0</expr>;</return>
+		</case><case>case <expr><name>ERROR_INVALID_HANDLE</name></expr>:
+<label><name>inv_handle</name>:</label>
+			<expr_stmt><expr><call><name>strcpy</name><argument_list>(<argument><expr><name>dlerr</name></expr></argument>, <argument><expr>"invalid module handle"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr>-1</expr>;</return>
+		</case><case>case <expr><name>ERROR_INVALID_ACCESS</name></expr>:
+			<expr_stmt><expr><call><name>strcpy</name><argument_list>(<argument><expr><name>dlerr</name></expr></argument>, <argument><expr>"access denied"</expr></argument>)</argument_list></call></expr>;</expr_stmt>
+			<return>return <expr>-1</expr>;</return>
+		</case><default>default:
+			<return>return <expr>-1</expr>;</return>
+	</default>}</block></switch>
+}</block></function>
+
+<comment type="block">/* return a string describing last occurred dl error */</comment>
+<function><type><name>char</name> *</type><name>dlerror</name><parameter_list>()</parameter_list>
+<block>{
+	<return>return <expr><name>dlerr</name></expr>;</return>
+}</block></function>
+</unit>
