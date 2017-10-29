@@ -47,9 +47,20 @@ https://github.com/clhunsen/cppstats
 ```
 svn checkout http://svn.apache.org/repos/asf/httpd/httpd/branches/2.2.x httpd-2.2.x
 ```
-2. Create *./project/httpd/source* directory inside the *cppstats* folder and copy the cloned *httpd-2.2.x* inside *source*.
+2. Create *./project/httpd/source* directory inside the *cppstats* folder and copy the cloned *httpd-2.2.x* inside *source*. Also, add *./projects/httpd-2.2.x* to *cppstats_input.txt*.
 3. run *cppstats* by:
 ```
 cppstats --kind general
 ```
 4. The results are in *projects/httpd-2.2.x/cppstats.csv*
+
+# Part 2:
+1. Download 5 diffrent versions of the code by: 
+```
+svn checkout http://svn.apache.org/repos/asf/httpd/httpd/branches/1.3.x httpd-1.3.x
+svn checkout http://svn.apache.org/repos/asf/httpd/httpd/branches/2.0.x httpd-2.0.x
+svn checkout http://svn.apache.org/repos/asf/httpd/httpd/branches/2.2.x httpd-2.2.x
+svn checkout http://svn.apache.org/repos/asf/httpd/httpd/branches/2.2.x-merge-http-strict/ httpd-2.2.x-merge-http-strict/
+svn checkout http://svn.apache.org/repos/asf/httpd/httpd/branches/2.4.x httpd-2.4.x
+```
+2. Based on the instruction of **Part 1**, generate the cresults for all versions. (copy them into */projects/.../source* and add their path to *cppstats_input.txt*.)
