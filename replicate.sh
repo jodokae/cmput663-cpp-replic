@@ -20,7 +20,11 @@ AddVersion() {
     echo "./projects/httpd-$1" >> cppstats_input.txt
 }
 
-sudo apt-get install python python-dev python-doc python-setuptools gcc g++ clang python-lxml astyle xsltproc boolstuff git subversion wget dpkg #csvtool
+SaveResults() {
+    cp "cppstats/projects/httpd-$1/cppstats.csv" "results/httpd-$1.csv"
+}
+
+sudo apt-get install python python-dev python-doc python-setuptools gcc g++ clang python-lxml astyle xsltproc boolstuff git subversion wget dpkg
 
 wget http://131.123.42.38/lmcrs/beta/srcML-Ubuntu14.04-64.deb
 sudo dpkg -i srcML-Ubuntu14.04-64.deb
@@ -43,11 +47,12 @@ AddVersion "2.4.29"
 
 cppstats --kind general
 
-#cd projects/httpd-2.2.11
+cd ..
+mkdir results
 
-#linenumbers = csvtool height cppstats.csv
-#linenumbers = expr($linenumbers - 1)
-#csvtool sub 2 0 1 23 cppstats.csv >> headlines.txt
-#csvtool sub 2 $linenumbers 1 23 cppstats.csv > headlines.txt
-
-
+SaveResults "2.2.11"
+SaveResults "2.4.25"
+SaveResults "2.4.26"
+SaveResults "2.4.27"
+SaveResults "2.4.28"
+SaveResults "2.4.29"
