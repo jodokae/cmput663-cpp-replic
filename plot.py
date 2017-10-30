@@ -27,7 +27,7 @@ GRANERR = []
 NDMAX = []
 
 # Skip 2.2.11 Version
-for file in files[1:]:
+for file in files:
 
 	lines = open(file, 'rt').readlines()
 	l2  = lines[-1].split(',')
@@ -77,130 +77,107 @@ for file in files[1:]:
 	NDMAX.append(max(NDMAXT))
 
 
-plt.plot(LOC)
+plt.plot(LOC[1:])
 plt.title('LOC')
 plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
 plt.show()
 
-plt.plot(NOFC)
-plt.title('NOFC')
-plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
-plt.show()
-
-plt.plot(LOF)
+plt.plot(LOF[1:])
 plt.title('LOF')
 plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
 plt.show()
 
-plt.plot(ANDAVG)
+plt.plot(ANDAVG[1:])
 plt.title('ANDAVG')
 plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
 plt.show()
 
-
-plt.plot(ANDSTDEV)
+plt.plot(ANDSTDEV[1:])
 plt.title('ANDSTDEV')
 plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
 plt.show()
 
-
-plt.plot(SDEGMEAN)
+plt.plot(SDEGMEAN[1:])
 plt.title('SDEGMEAN')
 plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
 plt.show()
 
-
-plt.plot(SDEGSTD)
+plt.plot(SDEGSTD[1:])
 plt.title('SDEGSTD')
 plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
 plt.show()
 
-plt.plot(TDEGMEAN)
+plt.plot(TDEGMEAN[1:])
 plt.title('TDEGMEAN')
 plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
 plt.show()
 
-plt.plot(TDEGSTD)
+plt.plot(TDEGSTD[1:])
 plt.title('TDEGSTD')
 plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
 plt.show()
 
-
-
-
-plt.plot(HOM)
+plt.plot(HOM[1:])
 plt.title('HOM')
 plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
 plt.show()
 
-
-plt.plot(HET)
+plt.plot(HET[1:])
 plt.title('HET')
 plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
 plt.show()
 
-
-plt.plot(HOHE)
+plt.plot(HOHE[1:])
 plt.title('HOHE')
 plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
 plt.show()
 
-
-plt.plot(NOFPFCMEAN)
+plt.plot(NOFPFCMEAN[1:])
 plt.title('NOFPFCMEAN')
 plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
 plt.show()
 
-
-plt.plot(NOFPFCSTD)
+plt.plot(NOFPFCSTD[1:])
 plt.title('NOFPFCSTD')
 plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
 plt.show()
 
-
-plt.plot(GRANGL)
+plt.plot(GRANGL[1:])
 plt.title('GRANGL')
 plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
 plt.show()
 
-plt.plot(GRANFL)
+plt.plot(GRANFL[1:])
 plt.title('GRANFL')
 plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
 plt.show()
 
-
-plt.plot(GRANBL)
+plt.plot(GRANBL[1:])
 plt.title('GRANBL')
 plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
 plt.show()
 
-
-plt.plot(GRANSL)
+plt.plot(GRANSL[1:])
 plt.title('GRANSL')
 plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
 plt.show()
 
-
-plt.plot(GRANEL)
+plt.plot(GRANEL[1:])
 plt.title('GRANEL')
 plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
 plt.show()
 
-
-
-plt.plot(GRANML)
+plt.plot(GRANML[1:])
 plt.title('GRANML')
 plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
 plt.show()
 
-
-plt.plot(GRANERR)
+plt.plot(GRANERR[1:])
 plt.title('GRANERR')
 plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
 plt.show()
 
-
-plt.plot(NDMAX)
+plt.plot(NDMAX[1:])
 plt.title('NDMAX')
 plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
 plt.show()
