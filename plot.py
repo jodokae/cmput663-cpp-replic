@@ -85,7 +85,7 @@ for file in files:
 	NDMAX.append(max(NDMAXT))
 	FileCOUNT.append(FileCOUNTT)
 	
-print(FileCOUNT)
+# Calculate some extra metrics
 
 PLOF = np.divide(LOF, LOC)
 
@@ -110,10 +110,11 @@ ax2.plot(LOF[1:], 'b-', label='LOF')
 ax2.set_ylabel('LOF', color='b')
 fig.tight_layout()
 plt.xticks(numberVersions, versions)
+plt.title('LOC vs LOF')
 plt.show()
 
 plt.plot(PLOF[1:])
-plt.title('PLOF')
+plt.title('PLOF (LOF / LOC)')
 plt.xticks(numberVersions, versions)
 plt.show()
 
@@ -186,6 +187,7 @@ p1 = plt.bar(numberVersions, HOM[1:], widthBar, color='#d62728')
 p2 = plt.bar(numberVersions, HOHE[1:], widthBar, bottom=HOM[1:])
 p3 = plt.bar(numberVersions, HET[1:], widthBar, bottom=list(map(sum, zip(HOM[1:], HOHE[1:]))))
 
+plt.title('TYPE')
 plt.legend((p1[0], p2[0], p3[0]), ('HOM', 'HOHE', 'HET'))
 plt.xticks(numberVersions, versions)
 plt.show()
@@ -200,6 +202,7 @@ p5 = plt.bar(numberVersions, GRANEL[1:], widthBar, bottom=list(map(sum, zip(GRAN
 p6 = plt.bar(numberVersions, GRANML[1:], widthBar, bottom=list(map(sum, zip(GRANGL[1:], GRANFL[1:], GRANBL[1:], GRANSL[1:], GRANEL[1:]))))
 p7 = plt.bar(numberVersions, GRANERR[1:], widthBar, bottom=list(map(sum, zip(GRANGL[1:], GRANFL[1:], GRANBL[1:], GRANSL[1:], GRANEL[1:], GRANML[1:]))))
 
+plt.title('GRAN')
 plt.legend((p1[0], p2[0], p3[0], p4[0], p5[0], p6[0], p7[0]), ('GL', 'FL', 'BL', 'SL', 'EL', 'ML', 'ERR'))
 plt.xticks(numberVersions, versions)
 plt.show()
