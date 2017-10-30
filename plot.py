@@ -1,6 +1,7 @@
 import glob
 import numpy as np
 import matplotlib.pyplot as plt
+from prettytable import PrettyTable
 
 def sumzip(*items):
     return [sum(values) for values in zip(*items)]
@@ -84,6 +85,20 @@ for file in files:
 	GRANERR.append(sum(GRANERRT))
 	NDMAX.append(max(NDMAXT))
 	FileCOUNT.append(FileCOUNTT)
+	
+	
+# Compare Originial results to ours
+t = PrettyTable(['name', 'LOC', 'NOFC', 'LOF', 'AND-MEAN', 'AND-STD', 'SD-MEAN', 'SD-STD', 'TD-MEAN', 'TD-STD'])
+t.add_row(['original', 214607, 1158, 40075, 1.18, 0.18, 5.58, 15.35, 1.73, 1.35])
+t.add_row(['ours', int(LOC[0]), int(NOFC[0]), int(LOF[0]), round(ANDAVG[0], 2), round(ANDSTDEV[0], 2), round(SDEGMEAN[0], 2), round(SDEGSTD[0], 2), round(TDEGMEAN[0], 2), round(TDEGMEAN[0], 2)])
+
+print(t)
+
+t = PrettyTable(['name', 'HOM', 'HET', 'HOHE', 'GL', 'FL', 'BL', 'SL', 'EL', 'ML'])
+t.add_row(['original', 134, 2041, 98, 2015, 2186, 828, 43, 35, 13])
+t.add_row(['ours', int(HOM[0]), int(HET[0]), int(HOHE[0]), int(GRANGL[0]), int(GRANFL[0]), int(GRANBL[0]), int(GRANSL[0]), int(GRANEL[0]), int(GRANML[0])])
+
+print(t)
 	
 # Calculate some extra metrics
 
