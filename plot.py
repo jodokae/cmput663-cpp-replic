@@ -2,7 +2,8 @@
 import glob
 import matplotlib.pyplot as plt
 
-files = glob.glob('results/*.csv')
+files = sorted(glob.glob('results/*.csv'))
+LOC = []
 NOFC = []
 LOF = []
 ANDAVG = [] 
@@ -24,6 +25,8 @@ GRANEL = []
 GRANML = []
 GRANERR = []
 NDMAX = []
+
+# Skip 2.2.11 Version
 for file in files[1:]:
 
 	lines = open(file, 'rt').readlines()
@@ -43,6 +46,7 @@ for file in files[1:]:
 	HOHE.append(float(data2[10]))
 	NOFPFCMEAN.append(float(data2[11]))
 	NOFPFCSTD.append(float(data2[12]))
+	LOCT = []
 	GRANGLT = []
 	GRANFLT = []
 	GRANBLT = []
@@ -53,6 +57,7 @@ for file in files[1:]:
 	NDMAXT = []
 	for line in lines:
 		if line.count(',') > 5 and line.split(',')[0][0] == '/':
+			LOCT.append(float(line.split(',')[1]))
 			GRANGLT.append(float(line.split(',')[13]))
 			GRANFLT.append(float(line.split(',')[14]))
 			GRANBLT.append(float(line.split(',')[15]))
@@ -61,6 +66,7 @@ for file in files[1:]:
 			GRANMLT.append(float(line.split(',')[18]))
 			GRANERRT.append(float(line.split(',')[19]))
 			NDMAXT.append(float(line.split(',')[20]))
+	LOC.append(sum(LOCT))
 	GRANGL.append(sum(GRANGLT))
 	GRANFL.append(sum(GRANFLT))
 	GRANBL.append(sum(GRANBLT))
@@ -69,8 +75,12 @@ for file in files[1:]:
 	GRANML.append(sum(GRANMLT))
 	GRANERR.append(sum(GRANERRT))
 	NDMAX.append(max(NDMAXT))
-print(NDMAX)
 
+
+plt.plot(LOC)
+plt.title('LOC')
+plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
+plt.show()
 
 plt.plot(NOFC)
 plt.title('NOFC')
@@ -194,4 +204,3 @@ plt.plot(NDMAX)
 plt.title('NDMAX')
 plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
 plt.show()
-
