@@ -190,37 +190,7 @@ plt.legend((p1[0], p2[0], p3[0]), ('HOM', 'HOHE', 'HET'))
 plt.xticks(numberVersions, versions)
 plt.show()
 
-"""
-plt.plot(HOM[1:])
-plt.title('HOM')
-plt.xticks(numberVersions, versions)
-plt.show()
-
-plt.plot(HET[1:])
-plt.title('HET')
-plt.xticks(numberVersions, versions)
-plt.show()
-
-plt.plot(HOHE[1:])
-plt.title('HOHE')
-plt.xticks(numberVersions, versions)
-plt.show()
-"""
-
-
-
-#plt.plot(NOFPFCMEAN[1:])
-#plt.title('NOFPFCMEAN')
-#plt.xticks(numberVersions, versions)
-#plt.show()
-
-#plt.plot(NOFPFCSTD[1:])
-#plt.title('NOFPFCSTD')
-#plt.xticks(numberVersions, versions)
-#plt.show()
-
 # GRAN
-
 
 p1 = plt.bar(numberVersions, GRANGL[1:], widthBar, color='#d62728')
 p2 = plt.bar(numberVersions, GRANFL[1:], widthBar, bottom=GRANGL[1:])
@@ -233,43 +203,6 @@ p7 = plt.bar(numberVersions, GRANERR[1:], widthBar, bottom=list(map(sum, zip(GRA
 plt.legend((p1[0], p2[0], p3[0], p4[0], p5[0], p6[0], p7[0]), ('GL', 'FL', 'BL', 'SL', 'EL', 'ML', 'ERR'))
 plt.xticks(numberVersions, versions)
 plt.show()
-
-"""
-plt.plot(GRANGL[1:])
-plt.title('GRANGL')
-plt.xticks(numberVersions, versions)
-plt.show()
-
-plt.plot(GRANFL[1:])
-plt.title('GRANFL')
-plt.xticks(numberVersions, versions)
-plt.show()
-
-plt.plot(GRANBL[1:])
-plt.title('GRANBL')
-plt.xticks(numberVersions, versions)
-plt.show()
-
-plt.plot(GRANSL[1:])
-plt.title('GRANSL')
-plt.xticks(numberVersions, versions)
-plt.show()
-
-plt.plot(GRANEL[1:])
-plt.title('GRANEL')
-plt.xticks(numberVersions, versions)
-plt.show()
-
-plt.plot(GRANML[1:])
-plt.title('GRANML')
-plt.xticks(numberVersions, versions)
-plt.show()
-
-plt.plot(GRANERR[1:])
-plt.title('GRANERR')
-plt.xticks(numberVersions, versions)
-plt.show()
-"""
 
 # AND
 
