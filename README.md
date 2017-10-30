@@ -1,35 +1,23 @@
-Python Source: https://github.com/python/cpython/archive/v2.6.1.tar.gz
-
-CPP Stats: http://www.infosun.fim.uni-passau.de/cl/staff/liebig/cppstats/deploy/cppstats_0.1.zip
-
-CPP Stats 0.7: https://github.com/joliebig/cppstats/zipball/v0.7
-
-Dependencies:
-sudo apt-get install python-lxml
-sudo apt-get install astyle
-sudo apt-get install xsltproc
-sudo apt-get install boolstuff
-
-
-Download compatible version of src2srcml (http://www.sdml.cs.kent.edu/lmcrs/)
-
-Change pxml Version to python2.7
-Change cpp_general_checkall.sh Paths to absolute paths
-
-# Run #
-
-1. Go to cppstats0.7
-2. Change cppstats_input.txt to your filepath
-3. change cpp_general_checkall.sh paths to yours
-4. Run ./cppstats_general_prepareall.sh
-5. Run ./cppstats_general_checkall.sh
-6. See results in cpython.../_cppstats/cppstats.csv
-
-
 # Introduction
 The aim of this project is reproducing the result of *"An analysis of the variability in forty preprocessor-based software product lines" by Liebig et al., ICSE '10*. This performs in two steps:
 1. We execute *cppstats* on the excact verison of *apache* in the paper (2.2.11).
 2. *cppstats* are employed on fire version of *apache* and the evolution is analyzed after that.
+
+# Automated Version
+
+## Installing & Extracting
+
+Tested unter Ubuntu 16.04 LTS x64
+
+In order to install all necessary tools and extract all metrics out of the six tested apache versions, just run the following script.
+
+Please consider that the script is downloading SrcML for Ubuntu with a version greater than 14.04 in the x64 version. If you run this script under any other OS it may not work! If doing so change the script to download the appropiate version for your OS or remove these lines and install manually.
+
+```
+./replicate.sh
+```
+
+
 
 # Installation
 1. To run the code, you need to install the following packages first:
