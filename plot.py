@@ -1,6 +1,9 @@
- 
 import glob
+import numpy as np
 import matplotlib.pyplot as plt
+
+def sumzip(*items):
+    return [sum(values) for values in zip(*items)]
 
 files = sorted(glob.glob('results/*.csv'))
 LOC = []
@@ -25,6 +28,7 @@ GRANEL = []
 GRANML = []
 GRANERR = []
 NDMAX = []
+FileCOUNT = []
 
 # Skip 2.2.11 Version
 for file in files:
@@ -55,8 +59,12 @@ for file in files:
 	GRANMLT = []
 	GRANERRT = []
 	NDMAXT = []
+	FileCOUNTT = 0
+	VP = []
+	
 	for line in lines:
 		if line.count(',') > 5 and line.split(',')[0][0] == '/':
+			FileCOUNTT = FileCOUNTT + 1
 			LOCT.append(float(line.split(',')[1]))
 			GRANGLT.append(float(line.split(',')[13]))
 			GRANFLT.append(float(line.split(',')[14]))
@@ -75,109 +83,216 @@ for file in files:
 	GRANML.append(sum(GRANMLT))
 	GRANERR.append(sum(GRANERRT))
 	NDMAX.append(max(NDMAXT))
+	FileCOUNT.append(FileCOUNTT)
+	
+print(FileCOUNT)
+
+PLOF = np.divide(LOF, LOC)
+
+VP = map(sum, zip(GRANGL, GRANFL, GRANBL, GRANSL, GRANEL, GRANML, GRANERR))
+LOFperVP = np.divide(LOF, VP)
+
+SD_FILE = np.divide(np.multiply(SDEGMEAN, NOFC), FileCOUNT)
+TD_FILE = np.divide(np.multiply(TDEGMEAN, NOFC), FileCOUNT)
 
 
-plt.plot(LOC[1:])
-plt.title('LOC')
-plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
+versions = ['2.4.25','2.4.26','2.4.27','2.4.28','2.4.29']
+numberVersions = range(len(versions))
+widthBar = 0.35
+
+# Global Metrics
+
+fig, ax1 = plt.subplots()
+ax1.plot(LOC[1:], 'r-', label='LOC')
+ax1.set_ylabel('LOC', color='r')
+ax2 = ax1.twinx()
+ax2.plot(LOF[1:], 'b-', label='LOF')
+ax2.set_ylabel('LOF', color='b')
+fig.tight_layout()
+plt.xticks(numberVersions, versions)
 plt.show()
 
-plt.plot(LOF[1:])
-plt.title('LOF')
-plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
+plt.plot(PLOF[1:])
+plt.title('PLOF')
+plt.xticks(numberVersions, versions)
 plt.show()
 
-plt.plot(ANDAVG[1:])
-plt.title('ANDAVG')
-plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
+plt.plot(NOFC[1:])
+plt.title('NOFC')
+plt.xticks(numberVersions, versions)
 plt.show()
 
-plt.plot(ANDSTDEV[1:])
-plt.title('ANDSTDEV')
-plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
+plt.plot(VP[1:])
+plt.title('VP (number of #ifdefs out of GRAN)')
+plt.xticks(numberVersions, versions)
+plt.show()
+
+
+plt.plot(LOFperVP[1:])
+plt.title('LOF per VP')
+plt.xticks(numberVersions, versions)
+plt.show()
+
+
+# SD, TD Metric
+
+plt.errorbar(numberVersions, SDEGMEAN[1:], SDEGSTD[1:], linestyle='None', marker='s')
+x1,x2,y1,y2 = plt.axis()
+plt.axis((x1,x2,-10,20))
+plt.title('SD Mean + SD')
+plt.xticks(numberVersions, versions)
 plt.show()
 
 plt.plot(SDEGMEAN[1:])
 plt.title('SDEGMEAN')
-plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
+plt.xticks(numberVersions, versions)
 plt.show()
 
 plt.plot(SDEGSTD[1:])
 plt.title('SDEGSTD')
-plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
+plt.xticks(numberVersions, versions)
+plt.show()
+
+plt.plot(SD_FILE[1:])
+plt.title('SD per File')
+plt.xticks(numberVersions, versions)
+plt.show()
+
+plt.errorbar(numberVersions, TDEGMEAN[1:], TDEGSTD[1:], linestyle='None', marker='s')
+x1,x2,y1,y2 = plt.axis()
+plt.axis((x1,x2,-4,4))
+plt.title('TD Mean + SD')
+plt.xticks(numberVersions, versions)
 plt.show()
 
 plt.plot(TDEGMEAN[1:])
 plt.title('TDEGMEAN')
-plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
+plt.xticks(numberVersions, versions)
 plt.show()
 
 plt.plot(TDEGSTD[1:])
 plt.title('TDEGSTD')
-plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
+plt.xticks(numberVersions, versions)
 plt.show()
 
+plt.plot(TD_FILE[1:])
+plt.title('TD per File')
+plt.xticks(numberVersions, versions)
+plt.show()
+
+# TYPE
+
+p1 = plt.bar(numberVersions, HOM[1:], widthBar, color='#d62728')
+p2 = plt.bar(numberVersions, HOHE[1:], widthBar, bottom=HOM[1:])
+p3 = plt.bar(numberVersions, HET[1:], widthBar, bottom=list(map(sum, zip(HOM[1:], HOHE[1:]))))
+
+plt.legend((p1[0], p2[0], p3[0]), ('HOM', 'HOHE', 'HET'))
+plt.xticks(numberVersions, versions)
+plt.show()
+
+"""
 plt.plot(HOM[1:])
 plt.title('HOM')
-plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
+plt.xticks(numberVersions, versions)
 plt.show()
 
 plt.plot(HET[1:])
 plt.title('HET')
-plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
+plt.xticks(numberVersions, versions)
 plt.show()
 
 plt.plot(HOHE[1:])
 plt.title('HOHE')
-plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
+plt.xticks(numberVersions, versions)
+plt.show()
+"""
+
+
+
+#plt.plot(NOFPFCMEAN[1:])
+#plt.title('NOFPFCMEAN')
+#plt.xticks(numberVersions, versions)
+#plt.show()
+
+#plt.plot(NOFPFCSTD[1:])
+#plt.title('NOFPFCSTD')
+#plt.xticks(numberVersions, versions)
+#plt.show()
+
+# GRAN
+
+
+p1 = plt.bar(numberVersions, GRANGL[1:], widthBar, color='#d62728')
+p2 = plt.bar(numberVersions, GRANFL[1:], widthBar, bottom=GRANGL[1:])
+p3 = plt.bar(numberVersions, GRANBL[1:], widthBar, bottom=list(map(sum, zip(GRANGL[1:], GRANFL[1:]))))
+p4 = plt.bar(numberVersions, GRANSL[1:], widthBar, bottom=list(map(sum, zip(GRANGL[1:], GRANFL[1:], GRANBL[1:]))))
+p5 = plt.bar(numberVersions, GRANEL[1:], widthBar, bottom=list(map(sum, zip(GRANGL[1:], GRANFL[1:], GRANBL[1:], GRANSL[1:]))))
+p6 = plt.bar(numberVersions, GRANML[1:], widthBar, bottom=list(map(sum, zip(GRANGL[1:], GRANFL[1:], GRANBL[1:], GRANSL[1:], GRANEL[1:]))))
+p7 = plt.bar(numberVersions, GRANERR[1:], widthBar, bottom=list(map(sum, zip(GRANGL[1:], GRANFL[1:], GRANBL[1:], GRANSL[1:], GRANEL[1:], GRANML[1:]))))
+
+plt.legend((p1[0], p2[0], p3[0], p4[0], p5[0], p6[0], p7[0]), ('GL', 'FL', 'BL', 'SL', 'EL', 'ML', 'ERR'))
+plt.xticks(numberVersions, versions)
 plt.show()
 
-plt.plot(NOFPFCMEAN[1:])
-plt.title('NOFPFCMEAN')
-plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
-plt.show()
-
-plt.plot(NOFPFCSTD[1:])
-plt.title('NOFPFCSTD')
-plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
-plt.show()
-
+"""
 plt.plot(GRANGL[1:])
 plt.title('GRANGL')
-plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
+plt.xticks(numberVersions, versions)
 plt.show()
 
 plt.plot(GRANFL[1:])
 plt.title('GRANFL')
-plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
+plt.xticks(numberVersions, versions)
 plt.show()
 
 plt.plot(GRANBL[1:])
 plt.title('GRANBL')
-plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
+plt.xticks(numberVersions, versions)
 plt.show()
 
 plt.plot(GRANSL[1:])
 plt.title('GRANSL')
-plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
+plt.xticks(numberVersions, versions)
 plt.show()
 
 plt.plot(GRANEL[1:])
 plt.title('GRANEL')
-plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
+plt.xticks(numberVersions, versions)
 plt.show()
 
 plt.plot(GRANML[1:])
 plt.title('GRANML')
-plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
+plt.xticks(numberVersions, versions)
 plt.show()
 
 plt.plot(GRANERR[1:])
 plt.title('GRANERR')
-plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
+plt.xticks(numberVersions, versions)
+plt.show()
+"""
+
+# AND
+
+plt.errorbar(numberVersions, ANDAVG[1:], ANDSTDEV[1:], linestyle='None', marker='s')
+plt.title('AND Mean + SD')
+x1,x2,y1,y2 = plt.axis()
+plt.axis((x1,x2,0,4))
+plt.xticks(numberVersions, versions)
+plt.show()
+
+
+plt.plot(ANDAVG[1:])
+plt.title('ANDAVG')
+plt.xticks(numberVersions, versions)
+plt.show()
+
+plt.plot(ANDSTDEV[1:])
+plt.title('ANDSTDEV')
+plt.xticks(numberVersions, versions)
 plt.show()
 
 plt.plot(NDMAX[1:])
 plt.title('NDMAX')
-plt.xlabel(('2.4.25','2.4.26','2.4.27','2.4.28','2.4.29'))
+plt.xticks(numberVersions, versions)
 plt.show()
+
