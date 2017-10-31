@@ -3,7 +3,7 @@ The aim of this project is reproducing the result of *"An analysis of the variab
 1. We execute *cppstats* on the exact version of *apache* in the paper (2.2.11).
 2. *cppstats* are employed on the five latest versions of *apache* and the evolution is analysed after that.
 
-This analysis was done for the CMPUT 663 course of the University of Alberta in the Fall 2017 term. 
+This analysis was done for the CMPUT 663 course at the University of Alberta in the Fall 2017 term by Johannes Kästle and Moein Owhadi Kareshk.
 
 Original authors website and GitHub: 
 ```
