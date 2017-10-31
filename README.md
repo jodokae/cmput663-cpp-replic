@@ -1,11 +1,11 @@
 # Introduction
 The aim of this project is reproducing the result of *"An analysis of the variability in forty preprocessor-based software product lines" by Liebig et al., ICSE '10*. This performs in two steps:
-1. We execute *cppstats* on the excact verison of *apache* in the paper (2.2.11).
-2. *cppstats* are employed on the five latest versions of *apache* and the evolution is analyzed after that.
+1. We execute *cppstats* on the exact version of *apache* in the paper (2.2.11).
+2. *cppstats* are employed on the five latest versions of *apache* and the evolution is analysed after that.
 
-This analysis was done for the CMPUT 663 course of the Univerity of Alberta in the Fall 2017 term. 
+This analysis was done for the CMPUT 663 course of the University of Alberta in the Fall 2017 term. 
 
-Original authors website and Github: 
+Original authors website and GitHub: 
 ```
 http://fosd.net/cppstats
 https://github.com/clhunsen/cppstats
@@ -41,11 +41,11 @@ We compared the following metrics over the project history:
 
 ### Installing & Extracting
 
-Tested unter Ubuntu 16.04 LTS x64
+Tested under Ubuntu 16.04 LTS x64
 
 In order to install all necessary tools and extract all metrics out of the six tested apache versions, just run the following script.
 
-Please consider that the script is downloading SrcML for Ubuntu with a version greater than 14.04 in the x64 version. If you run this script under any other OS it may not work! If doing so change the script to download the appropiate version for your OS or remove these lines and install manually.
+Please consider that the script is downloading SrcML for Ubuntu with a version greater than 14.04 in the x64 version. If you run this script under any other OS it may not work! If doing so change the script to download the appropriate version for your OS or remove these lines and install manually.
 
 ```
 ./replicate.sh
@@ -67,7 +67,7 @@ python plot.py
 sudo apt-get install python python-dev python-doc python-setuptools gcc g++ clang python-lxml astyle xsltproc boolstuff git
 ```
 2. After that, the appropriate version of *<srcML>* should be installed by [Download page](http://www.srcml.org/#download).
-3. Clone the latest version of 'cppstates' by 
+3. Clone the latest version of 'cppstats' by 
 ```
 https://github.com/clhunsen/cppstats
 ```
@@ -78,7 +78,7 @@ sudo python setup.py install
 ```
 
 ### Extraction
-1. Download the proper *Apachi project (2.2.x)* by:
+1. Download the proper *Apache project (2.2.11)* by:
 ```
 wget https://github.com/apache/httpd/archive/2.2.11.tar.gz
 ```
@@ -90,7 +90,7 @@ cppstats --kind general
 4. The results are in *projects/httpd-2.2.11/cppstats.csv*
 
 # Version comparison:
-1. Download 5 diffrent versions of the code by: 
+1. Download 5 different versions of the code by: 
 ```
 wget https://github.com/apache/httpd/archive/2.4.25.tar.gz
 wget https://github.com/apache/httpd/archive/2.4.26.tar.gz
@@ -99,5 +99,5 @@ wget https://github.com/apache/httpd/archive/2.4.28.tar.gz
 wget https://github.com/apache/httpd/archive/2.4.29.tar.gz
 ```
 
-2. Based on the instruction of **Part 1**, generate the cresults for all versions. (copy them into */projects/.../source* and add their path to *cppstats_input.txt*.)
+2. Based on the instruction of **Part 1**, generate the results for all versions. (copy them into */projects/.../source* and add their path to *cppstats_input.txt*.)
 3. copy all csv files in project's folders to *results* folder and run *plot.py*.
