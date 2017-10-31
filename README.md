@@ -53,3 +53,4 @@ svn checkout http://svn.apache.org/repos/asf/httpd/httpd/branches/2.2.x-merge-ht
 svn checkout http://svn.apache.org/repos/asf/httpd/httpd/branches/2.4.x httpd-2.4.x
 ```
 2. Based on the instruction of **Part 1**, generate the cresults for all versions. (copy them into */projects/.../source* and add their path to *cppstats_input.txt*.)
+3. copy all csv files in project's folders to *results* folder and run *plot.py*.
