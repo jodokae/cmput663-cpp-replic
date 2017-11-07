@@ -4,9 +4,9 @@
 AddVersion() {
     cd projects
     
-    mkdir "httpd-$1"
+    mkdir -p "httpd-$1"
     cd "httpd-$1"
-    mkdir "source"
+    mkdir -p "source"
     
     wget "https://github.com/apache/httpd/archive/$1.tar.gz"
     tar -xzf "$1.tar.gz"
@@ -41,7 +41,7 @@ sudo python setup.py install
 echo "" > cppstats_input.txt
 
 # Get Apache Projects
-mkdir projects
+mkdir -p projects
 AddVersion "2.2.11"
 AddVersion "2.4.25"
 AddVersion "2.4.26"
@@ -54,7 +54,7 @@ cppstats --kind general
 
 # Copy Results
 cd ..
-mkdir results
+mkdir -p results
 
 SaveResults "2.2.11"
 SaveResults "2.4.25"

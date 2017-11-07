@@ -42,10 +42,11 @@ We compared the following metrics over the project history:
 ### Installing & Extracting
 
 Tested under Ubuntu 16.04 LTS x64
+Tested with: cppstats v0.9.3, python3.5.2, srcML v0.9.5. If not stated otherwise, the newest version (30.10.2017) was used.
 
 In order to install all necessary tools and extract all metrics out of the six tested apache versions, just run the following script.
 
-Please consider that the script is downloading SrcML for Ubuntu with a version greater than 14.04 in the x64 version. If you run this script under any other OS it may not work! If doing so change the script to download the appropriate version for your OS or remove these lines and install manually.
+Please consider that the script is downloading SrcML for Ubuntu with a version greater than 14.04 in the x64 version. If you run this script under any other OS it may not work, since srcML is OS dependant! If doing so change the script to download the appropriate version for your OS or remove these lines and install manually.
 
 ```
 ./replicate.sh
